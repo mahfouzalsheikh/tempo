@@ -60,6 +60,8 @@ class HooksConfig(BaseModel):
 class AgentConfig(BaseModel):
     max_concurrent_agents: int = Field(default=10, gt=0)
     max_turns: int = Field(default=20, gt=0)
+    max_tokens_per_run: int = Field(default=1_000_000, gt=0)
+    max_retries: int = Field(default=2, ge=0, le=20)
     max_retry_backoff_ms: int = Field(default=300_000, gt=0)
     max_concurrent_agents_by_state: dict[str, int] = Field(default_factory=dict)
 
@@ -79,6 +81,7 @@ class ValidationConfig(BaseModel):
     command_timeout_ms: int = Field(default=1_800_000, gt=0)
     cleanup_timeout_ms: int = Field(default=120_000, gt=0)
     max_commands: int = Field(default=12, gt=0, le=50)
+    max_attempts_per_run: int = Field(default=5, gt=0, le=50)
     max_output_chars: int = Field(default=40_000, gt=0)
 
 

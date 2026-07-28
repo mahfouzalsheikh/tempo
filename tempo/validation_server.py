@@ -22,7 +22,7 @@ async def application(scope: dict[str, Any], receive: Any, send: Any) -> None:
     if method == "GET" and path == "/healthz":
         await _respond(send, 200, {"status": "ok"})
         return
-    if method != "POST" or path != "/run":
+    if method != "POST" or path not in {"/run", "/run-stream"}:
         await _respond(send, 404, {"error": "not_found"})
         return
     body = bytearray()
@@ -48,8 +48,24 @@ async def application(scope: dict[str, Any], receive: Any, send: Any) -> None:
     except (KeyError, TypeError, ValueError, OSError):
         await _respond(send, 400, {"error": "invalid_request"})
         return
-    result = await run_command(command, workspace, timeout_ms, max_output_chars)
-    await _respond(send, 200, result)
+    if path == "/run-stream":
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"application/x-ndjson"),
+                    (b"cache-control", b"no-cache"),
+                ],
+            }
+        )
+        async for item in stream_command(command, workspace, timeout_ms, max_output_chars):
+            body = (json.dumps(item, separators=(",", ":")) + "\n").encode()
+            await send({"type": "http.response.body", "body": body, "more_body": True})
+        await send({"type": "http.response.body", "body": b""})
+    else:
+        result = await run_command(command, workspace, timeout_ms, max_output_chars)
+        await _respond(send, 200, result)
 
 
 async def run_command(
@@ -81,6 +97,45 @@ async def run_command(
         exit_code = 124
         text = f"Timed out after {timeout_ms}ms.\n{text}"
     return {"exit_code": exit_code, "output": text}
+
+
+async def stream_command(command: str, workspace: Path, timeout_ms: int, max_output_chars: int):
+    process = await asyncio.create_subprocess_exec(
+        "bash",
+        "-lc",
+        command,
+        cwd=workspace,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        start_new_session=True,
+    )
+    assert process.stdout
+    captured = ""
+    timed_out = False
+    try:
+        async with asyncio.timeout(timeout_ms / 1000):
+            while chunk := await process.stdout.read(2048):
+                text = chunk.decode(errors="replace")
+                captured = f"{captured}{text}"[-max_output_chars:]
+                yield {"type": "output", "text": text}
+            await process.wait()
+    except TimeoutError:
+        timed_out = True
+        _kill_process_group(process)
+        await process.wait()
+    except asyncio.CancelledError:
+        _kill_process_group(process)
+        await process.wait()
+        raise
+    finally:
+        if process.returncode is None:
+            _kill_process_group(process)
+            await process.wait()
+    exit_code = process.returncode if process.returncode is not None else -1
+    if timed_out:
+        exit_code = 124
+        captured = f"Timed out after {timeout_ms}ms.\n{captured}"
+    yield {"type": "result", "exit_code": exit_code, "output": captured}
 
 
 def _kill_process_group(process: asyncio.subprocess.Process) -> None:

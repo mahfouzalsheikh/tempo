@@ -88,9 +88,15 @@ class LiveSession:
     validation_finished_at: datetime | None = None
     current_validation_command: str | None = None
     validation_commands: list[dict[str, Any]] = field(default_factory=list)
+    validation_attempt_count: int = 0
+    successful_validation_count: int = 0
     recent_events: list[dict[str, Any]] = field(default_factory=list)
     pull_request_created: bool = False
     pull_request_url: str | None = None
+    pull_request_number: int | None = None
+    no_change_completed: bool = False
+    completion_summary: str | None = None
+    validation_record_id: int | None = None
 
 
 @dataclass
@@ -101,6 +107,7 @@ class RunningEntry:
     started_at: datetime = field(default_factory=utcnow)
     phase: str = "PreparingWorkspace"
     session: LiveSession = field(default_factory=LiveSession)
+    run_record_id: int | None = None
 
 
 @dataclass
@@ -120,3 +127,4 @@ class Totals:
     runtime_seconds: float = 0.0
     validation_passes: int = 0
     validation_failures: int = 0
+    validated_runs: int = 0

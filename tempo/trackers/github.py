@@ -28,6 +28,7 @@ class GitHubTracker(Tracker):
         terminal_states: list[str] | None = None,
         client: httpx.AsyncClient | None = None,
         token_env_name: str = "GITHUB_TOKEN",
+        required_labels: list[str] | None = None,
     ) -> None:
         parsed = urlparse(api_url)
         if parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1"}:
@@ -36,6 +37,9 @@ class GitHubTracker(Tracker):
         self.api_url = api_url.rstrip("/")
         self.token = token or os.getenv(token_env_name) or None
         self.token_env_name = token_env_name
+        self.required_labels = {
+            str(label).strip().lower() for label in (required_labels or []) if str(label).strip()
+        }
         self._publication_authorized: set[str] = set()
         self.terminal_states = {normalize_state(value) for value in terminal_states or ["closed"]}
         headers = {
@@ -214,12 +218,31 @@ class GitHubTracker(Tracker):
                 ),
                 "contentItems": [],
             }
+        issue_mutation = re.fullmatch(
+            rf"/repos/{re.escape(self.repo)}/issues/\d+/?", path
+        ) or re.fullmatch(rf"/repos/{re.escape(self.repo)}/issues/\d+/labels/?", path)
+        if method not in {"GET", "HEAD"} and issue_mutation:
+            return {
+                "success": False,
+                "output": (
+                    "Tempo owns issue state and dispatch labels. Create the pull request or use "
+                    "tempo_complete; direct issue mutations are not allowed."
+                ),
+                "contentItems": [],
+            }
+        body = arguments.get("body")
+        if method == "POST" and path.rstrip("/") == f"/repos/{self.repo}/pulls":
+            body = dict(body) if isinstance(body, dict) else {}
+            closing_line = f"Closes #{issue.id}"
+            description = str(body.get("body", "")).rstrip()
+            if closing_line.lower() not in description.lower():
+                body["body"] = f"{description}\n\n{closing_line}".strip()
         try:
             output = await self._request(
                 method,
                 path,
                 params=arguments.get("params"),
-                json=arguments.get("body"),
+                json=body,
             )
             text = json.dumps(output, ensure_ascii=False)
             return {
@@ -235,8 +258,40 @@ class GitHubTracker(Tracker):
                 "contentItems": [{"type": "inputText", "text": text}],
             }
 
+    async def finalize_pull_request(self, issue: Issue, pull_request_number: int) -> None:
+        await self._remove_dispatch_labels(issue)
 
-def build_tracker(kind: str, provider: dict[str, Any], terminal_states: list[str]) -> Tracker:
+    async def finalize_without_changes(self, issue: Issue, reason: str) -> None:
+        await self._request(
+            "POST",
+            f"/repos/{self.repo}/issues/{issue.id}/comments",
+            json={"body": f"Tempo completed this ticket without a code change:\n\n{reason}"},
+        )
+        await self._remove_dispatch_labels(issue)
+
+    async def _remove_dispatch_labels(self, issue: Issue) -> None:
+        if not self.required_labels:
+            return
+        row = await self._request("GET", f"/repos/{self.repo}/issues/{issue.id}")
+        labels = [
+            str(item.get("name", ""))
+            for item in row.get("labels", [])
+            if isinstance(item, dict)
+            and str(item.get("name", "")).strip().lower() not in self.required_labels
+        ]
+        await self._request(
+            "PATCH",
+            f"/repos/{self.repo}/issues/{issue.id}",
+            json={"labels": labels},
+        )
+
+
+def build_tracker(
+    kind: str,
+    provider: dict[str, Any],
+    terminal_states: list[str],
+    required_labels: list[str] | None = None,
+) -> Tracker:
     if kind == "memory":
         return MemoryTracker(provider.get("issues") or [])
     token_value = provider.get("token")
@@ -250,4 +305,5 @@ def build_tracker(kind: str, provider: dict[str, Any], terminal_states: list[str
         api_url=str(provider.get("api_url", "https://api.github.com")),
         terminal_states=terminal_states,
         token_env_name=token_env_name,
+        required_labels=required_labels,
     )

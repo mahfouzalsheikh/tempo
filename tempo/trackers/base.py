@@ -28,6 +28,12 @@ class Tracker(ABC):
     def revoke_publication(self, issue_id: str) -> None:
         return None
 
+    async def finalize_pull_request(self, issue: Issue, pull_request_number: int) -> None:
+        return None
+
+    async def finalize_without_changes(self, issue: Issue, reason: str) -> None:
+        return None
+
     async def execute_agent_tool(
         self, name: str, arguments: dict[str, Any], issue: Issue
     ) -> dict[str, Any]:

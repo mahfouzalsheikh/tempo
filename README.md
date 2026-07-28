@@ -5,9 +5,9 @@ A Dockerized Python implementation of OpenAI's
 It continuously polls an issue tracker, creates an isolated workspace for each issue, and runs
 Codex app-server sessions until the issue leaves an active state.
 
-This port uses Django for the operator dashboard and JSON API. The scheduler, retry queue, and live
-sessions remain in one authoritative in-memory orchestrator, matching the specification's restart
-model rather than using Django's database as a job queue.
+This port uses Django for the operator dashboard, JSON API, authenticated admin, and persistent
+runtime history. The scheduler and retry queue remain in one authoritative in-memory orchestrator,
+so Django's database records activity without becoming a competing job queue.
 
 ## What is included
 
@@ -21,6 +21,10 @@ model rather than using Django's database as a job queue.
   approval/input handling, and host-side GitHub tool execution
 - Project-native local validation with captured commands, exit codes, logs, cleanup, and a hard
   pull-request publication gate
+- Per-run token, turn, validation-attempt, retry, and stall limits with durable safety stops
+- Durable completion dispositions that prevent completed issues from being dispatched after restart
+- Persistent Django models and authenticated admin views for issues, runs, sessions, validation
+  attempts, and validation commands
 - Structured JSON logs, Django dashboard, health check, and REST status endpoints
 - A non-root Docker image containing Python, Git, SSH, Node, and the Codex CLI
 - Deterministic tests with fake tracker and app-server implementations
@@ -41,8 +45,34 @@ curl http://localhost:8000/healthz
 curl http://localhost:8000/api/v1/state
 ```
 
-The Compose service persists issue workspaces and Codex state in named volumes. Stop it with
-`docker compose down`; add `-v` only when you intentionally want to delete those volumes.
+The Compose service persists issue workspaces, runtime history, and Codex state in named volumes.
+Stop it with `docker compose down`; add `-v` only when you intentionally want to delete those
+volumes.
+
+After changing Tempo, rebuild and restart every service with:
+
+```bash
+./scripts/restart-tempo.sh
+```
+
+The script preserves the workspace, database, and Codex home volumes, force-recreates the
+containers, waits for their health checks, and prints the resulting service status.
+
+## Django admin
+
+Tempo applies database migrations automatically at startup. Create the first Django superuser with:
+
+```bash
+docker compose exec tempo python manage.py createsuperuser
+```
+
+Alternatively, set `TEMPO_ADMIN_USERNAME`, `TEMPO_ADMIN_PASSWORD`, and optionally
+`TEMPO_ADMIN_EMAIL` in `.env` before the first startup; Tempo creates that account only when the
+username does not already exist. The password is removed from Codex and validation environments.
+
+Open `/admin/` for Django Admin. Runtime records are read-only there because editing them would not
+change the authoritative tracker or live scheduler. The live operator screens remain available at
+`/ops/` and `/ops/configuration/`.
 
 ## Configure GitHub Issues
 
@@ -66,10 +96,13 @@ hooks:
     git fetch origin
 agent:
   max_concurrent_agents: 3
-  max_turns: 20
+  max_turns: 6
+  max_tokens_per_run: 1000000
+  max_retries: 2
 validation:
   enabled: true
   command_timeout_ms: 1800000
+  max_attempts_per_run: 5
 codex:
   command: codex app-server
 ```
@@ -97,11 +130,21 @@ documentation and tooling, then submits its complete build, launch, and test seq
 exit codes and output, and unlocks pull-request creation only after the entire sequence succeeds.
 Failed validation is returned to the agent so it can fix the project and try again.
 
+Tempo fingerprints the workspace before and after validation and rejects an attempt if its
+commands modify project files. Code changes must happen through normal workspace tools, not through
+the validation runner. Successful pull requests automatically receive a `Closes #N` link and Tempo
+removes the dispatch label, preventing the issue from being picked up again while it awaits human
+review. When validated behavior is already present, the agent can record a reviewed no-change
+completion through `tempo_complete`; Tempo comments on the issue and removes the dispatch label.
+
 The bundled Compose setup includes a credential-free validation runner and an isolated Docker
 daemon for projects that use containers. The workspace volume is shared with both, so
 repository-native commands, Compose files, and bind mounts work at their expected paths. The
 runner does not receive the GitHub, OpenAI, or Django credentials or the Codex home. Pull-request
 merges are always denied; a human remains responsible for review and merge.
+
+The dashboard reports validation passes as attempts and validated runs as distinct runs with at
+least one accepted pass. Neither number means that a pull request was merged.
 
 Repositories still need to describe enough of their setup to run locally. If required services,
 credentials, or instructions are unavailable, validation remains blocked and Tempo will not create
@@ -135,13 +178,16 @@ operator-visible while the last valid configuration stays active.
 - `GET /` — live dashboard
 - `GET /healthz` — process readiness
 - `GET /api/v1/state` — complete runtime snapshot
+- `GET /api/v1/events` — live server-sent stream of runtime snapshots
 - `GET /api/v1/admin` — redacted effective configuration and operator state
 - `GET /api/v1/<issue_identifier>` — running/retry status for one issue
 - `POST /api/v1/refresh` — wake the poll loop immediately
 
-The dashboard at `/` shows live phases, validation commands and output, tokens, and recent agent
-activity. Operator pages at `/admin/` and `/admin/configuration/` show runtime and redacted policy
-details without exposing credentials or hook bodies.
+The dashboard at `/` uses a reconnecting live stream to show agent messages, commands and output,
+tool calls, file changes, validation progress, errors, phases, tokens, and session details as they
+happen. Private reasoning text is not exposed. Operator pages at `/ops/` and
+`/ops/configuration/` show runtime and redacted policy details without exposing credentials or hook
+bodies. Authenticated Django Admin is available at `/admin/`.
 
 The HTTP server binds to `127.0.0.1` by default outside Docker. Docker explicitly binds the process
 to `0.0.0.0` and publishes port 8000.
@@ -187,12 +233,15 @@ GitHub / memory tracker ──> Orchestrator ──> per-issue worker
                                │                  ├─ WorkspaceManager + hooks
                                │                  └─ Codex app-server JSONL
                                │
-                               └─ Django dashboard + /api/v1/*
+                               ├─ Django dashboard + /api/v1/*
+                               └─ SQLite history + Django Admin
 ```
 
-The orchestrator database is intentionally absent. After restart, candidates are recovered from
-the tracker and workspaces from disk; exact retry timers and session metadata are not restored.
-Terminal workspaces are swept during startup and when terminal transitions are observed.
+After restart, candidates are recovered from the tracker and workspaces from disk. Completed
+dispositions and safety stops are restored from SQLite so those issues are not dispatched again.
+Exact retry timers are not restored, but issue, run, session, validation, command, token, error,
+and pull-request history remains available through Django Admin. Terminal workspaces are swept
+during startup and when terminal transitions are observed.
 
 ## Current scope
 

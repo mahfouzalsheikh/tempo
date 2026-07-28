@@ -30,6 +30,9 @@ Work on {{ issue.identifier }} attempt={{ attempt }}.
     config = build_config(workflow.config, path)
     issue = Issue(id="1", identifier="ABC-1", title="Task", state="Todo")
     assert config.polling.interval_ms == 30_000
+    assert config.agent.max_tokens_per_run == 1_000_000
+    assert config.agent.max_retries == 2
+    assert config.validation.max_attempts_per_run == 5
     assert render_prompt(workflow, issue, 2) == "Work on ABC-1 attempt=2."
 
 

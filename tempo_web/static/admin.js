@@ -15,6 +15,7 @@ async function updateAdmin() {
       byId("admin-claimed").textContent = data.runtime.claimed;
       byId("admin-retries").textContent = data.runtime.queued_retries;
       byId("admin-completed").textContent = data.runtime.completed;
+      byId("admin-safety-blocked").textContent = data.runtime.safety_blocked;
       definitionList("admin-runtime", {
         "Started": new Date(data.service.started_at).toLocaleString(),
         "Last poll": data.service.last_tick_at ? new Date(data.service.last_tick_at).toLocaleString() : "Not yet",
@@ -37,6 +38,8 @@ async function updateAdmin() {
     definitionList("config-agents", {
       "Max concurrent": data.agents.max_concurrent,
       "Max turns": data.agents.max_turns,
+      "Token limit per run": data.agents.max_tokens_per_run,
+      "Max retries": data.agents.max_retries,
       "Per-state limits": data.agents.per_state,
       "Max retry backoff": `${data.agents.max_retry_backoff_ms} ms`,
     });
@@ -46,6 +49,7 @@ async function updateAdmin() {
       "Command timeout": `${data.validation.command_timeout_ms} ms`,
       "Cleanup timeout": `${data.validation.cleanup_timeout_ms} ms`,
       "Max commands": data.validation.max_commands,
+      "Max attempts per run": data.validation.max_attempts_per_run,
       "PR gate": data.validation.publication_gate,
       "Merge policy": data.validation.merge_policy,
     });

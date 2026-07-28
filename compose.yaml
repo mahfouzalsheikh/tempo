@@ -12,11 +12,16 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       TEMPO_LOG_LEVEL: "${TEMPO_LOG_LEVEL:-INFO}"
       TEMPO_WORKSPACE_ROOT: /data/workspaces
+      TEMPO_DATABASE_PATH: /data/database/tempo.sqlite3
+      TEMPO_ADMIN_USERNAME: "${TEMPO_ADMIN_USERNAME:-}"
+      TEMPO_ADMIN_PASSWORD: "${TEMPO_ADMIN_PASSWORD:-}"
+      TEMPO_ADMIN_EMAIL: "${TEMPO_ADMIN_EMAIL:-}"
       DOCKER_HOST: tcp://project-runner:2375
       TEMPO_VALIDATION_RUNNER_URL: http://validation-runner:8787
     volumes:
       - ./WORKFLOW.md:/app/WORKFLOW.md:ro
       - tempo-workspaces:/data/workspaces
+      - tempo-database:/data/database
       - tempo-codex-home:/home/tempo/.codex
     depends_on:
       project-runner:
@@ -65,4 +70,5 @@ services:
 
 volumes:
   tempo-workspaces:
+  tempo-database:
   tempo-codex-home:

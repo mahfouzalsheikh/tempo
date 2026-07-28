@@ -5,14 +5,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Tempo</title>
-  <link rel="stylesheet" href="{% static 'tempo.css' %}">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260728-3">
 </head>
 <body>
   <main>
     <nav class="topnav">
       <a class="brand active" href="/">Tempo</a>
-      <a href="/admin/">Operations</a>
-      <a href="/admin/configuration/">Configuration</a>
+      <a href="/ops/">Operations</a>
+      <a href="/ops/configuration/">Configuration</a>
+      <a href="/admin/">Django Admin</a>
     </nav>
     <header>
       <div>
@@ -33,8 +34,12 @@
     <div id="content" {% if not snapshot %}hidden{% endif %}>
       <section class="metrics">
         <article><span>Running</span><strong id="running-count">0</strong></article>
+        <article><span>Claimed</span><strong id="claimed-count">0</strong></article>
         <article><span>Retry queue</span><strong id="retry-count">0</strong></article>
-        <article><span>Validated</span><strong id="validated-count">0</strong></article>
+        <article><span>Completed</span><strong id="completed-count">0</strong></article>
+        <article><span>Safety stops</span><strong id="safety-blocked-count">0</strong></article>
+        <article><span>Validated runs</span><strong id="validated-count">0</strong></article>
+        <article><span>Validation passes</span><strong id="validation-pass-count">0</strong></article>
         <article><span>Total tokens</span><strong id="token-count">0</strong></article>
       </section>
 
@@ -57,6 +62,6 @@
       </section>
     </div>
   </main>
-  <script src="{% static 'tempo.js' %}"></script>
+  <script src="{% static 'tempo.js' %}?v=20260728-3"></script>
 </body>
 </html>

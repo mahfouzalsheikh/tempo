@@ -32,7 +32,7 @@ h1 { font: 600 clamp(42px, 7vw, 74px)/.95 system-ui, sans-serif; letter-spacing:
 .status::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 8px; box-shadow: 0 0 12px currentColor; }
 button { border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 10px 14px; border-radius: 6px; cursor: pointer; font: inherit; }
 button:hover { border-color: var(--green); }
-.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 12px; }
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .metrics article, .panel, .notice { border: 1px solid var(--line); background: rgba(16,21,24,.9); border-radius: 8px; }
 .metrics article { padding: 18px; }
 .metrics span { display: block; color: var(--muted); font-size: 12px; }
@@ -68,6 +68,29 @@ dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
 .token-stat strong { display: block; font: 600 18px system-ui, sans-serif; }
 .run-detail { border-top: 1px solid var(--line); padding: 22px 18px 24px 38px; display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(240px, .8fr); gap: 32px; background: rgba(0,0,0,.15); }
 h3 { color: var(--muted); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; margin: 0 0 12px; }
+.detail-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.detail-heading h3 { margin: 0; }
+.streaming-label { color: var(--green); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.streaming-label i { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; animation: stream-pulse 1.6s ease-in-out infinite; }
+@keyframes stream-pulse { 50% { opacity: .35; transform: scale(.75); } }
+.activity-feed { display: grid; gap: 7px; max-height: 430px; overflow: auto; padding-right: 4px; margin-bottom: 28px; scrollbar-color: var(--line) transparent; }
+.activity { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 5px; background: rgba(8,11,13,.62); overflow: hidden; }
+.activity-head { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 9px 11px; }
+.activity-head strong { font-size: 12px; font-weight: 500; }
+.activity-head time { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.activity-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.activity pre { border-top: 1px solid var(--line); padding: 10px 12px; max-height: 220px; overflow: auto; color: #c8d2d6; background: rgba(0,0,0,.2); font: 12px/1.55 ui-monospace, monospace; }
+.activity.message, .activity.success { border-left-color: var(--green); }
+.activity.message .activity-dot, .activity.success .activity-dot { background: var(--green); }
+.activity.command, .activity.tool, .activity.file { border-left-color: #71b7ff; }
+.activity.command .activity-dot, .activity.tool .activity-dot, .activity.file .activity-dot { background: #71b7ff; }
+.activity.thinking { border-left-color: #bba7ff; }
+.activity.thinking .activity-dot { background: #bba7ff; animation: stream-pulse 1.2s ease-in-out infinite; }
+.activity.validation, .activity.warning { border-left-color: var(--amber); }
+.activity.validation .activity-dot, .activity.warning .activity-dot { background: var(--amber); }
+.activity.error { border-left-color: #ff857a; }
+.activity.error .activity-dot { background: #ff857a; }
+.section-heading { margin-top: 4px; }
 .commands { display: grid; gap: 8px; margin-top: 16px; }
 .command { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 5px; overflow: hidden; }
 .command.passed { border-left-color: var(--green); }
@@ -101,4 +124,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
   .config-grid { grid-template-columns: 1fr; }
   .config-grid .validation-panel { grid-column: auto; }
   dl { grid-template-columns: 1fr; gap: 3px; }
+}
+@media (min-width: 701px) and (max-width: 1000px) {
+  .metrics { grid-template-columns: repeat(3, 1fr); }
 }

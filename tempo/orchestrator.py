@@ -10,10 +10,12 @@ from typing import Any
 
 import structlog
 
+from .activity import activity_from_event, append_activity
 from .codex import CodexAppServer
 from .config import ServiceConfig
 from .domain import Issue, RetryEntry, RunningEntry, Totals, normalize_state, utcnow
 from .errors import CodexError
+from .persistence import PersistenceStore
 from .trackers.base import Tracker
 from .trackers.github import build_tracker
 from .workflow import WorkflowStore, render_prompt
@@ -33,6 +35,9 @@ Tempo publication policy:
   your narrative assessment, determines success from the commands' exit codes.
 - If validation fails, diagnose the output, fix the project, and run project_validation again.
 - After validation passes, create a pull request but never merge it.
+- Validation commands must not edit project files.
+- If the requested behavior is already present and validation passes, use tempo_complete with
+  concrete evidence instead of repeating work or creating an empty pull request.
 """.strip()
 VALIDATION_CONTINUATION_PROMPT = (
     "Local validation has not passed yet. Inspect the repository's own instructions and tooling, "
@@ -48,10 +53,13 @@ class Orchestrator:
         self.store = WorkflowStore(workflow_path)
         self.tracker: Tracker | None = None
         self.workspace: WorkspaceManager | None = None
+        self.persistence: PersistenceStore | None = None
         self.running: dict[str, RunningEntry] = {}
         self.claimed: set[str] = set()
         self.retries: dict[str, RetryEntry] = {}
         self.completed: set[str] = set()
+        self.safety_blocked: set[str] = set()
+        self.historical_completed_count = 0
         self.totals = Totals()
         self.rate_limits: dict[str, Any] | None = None
         self.last_tick_at: datetime | None = None
@@ -63,10 +71,11 @@ class Orchestrator:
         self._loop_task: asyncio.Task[None] | None = None
         self._cancel_release: set[str] = set()
         self._retired_trackers: list[Tracker] = []
+        self._event_subscribers: set[asyncio.Queue[None]] = set()
 
     async def start(self) -> None:
         _, config = await self.store.initialize()
-        self._apply_config(config)
+        await self._apply_config(config)
         await self._startup_cleanup()
         self._loop_task = asyncio.create_task(self._run_loop(), name="tempo-orchestrator")
         await log.ainfo(
@@ -94,14 +103,20 @@ class Orchestrator:
             await tracker.close()
         await log.ainfo("orchestrator_stopped")
 
-    def _apply_config(self, config: ServiceConfig) -> None:
+    async def _apply_config(self, config: ServiceConfig) -> None:
         if self.tracker is None:
             self.tracker = build_tracker(
                 config.tracker.kind,
                 config.tracker.provider,
                 config.tracker.terminal_states,
+                config.tracker.required_labels,
             )
         self.workspace = WorkspaceManager(config.workspace.root, config.hooks)
+        self.persistence = PersistenceStore(config.tracker.kind)
+        await self.persistence.reconcile_incomplete_records()
+        self.totals, self.historical_completed_count = await self.persistence.runtime_summary()
+        self.completed = await self.persistence.completed_issue_ids()
+        self.safety_blocked = await self.persistence.safety_blocked_issue_ids()
 
     async def _run_loop(self) -> None:
         while not self._stop.is_set():
@@ -131,8 +146,18 @@ class Orchestrator:
                 config.tracker.kind,
                 config.tracker.provider,
                 config.tracker.terminal_states,
+                config.tracker.required_labels,
             )
             self.workspace = WorkspaceManager(config.workspace.root, config.hooks)
+            if not self.persistence or self.persistence.tracker_kind != config.tracker.kind:
+                self.persistence = PersistenceStore(config.tracker.kind)
+                await self.persistence.reconcile_incomplete_records()
+                (
+                    self.totals,
+                    self.historical_completed_count,
+                ) = await self.persistence.runtime_summary()
+                self.completed = await self.persistence.completed_issue_ids()
+                self.safety_blocked = await self.persistence.safety_blocked_issue_ids()
             await log.ainfo("workflow_reloaded", workflow_path=str(definition.path))
         self.last_tick_at = utcnow()
         self.last_tick_error = self.store.last_error
@@ -150,6 +175,22 @@ class Orchestrator:
 
     async def refresh(self) -> None:
         self._refresh.set()
+
+    def subscribe_events(self) -> asyncio.Queue[None]:
+        queue: asyncio.Queue[None] = asyncio.Queue(maxsize=1)
+        self._event_subscribers.add(queue)
+        return queue
+
+    def unsubscribe_events(self, queue: asyncio.Queue[None]) -> None:
+        self._event_subscribers.discard(queue)
+
+    def _publish_live_state(self) -> None:
+        for queue in tuple(self._event_subscribers):
+            if queue.full():
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+            with contextlib.suppress(asyncio.QueueFull):
+                queue.put_nowait(None)
 
     async def _startup_cleanup(self) -> None:
         _, config = self.store.current()
@@ -249,6 +290,8 @@ class Orchestrator:
         return (
             issue.id not in self.claimed
             and issue.id not in self.running
+            and issue.id not in self.completed
+            and issue.id not in self.safety_blocked
             and normalize_state(issue.state) in config.active_states
             and normalize_state(issue.state) not in config.terminal_states
             and self._routable(issue, config)
@@ -288,6 +331,7 @@ class Orchestrator:
                 self._worker_finished(issue_id, completed)
             )
         )
+        self._publish_live_state()
 
     async def _run_worker(self, issue: Issue, attempt: int | None) -> None:
         definition, config = self.store.current()
@@ -295,6 +339,9 @@ class Orchestrator:
         workspace_manager = self.workspace
         tracker = self.tracker
         workspace = await workspace_manager.create(issue.identifier)
+        entry = self.running[issue.id]
+        if self.persistence:
+            entry.run_record_id = await self.persistence.start_run(entry, workspace.path)
 
         async def on_event(event: dict[str, Any]) -> None:
             await self._codex_event(issue.id, event)
@@ -307,6 +354,7 @@ class Orchestrator:
                 tracker.authorize_publication(issue.id)
             await workspace_manager.before_run(workspace.path)
             self.running[issue.id].phase = "LaunchingAgentProcess"
+            self._publish_live_state()
             session = await client.start_session(workspace.path)
             current_issue = issue
             for turn_number in range(1, config.agent.max_turns + 1):
@@ -314,6 +362,7 @@ class Orchestrator:
                 if entry:
                     entry.phase = "StreamingTurn"
                     entry.session.turn_count = turn_number
+                    self._publish_live_state()
                 prompt = (
                     (
                         f"{render_prompt(definition, current_issue, attempt)}\n\n"
@@ -341,16 +390,44 @@ class Orchestrator:
                         "agent exhausted its turns without passing local project validation",
                         category="validation_required",
                     )
-                if entry and entry.session.pull_request_created:
+                if entry and (
+                    entry.session.pull_request_created or entry.session.no_change_completed
+                ):
                     break
                 refreshed = await tracker.fetch_issues_by_ids([issue.id])
                 if not refreshed:
                     break
                 current_issue = refreshed[0]
+                if self.persistence:
+                    await self.persistence.sync_issue(current_issue)
                 if normalize_state(
                     current_issue.state
                 ) not in config.active_states or not self._routable(current_issue, config):
                     break
+            entry = self.running.get(issue.id)
+            if not entry:
+                raise CodexError("run was released", category="run_released")
+            if entry.session.pull_request_created:
+                if entry.session.pull_request_number is None:
+                    raise CodexError(
+                        "pull request response did not include a number",
+                        category="publication_response",
+                    )
+                await tracker.finalize_pull_request(
+                    issue,
+                    entry.session.pull_request_number,
+                )
+            elif entry.session.no_change_completed:
+                entry.phase = "NoChangesRequired"
+                await tracker.finalize_without_changes(
+                    issue,
+                    entry.session.completion_summary or "No code change was required.",
+                )
+            else:
+                raise CodexError(
+                    "agent ended without creating a pull request or recording no-change completion",
+                    category="completion_required",
+                )
         finally:
             if session:
                 await client.stop_session(session)
@@ -364,15 +441,11 @@ class Orchestrator:
         session.last_codex_event = str(event.get("event"))
         session.last_codex_timestamp = utcnow()
         session.last_codex_message = event.get("payload", event)
-        session.recent_events.append(
-            {
-                "event": str(event.get("event", "unknown")),
-                "at": utcnow().isoformat(),
-                "tool": event.get("tool"),
-                "success": event.get("success"),
-            }
+        event_timestamp = utcnow()
+        append_activity(
+            session.recent_events,
+            activity_from_event(event, event_timestamp.isoformat()),
         )
-        session.recent_events[:] = session.recent_events[-25:]
         session.session_id = event.get("session_id", session.session_id)
         session.thread_id = event.get("thread_id", session.thread_id)
         session.turn_id = event.get("turn_id", session.turn_id)
@@ -392,7 +465,19 @@ class Orchestrator:
         if "rate_limits" in event:
             self.rate_limits = event["rate_limits"]
         event_name = event.get("event")
+        _, config = self.store.current()
         if event_name == "validation_started":
+            if session.validation_attempt_count >= config.validation.max_attempts_per_run:
+                entry.phase = "SafetyLimitReached"
+                self._publish_live_state()
+                raise CodexError(
+                    (
+                        "maximum validation attempts reached "
+                        f"({config.validation.max_attempts_per_run})"
+                    ),
+                    category="validation_attempt_limit",
+                )
+            session.validation_attempt_count += 1
             entry.phase = "ValidatingProject"
             session.validation_status = "running"
             session.validation_summary = str(event.get("summary", ""))
@@ -417,10 +502,22 @@ class Orchestrator:
             session.validation_finished_at = utcnow()
             if event.get("success"):
                 self.totals.validation_passes += 1
+                if session.successful_validation_count == 0:
+                    self.totals.validated_runs += 1
+                session.successful_validation_count += 1
             else:
                 self.totals.validation_failures += 1
             entry.phase = "PreparingPullRequest" if event.get("success") else "FixingValidation"
         elif event_name == "validation_invalidated":
+            if session.validation_status == "passed":
+                self.totals.validation_passes = max(0, self.totals.validation_passes - 1)
+                session.successful_validation_count = max(
+                    0, session.successful_validation_count - 1
+                )
+                if session.successful_validation_count == 0:
+                    self.totals.validated_runs = max(0, self.totals.validated_runs - 1)
+            elif session.validation_status == "failed":
+                self.totals.validation_failures = max(0, self.totals.validation_failures - 1)
             session.validation_status = "pending"
             session.validation_finished_at = None
             entry.phase = "ValidationRequired"
@@ -435,6 +532,24 @@ class Orchestrator:
                     with contextlib.suppress(json.JSONDecodeError):
                         payload = json.loads(str(event.get("output", "")))
                         session.pull_request_url = payload.get("html_url")
+                        session.pull_request_number = payload.get("number")
+        elif event_name == "no_change_completed":
+            entry.phase = "NoChangesRequired"
+            session.no_change_completed = True
+            session.completion_summary = str(event.get("reason", "")).strip()
+        self._publish_live_state()
+        if self.persistence and "delta" not in str(event_name).lower():
+            await self.persistence.record_event(entry, event)
+        if session.codex_total_tokens > config.agent.max_tokens_per_run:
+            entry.phase = "SafetyLimitReached"
+            self._publish_live_state()
+            raise CodexError(
+                (
+                    f"run exceeded token limit ({session.codex_total_tokens} > "
+                    f"{config.agent.max_tokens_per_run})"
+                ),
+                category="token_budget_exceeded",
+            )
 
     async def _worker_finished(self, issue_id: str, task: asyncio.Task[None]) -> None:
         async with self._lock:
@@ -447,6 +562,12 @@ class Orchestrator:
             self.totals.output_tokens += entry.session.codex_output_tokens
             self.totals.total_tokens += entry.session.codex_total_tokens
             if issue_id in self._cancel_release:
+                if self.persistence:
+                    await self.persistence.finish_run(
+                        entry,
+                        status="cancelled",
+                        error="run released after tracker state changed",
+                    )
                 self._cancel_release.discard(issue_id)
                 self.claimed.discard(issue_id)
                 self.retries.pop(issue_id, None)
@@ -455,29 +576,63 @@ class Orchestrator:
             if task.cancelled():
                 error = "worker cancelled or stalled"
                 next_attempt = (entry.attempt or 0) + 1
-                self._schedule_retry(issue_id, entry.issue.identifier, next_attempt, error, config)
-                return
-            error = task.exception()
-            if error is None:
-                self.completed.add(issue_id)
-                if not entry.session.pull_request_created:
+                retry_exhausted = next_attempt > config.agent.max_retries
+                if retry_exhausted:
+                    entry.phase = "SafetyLimitReached"
+                if self.persistence:
+                    await self.persistence.finish_run(
+                        entry,
+                        status="cancelled",
+                        error=error,
+                    )
+                if retry_exhausted:
+                    self.claimed.discard(issue_id)
+                    self.safety_blocked.add(issue_id)
+                else:
                     self._schedule_retry(
                         issue_id,
                         entry.issue.identifier,
-                        1,
-                        None,
+                        next_attempt,
+                        error,
                         config,
-                        continuation=True,
                     )
+                return
+            error = task.exception()
+            if error is None:
+                if self.persistence:
+                    await self.persistence.finish_run(
+                        entry,
+                        status="succeeded",
+                        error=None,
+                    )
+                self.completed.add(issue_id)
             else:
+                category = getattr(error, "category", "")
                 next_attempt = (entry.attempt or 0) + 1
-                self._schedule_retry(
-                    issue_id,
-                    entry.issue.identifier,
-                    next_attempt,
-                    str(error),
-                    config,
-                )
+                safety_limit = category in {
+                    "token_budget_exceeded",
+                    "validation_attempt_limit",
+                }
+                retry_exhausted = next_attempt > config.agent.max_retries
+                if safety_limit or retry_exhausted:
+                    entry.phase = "SafetyLimitReached"
+                if self.persistence:
+                    await self.persistence.finish_run(
+                        entry,
+                        status="failed",
+                        error=str(error),
+                    )
+                if safety_limit or retry_exhausted:
+                    self.claimed.discard(issue_id)
+                    self.safety_blocked.add(issue_id)
+                else:
+                    self._schedule_retry(
+                        issue_id,
+                        entry.issue.identifier,
+                        next_attempt,
+                        str(error),
+                        config,
+                    )
                 await log.aerror(
                     "worker_failed",
                     issue_id=issue_id,
@@ -485,6 +640,7 @@ class Orchestrator:
                     error=str(error),
                 )
         self._refresh.set()
+        self._publish_live_state()
         if not self.running and self._retired_trackers:
             retired, self._retired_trackers = self._retired_trackers, []
             for tracker in retired:
@@ -519,9 +675,21 @@ class Orchestrator:
 
     def snapshot(self) -> dict[str, Any]:
         _, config = self.store.current()
+        now = utcnow()
         state_counts = Counter(
             normalize_state(entry.issue.state) for entry in self.running.values()
         )
+        live_totals = {
+            **self.totals.__dict__,
+            "input_tokens": self.totals.input_tokens
+            + sum(entry.session.codex_input_tokens for entry in self.running.values()),
+            "output_tokens": self.totals.output_tokens
+            + sum(entry.session.codex_output_tokens for entry in self.running.values()),
+            "total_tokens": self.totals.total_tokens
+            + sum(entry.session.codex_total_tokens for entry in self.running.values()),
+            "runtime_seconds": self.totals.runtime_seconds
+            + sum((now - entry.started_at).total_seconds() for entry in self.running.values()),
+        }
         return {
             "service": {
                 "started_at": self.started_at.isoformat(),
@@ -548,6 +716,8 @@ class Orchestrator:
                     "attempt": entry.attempt,
                     "phase": entry.phase,
                     "started_at": entry.started_at.isoformat(),
+                    "max_tokens": config.agent.max_tokens_per_run,
+                    "max_validation_attempts": config.validation.max_attempts_per_run,
                     "session": {
                         **entry.session.__dict__,
                         "last_codex_timestamp": (
@@ -581,8 +751,9 @@ class Orchestrator:
             ],
             "claimed_count": len(self.claimed),
             "completed_count": len(self.completed),
+            "safety_blocked_count": len(self.safety_blocked),
             "running_by_state": dict(state_counts),
-            "totals": self.totals.__dict__,
+            "totals": live_totals,
             "rate_limits": self.rate_limits,
         }
 
@@ -605,6 +776,8 @@ class Orchestrator:
             "agents": {
                 "max_concurrent": config.agent.max_concurrent_agents,
                 "max_turns": config.agent.max_turns,
+                "max_tokens_per_run": config.agent.max_tokens_per_run,
+                "max_retries": config.agent.max_retries,
                 "per_state": config.agent.max_concurrent_agents_by_state,
                 "max_retry_backoff_ms": config.agent.max_retry_backoff_ms,
             },
@@ -618,6 +791,7 @@ class Orchestrator:
                 "command_timeout_ms": config.validation.command_timeout_ms,
                 "cleanup_timeout_ms": config.validation.cleanup_timeout_ms,
                 "max_commands": config.validation.max_commands,
+                "max_attempts_per_run": config.validation.max_attempts_per_run,
                 "max_output_chars": config.validation.max_output_chars,
                 "publication_gate": "GitHub writes locked until validation passes",
                 "merge_policy": "Tempo never merges branches or pull requests",
@@ -634,6 +808,7 @@ class Orchestrator:
                 "claimed": len(self.claimed),
                 "queued_retries": len(self.retries),
                 "completed": len(self.completed),
+                "safety_blocked": len(self.safety_blocked),
                 "rate_limits": self.rate_limits,
             },
         }

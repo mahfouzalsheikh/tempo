@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -54,3 +55,47 @@ async def test_workspace_fingerprint_changes_with_project_content(tmp_path):
     source.write_text("second")
     after = await CodexAppServer._workspace_fingerprint(project)
     assert before != after
+
+
+@pytest.mark.asyncio
+async def test_validation_that_modifies_workspace_is_rejected(tmp_path):
+    manager = WorkspaceManager(tmp_path / "root", HooksConfig())
+    workspace = await manager.create("A-2")
+    events = []
+
+    async def on_event(event):
+        events.append(event)
+
+    tracker = MemoryTracker()
+    client = CodexAppServer(
+        ServiceConfig.model_validate(
+            {
+                "tracker": {
+                    "kind": "memory",
+                    "active_states": ["Todo"],
+                    "terminal_states": ["Done"],
+                },
+                "workspace": {"root": tmp_path / "root"},
+                "validation": {"enabled": True},
+            }
+        ),
+        manager,
+        tracker,
+        on_event,
+    )
+    session = SimpleNamespace(workspace=workspace.path, validation_fingerprint=None)
+    issue = Issue(id="2", identifier="A-2", title="Task", state="Todo")
+
+    result = await client._execute_project_validation(
+        session,
+        {
+            "summary": "Pretend edit is validation",
+            "commands": [{"name": "Edit", "command": "printf changed > changed.txt"}],
+        },
+        issue,
+    )
+
+    assert result["success"] is False
+    assert "modified project files" in result["output"]
+    assert session.validation_fingerprint is None
+    assert any(event["event"] == "validation_invalidated" for event in events)

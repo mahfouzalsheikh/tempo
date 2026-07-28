@@ -88,6 +88,7 @@ async def test_github_pr_creation_requires_validation_and_merge_is_always_denied
     created = await tracker.execute_agent_tool("github_api", create, issue)
     assert created["success"] is True
     assert len(requests) == 1
+    assert b"Closes #1" in requests[0].content
 
     merged = await tracker.execute_agent_tool(
         "github_api",
@@ -96,6 +97,58 @@ async def test_github_pr_creation_requires_validation_and_merge_is_always_denied
     )
     assert merged["success"] is False
     assert len(requests) == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_github_finalization_removes_dispatch_label_and_agent_cannot_edit_issue():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={"labels": [{"name": "tempo"}, {"name": "enhancement"}]},
+            )
+        return httpx.Response(200, json={})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tracker = GitHubTracker(
+        repo="openai/example",
+        client=client,
+        required_labels=["tempo"],
+    )
+    issue = (
+        await MemoryTracker(
+            [
+                {
+                    "id": "1",
+                    "identifier": "A-1",
+                    "title": "One",
+                    "state": "open",
+                    "labels": ["tempo", "enhancement"],
+                }
+            ]
+        ).fetch_issues_by_ids(["1"])
+    )[0]
+    tracker.authorize_publication(issue.id)
+
+    denied = await tracker.execute_agent_tool(
+        "github_api",
+        {
+            "method": "PATCH",
+            "path": "/repos/openai/example/issues/1",
+            "body": {"state": "closed"},
+        },
+        issue,
+    )
+    assert denied["success"] is False
+    assert requests == []
+
+    await tracker.finalize_pull_request(issue, 7)
+    assert [request.method for request in requests] == ["GET", "PATCH"]
+    assert requests[-1].content == b'{"labels":["enhancement"]}'
     await client.aclose()
 
 

@@ -31,12 +31,12 @@ COPY manage.py WORKFLOW.md ./
 RUN pip install .
 
 RUN useradd --create-home --uid 10001 tempo \
-    && mkdir -p /data/workspaces /data/log /home/tempo/.codex \
+    && mkdir -p /data/workspaces /data/database /data/log /home/tempo/.codex \
     && chown -R tempo:tempo /data /home/tempo
 
 USER tempo
 EXPOSE 8000
-VOLUME ["/data/workspaces", "/home/tempo/.codex"]
+VOLUME ["/data/workspaces", "/data/database", "/home/tempo/.codex"]
 HEALTHCHECK --interval=20s --timeout=3s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"
 

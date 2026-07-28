@@ -29,6 +29,17 @@ for line in sys.stdin:
         )
         send(
             {
+                "id": 99,
+                "method": "item/tool/call",
+                "params": {
+                    "tool": "tempo_complete",
+                    "arguments": {"reason": "The fixture requires no code changes."},
+                },
+            }
+        )
+    elif message.get("id") == 99:
+        send(
+            {
                 "method": "turn/completed",
                 "params": {"turn": {"id": "turn-test", "status": "completed"}},
             }

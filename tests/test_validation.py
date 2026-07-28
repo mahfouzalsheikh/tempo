@@ -2,7 +2,7 @@ import pytest
 
 from tempo.config import HooksConfig, ValidationConfig
 from tempo.validation import ProjectValidator
-from tempo.validation_server import run_command
+from tempo.validation_server import run_command, stream_command
 from tempo.workspace import WorkspaceManager
 
 
@@ -78,3 +78,22 @@ async def test_project_validator_stops_after_failure_but_still_cleans_up(tmp_pat
 async def test_isolated_runner_command_reports_exit_code_and_output(tmp_path):
     result = await run_command("printf runner; exit 3", tmp_path, 5000, 1000)
     assert result == {"exit_code": 3, "output": "runner"}
+
+
+@pytest.mark.asyncio
+async def test_isolated_runner_streams_output_before_result(tmp_path):
+    items = [
+        item
+        async for item in stream_command(
+            "printf streamed-output",
+            tmp_path,
+            5000,
+            1000,
+        )
+    ]
+    assert any(item == {"type": "output", "text": "streamed-output"} for item in items)
+    assert items[-1] == {
+        "type": "result",
+        "exit_code": 0,
+        "output": "streamed-output",
+    }

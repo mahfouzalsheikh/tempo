@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import signal
 from collections.abc import Awaitable, Callable
@@ -33,6 +34,7 @@ class ProjectValidator:
             "GITHUB_TOKEN",
             "OPENAI_API_KEY",
             "DJANGO_SECRET_KEY",
+            "TEMPO_ADMIN_PASSWORD",
         }
         self.runner_url = config.runner_url or os.getenv("TEMPO_VALIDATION_RUNNER_URL")
 
@@ -148,7 +150,7 @@ class ProjectValidator:
             }
         )
         if self.runner_url:
-            exit_code, text = await self._run_remote(command, workspace, timeout_ms)
+            exit_code, text = await self._run_remote(name, command, workspace, timeout_ms)
         else:
             exit_code, text = await self._run_local(command, workspace, timeout_ms)
         result = {
@@ -161,24 +163,48 @@ class ProjectValidator:
         await self.on_event({"event": "validation_command_completed", **result})
         return result
 
-    async def _run_remote(self, command: str, workspace: Path, timeout_ms: int) -> tuple[int, str]:
+    async def _run_remote(
+        self,
+        name: str,
+        command: str,
+        workspace: Path,
+        timeout_ms: int,
+    ) -> tuple[int, str]:
         timeout = httpx.Timeout(timeout_ms / 1000 + 10)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                f"{self.runner_url.rstrip('/')}/run",
+            async with client.stream(
+                "POST",
+                f"{self.runner_url.rstrip('/')}/run-stream",
                 json={
                     "workspace": str(workspace),
                     "command": command,
                     "timeout_ms": timeout_ms,
                     "max_output_chars": self.config.max_output_chars,
                 },
-            )
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"validation runner returned {response.status_code}: {response.text[:500]}"
-            )
-        payload = response.json()
-        return int(payload["exit_code"]), str(payload.get("output", ""))
+            ) as response:
+                if response.status_code != 200:
+                    body = (await response.aread()).decode(errors="replace")
+                    raise RuntimeError(
+                        f"validation runner returned {response.status_code}: {body[:500]}"
+                    )
+                result: dict[str, Any] | None = None
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    payload = json.loads(line)
+                    if payload.get("type") == "output":
+                        await self.on_event(
+                            {
+                                "event": "validation_command_output_delta",
+                                "name": name,
+                                "delta": str(payload.get("text", "")),
+                            }
+                        )
+                    elif payload.get("type") == "result":
+                        result = payload
+        if not result:
+            raise RuntimeError("validation runner ended without a result")
+        return int(result["exit_code"]), str(result.get("output", ""))
 
     async def _run_local(self, command: str, workspace: Path, timeout_ms: int) -> tuple[int, str]:
         environment = os.environ.copy()

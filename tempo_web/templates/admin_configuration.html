@@ -5,14 +5,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Configuration · Tempo</title>
-  <link rel="stylesheet" href="{% static 'tempo.css' %}">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260728-3">
 </head>
 <body>
   <main>
     <nav class="topnav">
       <a class="brand" href="/">Tempo</a>
-      <a href="/admin/">Operations</a>
-      <a class="active" href="/admin/configuration/">Configuration</a>
+      <a href="/ops/">Operations</a>
+      <a class="active" href="/ops/configuration/">Configuration</a>
+      <a href="/admin/">Django Admin</a>
     </nav>
     <header class="compact">
       <div>
@@ -30,6 +31,6 @@
       <section class="panel"><div class="panel-title"><h2>Workflow</h2></div><dl id="config-workflow"></dl></section>
     </div>
   </main>
-  <script src="{% static 'admin.js' %}"></script>
+  <script src="{% static 'admin.js' %}?v=20260728-3"></script>
 </body>
 </html>

@@ -31,20 +31,23 @@ hooks:
   timeout_ms: 60000
 agent:
   max_concurrent_agents: 3
-  max_turns: 20
+  max_turns: 6
+  max_tokens_per_run: 1000000
+  max_retries: 2
   max_retry_backoff_ms: 300000
 validation:
   enabled: true
   command_timeout_ms: 1800000
   cleanup_timeout_ms: 120000
   max_commands: 12
+  max_attempts_per_run: 5
 codex:
   command: codex app-server
   approval_policy: never
   thread_sandbox: workspace-write
   turn_timeout_ms: 3600000
   read_timeout_ms: 5000
-  stall_timeout_ms: 300000
+  stall_timeout_ms: 120000
 ---
 
 You are working on {{ issue.identifier }}: {{ issue.title }}.
@@ -55,4 +58,6 @@ Work autonomously in the current issue workspace. Follow the repository's own in
 tooling to build or launch the project and run its relevant tests locally. Use project_validation
 with the complete project-native validation sequence. Fix failures and repeat validation as needed.
 Only after validation passes, leave the workspace in a reviewable state, push the branch, and open
-a pull request through available provider-native tooling. Never merge the pull request.
+a pull request through available provider-native tooling. Never merge the pull request. If the
+requested work is already present and the validated project needs no change, use the
+tempo_complete tool with concrete evidence instead of repeating work.

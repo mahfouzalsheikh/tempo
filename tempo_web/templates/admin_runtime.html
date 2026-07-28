@@ -5,14 +5,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Operations · Tempo</title>
-  <link rel="stylesheet" href="{% static 'tempo.css' %}">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260728-3">
 </head>
 <body>
   <main>
     <nav class="topnav">
       <a class="brand" href="/">Tempo</a>
-      <a class="active" href="/admin/">Operations</a>
-      <a href="/admin/configuration/">Configuration</a>
+      <a class="active" href="/ops/">Operations</a>
+      <a href="/ops/configuration/">Configuration</a>
+      <a href="/admin/">Django Admin</a>
     </nav>
     <header class="compact">
       <div>
@@ -27,6 +28,7 @@
       <article><span>Claimed</span><strong id="admin-claimed">—</strong></article>
       <article><span>Retries</span><strong id="admin-retries">—</strong></article>
       <article><span>Completed</span><strong id="admin-completed">—</strong></article>
+      <article><span>Safety stops</span><strong id="admin-safety-blocked">—</strong></article>
     </section>
     <section class="panel">
       <div class="panel-title"><h2>Runtime policy</h2></div>
@@ -37,6 +39,6 @@
       <pre id="admin-rate-limits" class="codeblock">No rate-limit telemetry received.</pre>
     </section>
   </main>
-  <script src="{% static 'admin.js' %}"></script>
+  <script src="{% static 'admin.js' %}?v=20260728-3"></script>
 </body>
 </html>

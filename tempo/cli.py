@@ -12,6 +12,21 @@ from .orchestrator import Orchestrator
 from .runtime import set_orchestrator
 
 
+def prepare_database() -> None:
+    from django.contrib.auth import get_user_model
+    from django.core.management import call_command
+
+    call_command("migrate", interactive=False, verbosity=1)
+    username = os.getenv("TEMPO_ADMIN_USERNAME", "").strip()
+    password = os.getenv("TEMPO_ADMIN_PASSWORD", "")
+    email = os.getenv("TEMPO_ADMIN_EMAIL", "").strip()
+    if not username or not password:
+        return
+    user_model = get_user_model()
+    if not user_model.objects.filter(username=username).exists():
+        user_model.objects.create_superuser(username=username, email=email, password=password)
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         prog="tempo",
@@ -35,6 +50,7 @@ async def run(args: argparse.Namespace) -> None:
         raise SystemExit(f"Workflow file does not exist: {path}")
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tempo_web.settings")
     configure_logging()
+    await asyncio.to_thread(prepare_database)
     orchestrator = Orchestrator(str(path))
     await orchestrator.start()
     set_orchestrator(orchestrator)
@@ -58,6 +74,10 @@ async def run(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tempo_web.settings")
+    import django
+
+    django.setup()
     args = parser().parse_args()
     try:
         asyncio.run(run(args))

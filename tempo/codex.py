@@ -32,6 +32,7 @@ class CodexSession:
     reader_task: asyncio.Task[None]
     next_request_id: int = 3
     validation_fingerprint: str | None = None
+    completion_disposition: str | None = None
 
 
 class CodexAppServer:
@@ -64,7 +65,10 @@ class CodexAppServer:
         ):
             raise CodexError("agent cwd cannot be workspace root", category="invalid_workspace_cwd")
         environment = os.environ.copy()
-        for name in self.tracker.secret_environment_names():
+        for name in self.tracker.secret_environment_names() | {
+            "DJANGO_SECRET_KEY",
+            "TEMPO_ADMIN_PASSWORD",
+        }:
             environment.pop(name, None)
         try:
             process = await asyncio.create_subprocess_exec(
@@ -111,6 +115,7 @@ class CodexAppServer:
                 "dynamicTools": [
                     *self.tracker.agent_tool_specs(),
                     *([self.validator.tool_spec()] if self.validation_enabled else []),
+                    self._completion_tool_spec(),
                 ],
             }
             await self._send(session, {"method": "thread/start", "id": 2, "params": params})
@@ -190,12 +195,41 @@ class CodexAppServer:
             name = params.get("tool") or params.get("name")
             arguments = params.get("arguments") or {}
             if name == "project_validation" and self.validation_enabled:
-                result = await self.validator.execute(arguments, session.workspace)
-                if result.get("success"):
-                    session.validation_fingerprint = await self._workspace_fingerprint(
-                        session.workspace
-                    )
-                    self.tracker.authorize_publication(issue.id)
+                result = await self._execute_project_validation(
+                    session,
+                    arguments,
+                    issue,
+                )
+            elif name == "tempo_complete":
+                reason = str(arguments.get("reason", "")).strip()
+                fingerprint_matches = not self.validation_enabled or (
+                    session.validation_fingerprint is not None
+                    and session.validation_fingerprint
+                    == await self._workspace_fingerprint(session.workspace)
+                )
+                if not reason:
+                    result = {
+                        "success": False,
+                        "output": "A concrete completion reason is required.",
+                        "contentItems": [],
+                    }
+                elif not fingerprint_matches:
+                    result = {
+                        "success": False,
+                        "output": (
+                            "The current workspace must pass unchanged local validation before "
+                            "Tempo can complete a ticket without a pull request."
+                        ),
+                        "contentItems": [],
+                    }
+                else:
+                    session.completion_disposition = reason
+                    await self.on_event({"event": "no_change_completed", "reason": reason})
+                    result = {
+                        "success": True,
+                        "output": "Tempo recorded the ticket as complete without code changes.",
+                        "contentItems": [],
+                    }
             else:
                 mutating_github_call = name == "github_api" and str(
                     arguments.get("method", "GET")
@@ -270,6 +304,60 @@ class CodexAppServer:
             session,
             {"id": request_id, "error": {"code": -32601, "message": "Unsupported request"}},
         )
+
+    async def _execute_project_validation(
+        self,
+        session: CodexSession,
+        arguments: dict[str, Any],
+        issue: Issue,
+    ) -> dict[str, Any]:
+        fingerprint_before = await self._workspace_fingerprint(session.workspace)
+        result = await self.validator.execute(arguments, session.workspace)
+        fingerprint_after = await self._workspace_fingerprint(session.workspace)
+        if fingerprint_before != fingerprint_after:
+            session.validation_fingerprint = None
+            self.tracker.revoke_publication(issue.id)
+            await self.on_event({"event": "validation_invalidated"})
+            return {
+                "success": False,
+                "output": (
+                    "Validation commands modified project files. Tempo rejected this validation "
+                    "attempt. Make code changes through the normal workspace tools, then run "
+                    "validation commands that leave project files unchanged."
+                ),
+                "contentItems": [],
+            }
+        if result.get("success"):
+            session.validation_fingerprint = fingerprint_after
+            await self.on_event(
+                {
+                    "event": "validation_fingerprint_recorded",
+                    "fingerprint": session.validation_fingerprint,
+                }
+            )
+            self.tracker.authorize_publication(issue.id)
+        return result
+
+    @staticmethod
+    def _completion_tool_spec() -> dict[str, Any]:
+        return {
+            "name": "tempo_complete",
+            "description": (
+                "Complete the ticket without a pull request only when the requested behavior is "
+                "already present or no code change is required. Local validation must pass first."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Concrete evidence explaining why no code change is needed.",
+                    }
+                },
+                "required": ["reason"],
+                "additionalProperties": False,
+            },
+        }
 
     @staticmethod
     async def _workspace_fingerprint(workspace: Path) -> str:
