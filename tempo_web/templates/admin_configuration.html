@@ -1,0 +1,35 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Configuration · Tempo</title>
+  <link rel="stylesheet" href="{% static 'tempo.css' %}">
+</head>
+<body>
+  <main>
+    <nav class="topnav">
+      <a class="brand" href="/">Tempo</a>
+      <a href="/admin/">Operations</a>
+      <a class="active" href="/admin/configuration/">Configuration</a>
+    </nav>
+    <header class="compact">
+      <div>
+        <p class="eyebrow">OPERATOR CONSOLE</p>
+        <h1>Configuration</h1>
+        <p class="subtitle">Effective workflow policy. Credentials and hook bodies are never displayed.</p>
+      </div>
+      <div class="actions"><span id="status" class="status">LIVE</span></div>
+    </header>
+    <div class="config-grid">
+      <section class="panel"><div class="panel-title"><h2>Tracker</h2></div><dl id="config-tracker"></dl></section>
+      <section class="panel"><div class="panel-title"><h2>Agents</h2></div><dl id="config-agents"></dl></section>
+      <section class="panel validation-panel"><div class="panel-title"><h2>Validation & publication</h2></div><dl id="config-validation"></dl></section>
+      <section class="panel"><div class="panel-title"><h2>Lifecycle hooks</h2></div><dl id="config-hooks"></dl></section>
+      <section class="panel"><div class="panel-title"><h2>Workflow</h2></div><dl id="config-workflow"></dl></section>
+    </div>
+  </main>
+  <script src="{% static 'admin.js' %}"></script>
+</body>
+</html>

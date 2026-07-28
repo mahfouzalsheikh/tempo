@@ -1,0 +1,429 @@
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import hashlib
+import json
+import os
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import structlog
+
+from .config import ServiceConfig
+from .domain import Issue
+from .errors import CodexError
+from .trackers.base import Tracker
+from .validation import ProjectValidator
+from .workspace import WorkspaceManager
+
+log = structlog.get_logger(__name__)
+EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+@dataclass
+class CodexSession:
+    process: asyncio.subprocess.Process
+    thread_id: str
+    workspace: Path
+    inbox: asyncio.Queue[dict[str, Any]]
+    reader_task: asyncio.Task[None]
+    next_request_id: int = 3
+    validation_fingerprint: str | None = None
+
+
+class CodexAppServer:
+    """Version-tolerant Codex app-server JSONL client."""
+
+    def __init__(
+        self,
+        config: ServiceConfig,
+        workspace_manager: WorkspaceManager,
+        tracker: Tracker,
+        on_event: EventCallback,
+    ) -> None:
+        self.config = config.codex
+        self.validation_enabled = config.validation.enabled
+        self.workspace_manager = workspace_manager
+        self.tracker = tracker
+        self.on_event = on_event
+        self.validator = ProjectValidator(
+            config.validation,
+            workspace_manager,
+            on_event,
+            tracker.secret_environment_names(),
+        )
+
+    async def start_session(self, workspace: Path) -> CodexSession:
+        self.workspace_manager.assert_contained(workspace)
+        # This is a fast local safety check performed once per worker.
+        if workspace.resolve(strict=True) == self.workspace_manager.root.resolve(  # noqa: ASYNC240
+            strict=True
+        ):
+            raise CodexError("agent cwd cannot be workspace root", category="invalid_workspace_cwd")
+        environment = os.environ.copy()
+        for name in self.tracker.secret_environment_names():
+            environment.pop(name, None)
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "bash",
+                "-lc",
+                f"exec {self.config.command}",
+                cwd=workspace,
+                env=environment,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                limit=10 * 1024 * 1024,
+            )
+        except FileNotFoundError as exc:
+            raise CodexError(
+                "bash or Codex executable not found", category="codex_not_found"
+            ) from exc
+        inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        reader_task = asyncio.create_task(self._read_stdout(process, inbox))
+        asyncio.create_task(self._read_stderr(process))
+        session = CodexSession(process, "", workspace, inbox, reader_task)
+        try:
+            await self._send(
+                session,
+                {
+                    "method": "initialize",
+                    "id": 1,
+                    "params": {
+                        "clientInfo": {
+                            "name": "tempo_python",
+                            "title": "Tempo Python",
+                            "version": "0.1.0",
+                        },
+                        "capabilities": {"experimentalApi": True},
+                    },
+                },
+            )
+            await self._response(session, 1, self.config.read_timeout_ms)
+            await self._send(session, {"method": "initialized", "params": {}})
+            params: dict[str, Any] = {
+                "cwd": str(workspace),
+                "approvalPolicy": self.config.approval_policy,
+                "sandbox": self.config.thread_sandbox,
+                "dynamicTools": [
+                    *self.tracker.agent_tool_specs(),
+                    *([self.validator.tool_spec()] if self.validation_enabled else []),
+                ],
+            }
+            await self._send(session, {"method": "thread/start", "id": 2, "params": params})
+            result = await self._response(session, 2, self.config.read_timeout_ms)
+            thread_id = result.get("thread", {}).get("id")
+            if not thread_id:
+                raise CodexError("thread/start returned no thread id", category="response_error")
+            session.thread_id = str(thread_id)
+            return session
+        except Exception:
+            await self.stop_session(session)
+            raise
+
+    async def run_turn(self, session: CodexSession, prompt: str, issue: Issue) -> dict[str, Any]:
+        request_id = session.next_request_id
+        session.next_request_id += 1
+        sandbox_policy = self.config.turn_sandbox_policy or {
+            "type": "workspaceWrite",
+            "writableRoots": [str(session.workspace)],
+            "networkAccess": False,
+        }
+        await self._send(
+            session,
+            {
+                "method": "turn/start",
+                "id": request_id,
+                "params": {
+                    "threadId": session.thread_id,
+                    "input": [{"type": "text", "text": prompt}],
+                    "cwd": str(session.workspace),
+                    "title": f"{issue.identifier}: {issue.title}",
+                    "approvalPolicy": self.config.approval_policy,
+                    "sandboxPolicy": sandbox_policy,
+                },
+            },
+        )
+        result = await self._response(session, request_id, self.config.read_timeout_ms)
+        turn_id = result.get("turn", {}).get("id")
+        if not turn_id:
+            raise CodexError("turn/start returned no turn id", category="response_error")
+        await self.on_event(
+            {
+                "event": "session_started",
+                "session_id": f"{session.thread_id}-{turn_id}",
+                "thread_id": session.thread_id,
+                "turn_id": str(turn_id),
+                "codex_app_server_pid": str(session.process.pid),
+            }
+        )
+
+        while True:
+            message = await self._next_message(session, self.config.turn_timeout_ms)
+            method = message.get("method", "")
+            if "id" in message and method:
+                await self._handle_server_request(session, message, issue)
+                continue
+            event = self._event_from_message(message)
+            await self.on_event(event)
+            if method == "turn/completed":
+                status = message.get("params", {}).get("turn", {}).get("status", "completed")
+                if status in {"failed", "interrupted", "cancelled"}:
+                    raise CodexError(f"turn ended with status {status}", category="turn_failed")
+                return message
+            if method in {"turn/failed", "turn/cancelled"}:
+                raise CodexError(
+                    f"{method}: {message.get('params')}",
+                    category=method.replace("/", "_"),
+                )
+
+    async def _handle_server_request(
+        self, session: CodexSession, message: dict[str, Any], issue: Issue
+    ) -> None:
+        method = message.get("method")
+        request_id = message["id"]
+        if method == "item/tool/call":
+            params = message.get("params", {})
+            name = params.get("tool") or params.get("name")
+            arguments = params.get("arguments") or {}
+            if name == "project_validation" and self.validation_enabled:
+                result = await self.validator.execute(arguments, session.workspace)
+                if result.get("success"):
+                    session.validation_fingerprint = await self._workspace_fingerprint(
+                        session.workspace
+                    )
+                    self.tracker.authorize_publication(issue.id)
+            else:
+                mutating_github_call = name == "github_api" and str(
+                    arguments.get("method", "GET")
+                ).upper() not in {"GET", "HEAD"}
+                if (
+                    mutating_github_call
+                    and session.validation_fingerprint
+                    and session.validation_fingerprint
+                    != await self._workspace_fingerprint(session.workspace)
+                ):
+                    session.validation_fingerprint = None
+                    self.tracker.revoke_publication(issue.id)
+                    result = {
+                        "success": False,
+                        "output": (
+                            "The workspace changed after validation. Run project_validation again "
+                            "before writing to GitHub."
+                        ),
+                        "contentItems": [],
+                    }
+                    await self.on_event({"event": "validation_invalidated"})
+                else:
+                    result = await self.tracker.execute_agent_tool(str(name), arguments, issue)
+            await self._send(session, {"id": request_id, "result": result})
+            await self.on_event(
+                {
+                    "event": "tool_call_completed",
+                    "tool": str(name),
+                    "arguments": arguments,
+                    "success": bool(result.get("success")),
+                    "output": str(result.get("output", ""))[:4000],
+                }
+            )
+            return
+        if method in {
+            "item/commandExecution/requestApproval",
+            "item/fileChange/requestApproval",
+            "execCommandApproval",
+            "applyPatchApproval",
+        }:
+            if self.config.approval_policy == "never":
+                decision = (
+                    "approved_for_session"
+                    if method in {"execCommandApproval", "applyPatchApproval"}
+                    else "acceptForSession"
+                )
+                await self._send(session, {"id": request_id, "result": {"decision": decision}})
+                await self.on_event({"event": "approval_auto_approved", "payload": message})
+                return
+            await self._send(
+                session,
+                {
+                    "id": request_id,
+                    "error": {"code": -32000, "message": "Operator approval unavailable"},
+                },
+            )
+            raise CodexError("agent requested approval", category="approval_required")
+        if method in {
+            "item/tool/requestUserInput",
+            "tool/requestUserInput",
+            "mcpServer/elicitation/request",
+        }:
+            await self._send(
+                session,
+                {
+                    "id": request_id,
+                    "error": {"code": -32000, "message": "Interactive input unavailable"},
+                },
+            )
+            raise CodexError("agent requested user input", category="turn_input_required")
+        await self._send(
+            session,
+            {"id": request_id, "error": {"code": -32601, "message": "Unsupported request"}},
+        )
+
+    @staticmethod
+    async def _workspace_fingerprint(workspace: Path) -> str:
+        process = await asyncio.create_subprocess_exec(
+            "git",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        output, _ = await process.communicate()
+        if process.returncode == 0:
+            paths = sorted(path for path in output.split(b"\0") if path)
+        else:
+            paths = await asyncio.to_thread(CodexAppServer._fallback_workspace_paths, workspace)
+        digest = hashlib.sha256()
+        for raw_path in paths:
+            digest.update(raw_path)
+            path = workspace / os.fsdecode(raw_path)
+            try:
+                if path.is_symlink():
+                    digest.update(os.readlink(path).encode())
+                else:
+                    digest.update(await asyncio.to_thread(path.read_bytes))
+            except OSError:
+                digest.update(b"<missing>")
+        return digest.hexdigest()
+
+    @staticmethod
+    def _fallback_workspace_paths(workspace: Path) -> list[bytes]:
+        return sorted(
+            str(path.relative_to(workspace)).encode()
+            for path in workspace.rglob("*")
+            if path.is_file() and ".git" not in path.relative_to(workspace).parts
+        )
+
+    async def stop_session(self, session: CodexSession) -> None:
+        if session.process.returncode is None:
+            session.process.terminate()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(session.process.wait(), timeout=3)
+            if session.process.returncode is None:
+                session.process.kill()
+                await session.process.wait()
+        session.reader_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await session.reader_task
+
+    async def _send(self, session: CodexSession, message: dict[str, Any]) -> None:
+        if not session.process.stdin:
+            raise CodexError("Codex stdin is unavailable", category="port_exit")
+        session.process.stdin.write((json.dumps(message, separators=(",", ":")) + "\n").encode())
+        try:
+            await session.process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError) as exc:
+            raise CodexError("Codex process exited", category="port_exit") from exc
+
+    async def _response(
+        self, session: CodexSession, request_id: int, timeout_ms: int
+    ) -> dict[str, Any]:
+        while True:
+            message = await self._next_message(session, timeout_ms)
+            if message.get("id") != request_id:
+                await self.on_event(self._event_from_message(message))
+                continue
+            if "error" in message:
+                raise CodexError(
+                    f"Codex response error: {message['error']}", category="response_error"
+                )
+            return message.get("result") or {}
+
+    async def _next_message(self, session: CodexSession, timeout_ms: int) -> dict[str, Any]:
+        if session.process.returncode is not None and session.inbox.empty():
+            raise CodexError(
+                f"Codex exited with status {session.process.returncode}", category="port_exit"
+            )
+        try:
+            message = await asyncio.wait_for(session.inbox.get(), timeout=timeout_ms / 1000)
+        except TimeoutError as exc:
+            raise CodexError("Codex response timed out", category="turn_timeout") from exc
+        if message.get("_stream_closed"):
+            raise CodexError("Codex stdout closed", category="port_exit")
+        return message
+
+    async def _read_stdout(
+        self, process: asyncio.subprocess.Process, inbox: asyncio.Queue[dict[str, Any]]
+    ) -> None:
+        assert process.stdout
+        while line := await process.stdout.readline():
+            try:
+                await inbox.put(json.loads(line))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                await self.on_event(
+                    {"event": "malformed", "payload": line.decode(errors="replace")[:1000]}
+                )
+        await inbox.put({"_stream_closed": True})
+
+    async def _read_stderr(self, process: asyncio.subprocess.Process) -> None:
+        assert process.stderr
+        while line := await process.stderr.readline():
+            await log.adebug("codex_stderr", message=line.decode(errors="replace").rstrip()[:1000])
+
+    @staticmethod
+    def _event_from_message(message: dict[str, Any]) -> dict[str, Any]:
+        event: dict[str, Any] = {
+            "event": message.get("method", "other_message"),
+            "payload": message.get("params", message),
+        }
+        usage = CodexAppServer._find_mapping(
+            message, {"inputTokens", "outputTokens", "totalTokens"}
+        )
+        if usage:
+            event["usage"] = {
+                "input_tokens": int(usage.get("inputTokens", 0) or 0),
+                "output_tokens": int(usage.get("outputTokens", 0) or 0),
+                "total_tokens": int(usage.get("totalTokens", 0) or 0),
+            }
+        limits = CodexAppServer._find_key(message, "rateLimits")
+        if limits is not None:
+            event["rate_limits"] = limits
+        return event
+
+    @staticmethod
+    def _find_mapping(value: Any, keys: set[str]) -> dict[str, Any] | None:
+        if isinstance(value, dict):
+            if keys & value.keys():
+                return value
+            for child in value.values():
+                found = CodexAppServer._find_mapping(child, keys)
+                if found:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = CodexAppServer._find_mapping(child, keys)
+                if found:
+                    return found
+        return None
+
+    @staticmethod
+    def _find_key(value: Any, key: str) -> Any:
+        if isinstance(value, dict):
+            if key in value:
+                return value[key]
+            for child in value.values():
+                found = CodexAppServer._find_key(child, key)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = CodexAppServer._find_key(child, key)
+                if found is not None:
+                    return found
+        return None

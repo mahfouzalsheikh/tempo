@@ -1,0 +1,42 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Operations · Tempo</title>
+  <link rel="stylesheet" href="{% static 'tempo.css' %}">
+</head>
+<body>
+  <main>
+    <nav class="topnav">
+      <a class="brand" href="/">Tempo</a>
+      <a class="active" href="/admin/">Operations</a>
+      <a href="/admin/configuration/">Configuration</a>
+    </nav>
+    <header class="compact">
+      <div>
+        <p class="eyebrow">OPERATOR CONSOLE</p>
+        <h1>Runtime</h1>
+        <p class="subtitle">Scheduler health, capacity, retries, and service-level policy.</p>
+      </div>
+      <div class="actions"><span id="status" class="status">LIVE</span><button id="refresh">Poll now</button></div>
+    </header>
+    <section class="metrics">
+      <article><span>Running</span><strong id="admin-running">—</strong></article>
+      <article><span>Claimed</span><strong id="admin-claimed">—</strong></article>
+      <article><span>Retries</span><strong id="admin-retries">—</strong></article>
+      <article><span>Completed</span><strong id="admin-completed">—</strong></article>
+    </section>
+    <section class="panel">
+      <div class="panel-title"><h2>Runtime policy</h2></div>
+      <dl id="admin-runtime"></dl>
+    </section>
+    <section class="panel">
+      <div class="panel-title"><h2>Rate limits</h2></div>
+      <pre id="admin-rate-limits" class="codeblock">No rate-limit telemetry received.</pre>
+    </section>
+  </main>
+  <script src="{% static 'admin.js' %}"></script>
+</body>
+</html>

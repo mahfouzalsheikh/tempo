@@ -1,0 +1,68 @@
+services:
+  tempo:
+    build:
+      context: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${TEMPO_PORT:-8000}:8000"
+    environment:
+      DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY:-local-development-only}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      TEMPO_LOG_LEVEL: "${TEMPO_LOG_LEVEL:-INFO}"
+      TEMPO_WORKSPACE_ROOT: /data/workspaces
+      DOCKER_HOST: tcp://project-runner:2375
+      TEMPO_VALIDATION_RUNNER_URL: http://validation-runner:8787
+    volumes:
+      - ./WORKFLOW.md:/app/WORKFLOW.md:ro
+      - tempo-workspaces:/data/workspaces
+      - tempo-codex-home:/home/tempo/.codex
+    depends_on:
+      project-runner:
+        condition: service_healthy
+      validation-runner:
+        condition: service_healthy
+
+  validation-runner:
+    build:
+      context: .
+    entrypoint: ["python", "-m", "tempo.validation_server"]
+    restart: unless-stopped
+    environment:
+      TEMPO_WORKSPACE_ROOT: /data/workspaces
+      DOCKER_HOST: tcp://project-runner:2375
+    depends_on:
+      project-runner:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=2)",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - tempo-workspaces:/data/workspaces
+
+  project-runner:
+    image: docker:27-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command: ["--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock"]
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - tempo-workspaces:/data/workspaces
+
+volumes:
+  tempo-workspaces:
+  tempo-codex-home:
