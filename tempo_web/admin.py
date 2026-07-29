@@ -1,6 +1,29 @@
 from django.contrib import admin
 
-from .models import AgentRun, AgentSession, TrackedIssue, ValidationAttempt, ValidationCommand
+from .models import (
+    AgentRun,
+    AgentSession,
+    ApprovalRequest,
+    CredentialReference,
+    Environment,
+    OperatorAction,
+    Organization,
+    Project,
+    Repository,
+    RunCheckpoint,
+    TrackedIssue,
+    ValidationAttempt,
+    ValidationCommand,
+    WorkerLease,
+    WorkflowVersion,
+)
+
+admin.site.register(Organization)
+admin.site.register(Project)
+admin.site.register(Repository)
+admin.site.register(Environment)
+admin.site.register(WorkflowVersion)
+admin.site.register(CredentialReference)
 
 
 class ReadOnlyRuntimeAdmin(admin.ModelAdmin):
@@ -179,6 +202,12 @@ class ValidationCommandAdmin(ReadOnlyRuntimeAdmin):
         "finished_at",
     )
     list_select_related = ("validation", "validation__run", "validation__run__issue")
+
+
+admin.site.register(RunCheckpoint, ReadOnlyRuntimeAdmin)
+admin.site.register(WorkerLease, ReadOnlyRuntimeAdmin)
+admin.site.register(OperatorAction, ReadOnlyRuntimeAdmin)
+admin.site.register(ApprovalRequest, ReadOnlyRuntimeAdmin)
 
 
 admin.site.site_header = "Tempo administration"

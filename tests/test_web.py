@@ -44,6 +44,16 @@ class FakeOrchestrator:
         if self.event_queue is queue:
             self.event_queue = None
 
+    async def control_run(self, run_id, action, payload, *, user_id, idempotency_key):
+        self.control = {
+            "run_id": run_id,
+            "action": action,
+            "payload": payload,
+            "user_id": user_id,
+            "idempotency_key": idempotency_key,
+        }
+        return True, "applied"
+
 
 def test_health_and_state():
     set_orchestrator(FakeOrchestrator())
@@ -53,7 +63,11 @@ def test_health_and_state():
     assert client.get("/api/v1/admin").status_code == 200
     assert client.get("/api/v1/A-1").json()["identifier"] == "A-1"
     assert client.get("/api/v1/missing").status_code == 404
-    assert b"Tempo" in client.get("/").content
+    dashboard = client.get("/")
+    assert b"Control center" in dashboard.content
+    assert b"Approval inbox" in dashboard.content
+    assert b"Projects" in dashboard.content
+    assert "csrftoken" in dashboard.cookies
     assert b"Runtime" in client.get("/ops/").content
     assert b"Configuration" in client.get("/ops/configuration/").content
     assert client.get("/admin/").status_code == 302
@@ -77,6 +91,134 @@ def test_django_admin_lists_tempo_models():
     assert b"Tracked issues" in response.content
     assert b"Agent runs" in response.content
     assert b"Validation attempts" in response.content
+
+
+@pytest.mark.django_db
+def test_operator_actions_require_authentication_and_are_forwarded():
+    orchestrator = FakeOrchestrator()
+    set_orchestrator(orchestrator)
+    client = Client()
+    assert client.post("/api/v1/refresh").status_code == 401
+    assert client.post("/api/v1/runs/7/pause", data={}).status_code == 401
+    user = get_user_model().objects.create_user(username="operator", password="secret")
+    client.force_login(user)
+    response = client.post(
+        "/api/v1/runs/7/reprioritize",
+        data='{"priority": 2}',
+        content_type="application/json",
+        HTTP_IDEMPOTENCY_KEY="action-7",
+    )
+    assert response.status_code == 202
+    assert orchestrator.control == {
+        "run_id": 7,
+        "action": "reprioritize",
+        "payload": {"priority": 2},
+        "user_id": user.pk,
+        "idempotency_key": "action-7",
+    }
+    set_orchestrator(None)
+
+
+@pytest.mark.django_db
+def test_approval_decision_can_edit_arguments_and_requeues_an_unleased_run():
+    from tempo.domain import utcnow
+    from tempo_web.models import (
+        AgentRun,
+        ApprovalRequest,
+        Organization,
+        Project,
+        TrackedIssue,
+    )
+
+    organization = Organization.objects.create(name="Acme", slug="acme")
+    project = Project.objects.create(organization=organization, name="API", slug="api")
+    issue = TrackedIssue.objects.create(
+        project=project,
+        tracker_kind="memory",
+        external_id="1",
+        identifier="A-1",
+        title="Approve",
+        state="open",
+    )
+    run = AgentRun.objects.create(
+        project=project,
+        issue=issue,
+        status=AgentRun.Status.WAITING_APPROVAL,
+        started_at=utcnow(),
+    )
+    approval = ApprovalRequest.objects.create(
+        run=run,
+        request_key="approval-1",
+        kind="tool:github_api",
+        title="Create pull request",
+        details={},
+        proposed_arguments={"method": "POST"},
+    )
+    user = get_user_model().objects.create_user(username="approver", password="secret")
+    client = Client()
+    assert client.get("/api/v1/approvals").status_code == 401
+    client.force_login(user)
+    response = client.post(
+        f"/api/v1/approvals/{approval.pk}/decision",
+        data='{"decision":"approve","arguments":{"method":"POST","body":{"draft":true}}}',
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    approval.refresh_from_db()
+    run.refresh_from_db()
+    assert approval.status == ApprovalRequest.Status.APPROVED
+    assert approval.edited_arguments["body"]["draft"] is True
+    assert approval.decided_by == user
+    assert run.status == AgentRun.Status.RETRY_SCHEDULED
+
+
+@pytest.mark.django_db
+def test_control_state_surfaces_paused_and_safety_stopped_runs():
+    from tempo.domain import utcnow
+    from tempo_web.models import AgentRun, Organization, Project, TrackedIssue
+
+    organization = Organization.objects.create(name="Acme", slug="acme")
+    project = Project.objects.create(organization=organization, name="API", slug="api")
+    issue = TrackedIssue.objects.create(
+        project=project,
+        tracker_kind="memory",
+        external_id="1",
+        identifier="A-1",
+        title="Needs attention",
+        state="open",
+    )
+    paused = AgentRun.objects.create(
+        project=project,
+        issue=issue,
+        status=AgentRun.Status.PAUSED,
+        phase="Paused",
+        priority=2,
+        started_at=utcnow(),
+    )
+    stopped = AgentRun.objects.create(
+        project=project,
+        issue=issue,
+        status=AgentRun.Status.FAILED,
+        phase="SafetyLimitReached",
+        priority=1,
+        started_at=utcnow(),
+    )
+    AgentRun.objects.create(
+        project=project,
+        issue=issue,
+        status=AgentRun.Status.SUCCEEDED,
+        phase="NoChangesRequired",
+        started_at=utcnow(),
+    )
+    client = Client()
+    assert client.get("/api/v1/control").status_code == 401
+    user = get_user_model().objects.create_user(username="operator", password="secret")
+    client.force_login(user)
+
+    response = client.get("/api/v1/control")
+
+    assert response.status_code == 200
+    assert [row["run_id"] for row in response.json()["runs"]] == [stopped.pk, paused.pk]
 
 
 @pytest.mark.asyncio

@@ -5,9 +5,9 @@ A Dockerized Python implementation of OpenAI's
 It continuously polls an issue tracker, creates an isolated workspace for each issue, and runs
 Codex app-server sessions until the issue leaves an active state.
 
-This port uses Django for the operator dashboard, JSON API, authenticated admin, and persistent
-runtime history. The scheduler and retry queue remain in one authoritative in-memory orchestrator,
-so Django's database records activity without becoming a competing job queue.
+This port uses Django for the operator dashboard, JSON API, authenticated admin, and a durable
+PostgreSQL execution kernel. Database claims, leases, heartbeats, checkpoints, retry timers, and
+operator actions are authoritative; in-process state is a live cache of leased work.
 
 ## What is included
 
@@ -25,6 +25,12 @@ so Django's database records activity without becoming a competing job queue.
 - Durable completion dispositions that prevent completed issues from being dispatched after restart
 - Persistent Django models and authenticated admin views for issues, runs, sessions, validation
   attempts, and validation commands
+- PostgreSQL-backed accepted work, retries, worker leases, heartbeats, idempotency keys, and
+  checkpoints with SQLite retained for local development and deterministic tests
+- Authenticated pause, resume, cancel, retry, requeue, unblock, reprioritize, feedback, and durable
+  approval-inbox APIs with audited operator actions
+- First-class organizations, projects, repositories, environments, workflow versions, credential
+  references, quotas, and concurrent multi-workflow hosting
 - Structured JSON logs, Django dashboard, health check, and REST status endpoints
 - A non-root Docker image containing Python, Git, SSH, Node, and the Codex CLI
 - Deterministic tests with fake tracker and app-server implementations
@@ -79,6 +85,13 @@ change the authoritative tracker or live scheduler. The live operator screens re
 Replace the `tracker` section in `WORKFLOW.md`:
 
 ```yaml
+project:
+  organization: your-org
+  slug: your-project
+  name: Your project
+  environment: development
+  max_concurrent_runs: 3
+  environment_max_concurrent_runs: 2
 tracker:
   kind: github
   provider:
@@ -181,13 +194,19 @@ operator-visible while the last valid configuration stays active.
 - `GET /api/v1/events` — live server-sent stream of runtime snapshots
 - `GET /api/v1/admin` — redacted effective configuration and operator state
 - `GET /api/v1/<issue_identifier>` — running/retry status for one issue
-- `POST /api/v1/refresh` — wake the poll loop immediately
+- `POST /api/v1/refresh` — authenticated; wake every project poll loop immediately
+- `POST /api/v1/runs/<run_id>/<action>` — authenticated and audited; actions are `pause`,
+  `resume`, `cancel`, `retry`, `requeue`, `unblock`, `reprioritize`, and `feedback`
+- `GET /api/v1/approvals` — authenticated pending approval inbox
+- `POST /api/v1/approvals/<approval_id>/decision` — authenticated approve, edit, or reject
 
-The dashboard at `/` uses a reconnecting live stream to show agent messages, commands and output,
-tool calls, file changes, validation progress, errors, phases, tokens, and session details as they
-happen. Private reasoning text is not exposed. Operator pages at `/ops/` and
-`/ops/configuration/` show runtime and redacted policy details without exposing credentials or hook
-bodies. Authenticated Django Admin is available at `/admin/`.
+The control center at `/` combines the project portfolio, live agent timelines, durable retry
+queue, blocked and paused runs, approval inbox, validation evidence, and direct operator actions.
+It uses a reconnecting live stream for agent messages, commands, tool calls, file changes, phases,
+tokens, and session details. Private reasoning text is not exposed. Intervention and approval
+details appear only to authenticated operators. `/ops/` and `/ops/configuration/` provide compact
+runtime and redacted policy views without exposing credentials or hook bodies. Authenticated
+Django Admin remains available at `/admin/`.
 
 The HTTP server binds to `127.0.0.1` by default outside Docker. Docker explicitly binds the process
 to `0.0.0.0` and publishes port 8000.
@@ -201,6 +220,9 @@ python -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
 tempo ./WORKFLOW.md
+
+# Host several projects and trackers in one control-plane process:
+tempo ./projects/api/WORKFLOW.md ./projects/web/WORKFLOW.md
 ```
 
 Useful options:
@@ -227,25 +249,23 @@ an isolated workspace volume. The deterministic suite intentionally makes no net
 ## Architecture
 
 ```text
-WORKFLOW.md ──> WorkflowStore ──> typed config + strict prompt
+WORKFLOW.md(s) ──> ControlPlane ──> project Orchestrator(s) ──> leased workers
+                         │                    │                    ├─ Workspace + hooks
+                         │                    │                    └─ Codex app-server
+                         │                    │
+                         └──── PostgreSQL durable queue, checkpoints, approvals, and audit
                                       │
-GitHub / memory tracker ──> Orchestrator ──> per-issue worker
-                               │                  ├─ WorkspaceManager + hooks
-                               │                  └─ Codex app-server JSONL
-                               │
-                               ├─ Django dashboard + /api/v1/*
-                               └─ SQLite history + Django Admin
+                               Django + /api/v1/*
 ```
 
-After restart, candidates are recovered from the tracker and workspaces from disk. Completed
-dispositions and safety stops are restored from SQLite so those issues are not dispatched again.
-Exact retry timers are not restored, but issue, run, session, validation, command, token, error,
-and pull-request history remains available through Django Admin. Terminal workspaces are swept
-during startup and when terminal transitions are observed.
+After restart, accepted and retry-scheduled runs are restored from PostgreSQL. Expired worker
+leases return to the durable queue at their last checkpoint, while live leases prevent a second
+control-plane process from claiming the same run. Completed dispositions and safety stops prevent
+duplicate dispatch. Terminal workspaces are swept during startup and on terminal transitions.
 
 ## Current scope
 
-This implementation conforms around one selected tracker as required by the core specification.
-It ships GitHub Issues plus a development adapter. Linear, Jira, Asana, GitLab, SSH workers, and a
-durable retry queue are extension work, not required for the core scheduler. Rich tracker mutations
-remain workflow/tool policy rather than orchestrator business logic.
+Each workflow still selects one tracker, but a Tempo process can host several uniquely scoped
+project workflows concurrently. It ships GitHub Issues plus a development adapter. Linear, Jira,
+Asana, GitLab, and SSH workers remain extension work. Rich tracker mutations remain workflow/tool
+policy rather than orchestrator business logic.

@@ -5,10 +5,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Operations · Tempo</title>
-  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260728-3">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23b9f65f'/><path d='M8 9h16v4h-6v11h-4V13H8z' fill='%2311150d'/></svg>">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260728-4">
 </head>
 <body>
-  <main>
+  <main class="legacy-shell">
     <nav class="topnav">
       <a class="brand" href="/">Tempo</a>
       <a class="active" href="/ops/">Operations</a>
@@ -21,7 +22,7 @@
         <h1>Runtime</h1>
         <p class="subtitle">Scheduler health, capacity, retries, and service-level policy.</p>
       </div>
-      <div class="actions"><span id="status" class="status">LIVE</span><button id="refresh">Poll now</button></div>
+      <div class="actions"><span id="status" class="status"><i></i> Connecting</span><button id="refresh" class="button secondary">Poll now</button></div>
     </header>
     <section class="metrics">
       <article><span>Running</span><strong id="admin-running">—</strong></article>
@@ -29,6 +30,10 @@
       <article><span>Retries</span><strong id="admin-retries">—</strong></article>
       <article><span>Completed</span><strong id="admin-completed">—</strong></article>
       <article><span>Safety stops</span><strong id="admin-safety-blocked">—</strong></article>
+    </section>
+    <section class="panel">
+      <div class="panel-title"><h2>Project portfolio</h2><span id="admin-project-count"></span></div>
+      <div id="admin-projects" class="project-grid"></div>
     </section>
     <section class="panel">
       <div class="panel-title"><h2>Runtime policy</h2></div>
@@ -39,6 +44,7 @@
       <pre id="admin-rate-limits" class="codeblock">No rate-limit telemetry received.</pre>
     </section>
   </main>
-  <script src="{% static 'admin.js' %}?v=20260728-3"></script>
+  {% csrf_token %}
+  <script src="{% static 'admin.js' %}?v=20260728-4"></script>
 </body>
 </html>

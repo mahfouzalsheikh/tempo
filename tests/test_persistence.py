@@ -102,6 +102,6 @@ async def test_persists_run_session_and_validation_history(tmp_path: Path):
 
     interrupted_run = await AgentRun.objects.aget(pk=interrupted.run_record_id)
     interrupted_validation = await ValidationAttempt.objects.aget(run=interrupted_run)
-    assert interrupted_run.status == AgentRun.Status.CANCELLED
-    assert interrupted_run.phase == "Interrupted"
+    assert interrupted_run.status == AgentRun.Status.RETRY_SCHEDULED
+    assert interrupted_run.phase == "Recovering"
     assert interrupted_validation.status == ValidationAttempt.Status.INVALIDATED

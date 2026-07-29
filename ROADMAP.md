@@ -120,6 +120,11 @@ containers.
 This makes Tempo trustworthy for actual teams and prevents later graph features from being built
 on ephemeral state.
 
+**Implemented foundation (July 2026):** PostgreSQL-backed accepted runs, retry schedules,
+checkpoints, worker leases and heartbeats; authenticated and audited run controls plus a durable
+approval inbox; and first-class project entities with quotas and multi-workflow hosting. Remaining
+hardening work belongs in the later security, observability, replay, and cockpit milestones.
+
 ### Orchestration platform
 
 4. Typed workflow graphs and agent teams

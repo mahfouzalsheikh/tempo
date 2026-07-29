@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
+import socket
+import uuid
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -47,7 +50,7 @@ VALIDATION_CONTINUATION_PROMPT = (
 
 
 class Orchestrator:
-    """Single-authority in-memory Tempo scheduler."""
+    """Control plane backed by durable database claims and worker leases."""
 
     def __init__(self, workflow_path: str) -> None:
         self.store = WorkflowStore(workflow_path)
@@ -72,6 +75,9 @@ class Orchestrator:
         self._cancel_release: set[str] = set()
         self._retired_trackers: list[Tracker] = []
         self._event_subscribers: set[asyncio.Queue[None]] = set()
+        self.worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        self._operator_outcomes: dict[str, str] = {}
+        self._feedback: dict[str, str] = {}
 
     async def start(self) -> None:
         _, config = await self.store.initialize()
@@ -112,11 +118,35 @@ class Orchestrator:
                 config.tracker.required_labels,
             )
         self.workspace = WorkspaceManager(config.workspace.root, config.hooks)
-        self.persistence = PersistenceStore(config.tracker.kind)
+        self.persistence = PersistenceStore(
+            config.tracker.kind,
+            config=config,
+            workflow_path=self.store.path,
+        )
+        await self.persistence.initialize()
         await self.persistence.reconcile_incomplete_records()
         self.totals, self.historical_completed_count = await self.persistence.runtime_summary()
         self.completed = await self.persistence.completed_issue_ids()
         self.safety_blocked = await self.persistence.safety_blocked_issue_ids()
+        await self._restore_pending_runs()
+
+    async def _restore_pending_runs(self) -> None:
+        if not self.persistence:
+            return
+        for row in await self.persistence.pending_runs():
+            if row["issue_id"] in self.running or row["issue_id"] in self.retries:
+                continue
+            self.retries[row["issue_id"]] = RetryEntry(
+                issue_id=row["issue_id"],
+                identifier=row["identifier"],
+                attempt=row["attempt"] or 0,
+                due_at=row["due_at"],
+                error=row["error"],
+                run_record_id=row["run_id"],
+            )
+            self.claimed.add(row["issue_id"])
+            if row["feedback"]:
+                self._feedback[row["issue_id"]] = row["feedback"]
 
     async def _run_loop(self) -> None:
         while not self._stop.is_set():
@@ -149,18 +179,26 @@ class Orchestrator:
                 config.tracker.required_labels,
             )
             self.workspace = WorkspaceManager(config.workspace.root, config.hooks)
-            if not self.persistence or self.persistence.tracker_kind != config.tracker.kind:
-                self.persistence = PersistenceStore(config.tracker.kind)
-                await self.persistence.reconcile_incomplete_records()
-                (
-                    self.totals,
-                    self.historical_completed_count,
-                ) = await self.persistence.runtime_summary()
-                self.completed = await self.persistence.completed_issue_ids()
-                self.safety_blocked = await self.persistence.safety_blocked_issue_ids()
+            self.persistence = PersistenceStore(
+                config.tracker.kind,
+                config=config,
+                workflow_path=self.store.path,
+            )
+            await self.persistence.initialize()
+            await self.persistence.reconcile_incomplete_records()
+            (
+                self.totals,
+                self.historical_completed_count,
+            ) = await self.persistence.runtime_summary()
+            self.completed = await self.persistence.completed_issue_ids()
+            self.safety_blocked = await self.persistence.safety_blocked_issue_ids()
+            await self._restore_pending_runs()
             await log.ainfo("workflow_reloaded", workflow_path=str(definition.path))
         self.last_tick_at = utcnow()
         self.last_tick_error = self.store.last_error
+        if self.persistence:
+            await self.persistence.reconcile_incomplete_records()
+            await self._restore_pending_runs()
         await self._reconcile(config)
         await self._process_due_retries(config)
         assert self.tracker
@@ -171,7 +209,14 @@ class Orchestrator:
                     continue
                 if not self._slot_available(issue, config):
                     break
-                self._dispatch_locked(issue, None)
+                run_id = await self.persistence.enqueue_issue(issue) if self.persistence else None
+                if run_id is None:
+                    continue
+                if self.persistence and not await self.persistence.claim_run(
+                    run_id, self.worker_id
+                ):
+                    continue
+                self._dispatch_locked(issue, None, run_record_id=run_id)
 
     async def refresh(self) -> None:
         self._refresh.set()
@@ -253,12 +298,13 @@ class Orchestrator:
             try:
                 issues = await self.tracker.fetch_issues_by_ids([retry.issue_id])
             except Exception as exc:
-                self._schedule_retry(
+                await self._schedule_retry(
                     retry.issue_id,
                     retry.identifier,
                     retry.attempt + 1,
                     str(exc),
                     config,
+                    run_record_id=retry.run_record_id,
                 )
                 continue
             issue = next((item for item in issues if item.id == retry.issue_id), None)
@@ -276,14 +322,25 @@ class Orchestrator:
                 continue
             async with self._lock:
                 if self._slot_available(issue, config):
-                    self._dispatch_locked(issue, retry.attempt)
+                    if self.persistence and retry.run_record_id:
+                        if not await self.persistence.claim_run(
+                            retry.run_record_id,
+                            self.worker_id,
+                        ):
+                            continue
+                    self._dispatch_locked(
+                        issue,
+                        retry.attempt,
+                        run_record_id=retry.run_record_id,
+                    )
                 else:
-                    self._schedule_retry(
+                    await self._schedule_retry(
                         issue.id,
                         issue.identifier,
                         retry.attempt + 1,
                         "no available orchestrator slots",
                         config,
+                        run_record_id=retry.run_record_id,
                     )
 
     def _eligible(self, issue: Issue, config: ServiceConfig) -> bool:
@@ -303,7 +360,12 @@ class Orchestrator:
         return issue.dispatchable and required.issubset(set(issue.labels)) and "" not in required
 
     def _slot_available(self, issue: Issue, config: ServiceConfig) -> bool:
-        if len(self.running) >= config.agent.max_concurrent_agents:
+        global_limit = min(
+            config.agent.max_concurrent_agents,
+            config.project.max_concurrent_runs,
+            config.project.environment_max_concurrent_runs,
+        )
+        if len(self.running) >= global_limit:
             return False
         state = normalize_state(issue.state)
         limit = config.agent.max_concurrent_agents_by_state.get(
@@ -318,12 +380,23 @@ class Orchestrator:
         created = issue.created_at or datetime.max.replace(tzinfo=UTC)
         return priority, created, issue.identifier
 
-    def _dispatch_locked(self, issue: Issue, attempt: int | None) -> None:
+    def _dispatch_locked(
+        self,
+        issue: Issue,
+        attempt: int | None,
+        *,
+        run_record_id: int | None = None,
+    ) -> None:
         task = asyncio.create_task(
             self._run_worker(issue, attempt),
             name=f"tempo-{issue.identifier}",
         )
-        self.running[issue.id] = RunningEntry(issue=issue, task=task, attempt=attempt)
+        self.running[issue.id] = RunningEntry(
+            issue=issue,
+            task=task,
+            attempt=attempt,
+            run_record_id=run_record_id,
+        )
         self.claimed.add(issue.id)
         self.retries.pop(issue.id, None)
         task.add_done_callback(
@@ -342,11 +415,24 @@ class Orchestrator:
         entry = self.running[issue.id]
         if self.persistence:
             entry.run_record_id = await self.persistence.start_run(entry, workspace.path)
+        heartbeat_task = asyncio.create_task(
+            self._heartbeat_worker(entry),
+            name=f"tempo-heartbeat-{issue.identifier}",
+        )
 
         async def on_event(event: dict[str, Any]) -> None:
             await self._codex_event(issue.id, event)
 
-        client = CodexAppServer(config, workspace_manager, tracker, on_event)
+        async def on_approval(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+            return await self._wait_for_approval(issue.id, kind, payload)
+
+        client = CodexAppServer(
+            config,
+            workspace_manager,
+            tracker,
+            on_event,
+            approval_callback=on_approval,
+        )
         session = None
         try:
             tracker.revoke_publication(issue.id)
@@ -359,6 +445,7 @@ class Orchestrator:
             current_issue = issue
             for turn_number in range(1, config.agent.max_turns + 1):
                 entry = self.running.get(issue.id)
+                operator_feedback = self._feedback.pop(issue.id, None)
                 if entry:
                     entry.phase = "StreamingTurn"
                     entry.session.turn_count = turn_number
@@ -379,7 +466,11 @@ class Orchestrator:
                         else CONTINUATION_PROMPT
                     )
                 )
+                if operator_feedback:
+                    prompt = f"Operator feedback:\n{operator_feedback}\n\n{prompt}"
                 await client.run_turn(session, prompt, current_issue)
+                if operator_feedback and self.persistence and entry and entry.run_record_id:
+                    await self.persistence.set_control_state(entry.run_record_id, feedback="")
                 if (
                     config.validation.enabled
                     and entry
@@ -429,9 +520,49 @@ class Orchestrator:
                     category="completion_required",
                 )
         finally:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
             if session:
                 await client.stop_session(session)
             await workspace_manager.after_run(workspace.path)
+
+    async def _heartbeat_worker(self, entry: RunningEntry) -> None:
+        while entry.issue.id in self.running:
+            if self.persistence and entry.run_record_id:
+                await self.persistence.heartbeat(entry.run_record_id)
+            await asyncio.sleep(10)
+
+    async def _wait_for_approval(
+        self,
+        issue_id: str,
+        kind: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        entry = self.running.get(issue_id)
+        if not entry or not entry.run_record_id or not self.persistence:
+            return {"approved": False, "note": "Run is no longer active."}
+        request_key = hashlib.sha256(
+            f"{entry.run_record_id}:{kind}:".encode()
+            + json.dumps(payload, sort_keys=True, default=str).encode()
+        ).hexdigest()
+        approval_id = await self.persistence.create_approval(
+            entry.run_record_id,
+            request_key=request_key,
+            kind=kind,
+            details=payload,
+        )
+        entry.phase = "WaitingForApproval"
+        self._publish_live_state()
+        while issue_id in self.running:
+            decision = await self.persistence.approval_decision(approval_id)
+            if decision is not None:
+                await self.persistence.resume_after_approval(entry.run_record_id)
+                entry.phase = "StreamingTurn"
+                self._publish_live_state()
+                return decision
+            await asyncio.sleep(0.5)
+        return {"approved": False, "note": "Run ended before approval was decided."}
 
     async def _codex_event(self, issue_id: str, event: dict[str, Any]) -> None:
         entry = self.running.get(issue_id)
@@ -540,6 +671,23 @@ class Orchestrator:
         self._publish_live_state()
         if self.persistence and "delta" not in str(event_name).lower():
             await self.persistence.record_event(entry, event)
+            if entry.run_record_id:
+                await self.persistence.heartbeat(entry.run_record_id)
+                if event_name in {
+                    "validation_completed",
+                    "validation_fingerprint_recorded",
+                    "tool_call_completed",
+                    "no_change_completed",
+                }:
+                    event_key = hashlib.sha256(
+                        json.dumps(event, sort_keys=True, default=str).encode()
+                    ).hexdigest()
+                    await self.persistence.checkpoint(
+                        entry.run_record_id,
+                        str(event_name),
+                        event,
+                        idempotency_key=f"{entry.run_record_id}:{event_key}",
+                    )
         if session.codex_total_tokens > config.agent.max_tokens_per_run:
             entry.phase = "SafetyLimitReached"
             self._publish_live_state()
@@ -572,6 +720,30 @@ class Orchestrator:
                 self.claimed.discard(issue_id)
                 self.retries.pop(issue_id, None)
                 return
+            operator_outcome = self._operator_outcomes.pop(issue_id, None)
+            if operator_outcome:
+                if self.persistence:
+                    await self.persistence.finish_run(
+                        entry,
+                        status="cancelled",
+                        error=f"run {operator_outcome} by operator",
+                    )
+                    from tempo_web.models import AgentRun
+
+                    status = (
+                        AgentRun.Status.PAUSED
+                        if operator_outcome == "paused"
+                        else AgentRun.Status.CANCELLED
+                    )
+                    await self.persistence.set_control_state(
+                        entry.run_record_id,
+                        status=status,
+                        phase=operator_outcome.title(),
+                    )
+                self.claimed.discard(issue_id)
+                self.retries.pop(issue_id, None)
+                self._publish_live_state()
+                return
             _, config = self.store.current()
             if task.cancelled():
                 error = "worker cancelled or stalled"
@@ -589,12 +761,13 @@ class Orchestrator:
                     self.claimed.discard(issue_id)
                     self.safety_blocked.add(issue_id)
                 else:
-                    self._schedule_retry(
+                    await self._schedule_retry(
                         issue_id,
                         entry.issue.identifier,
                         next_attempt,
                         error,
                         config,
+                        run_record_id=entry.run_record_id,
                     )
                 return
             error = task.exception()
@@ -626,12 +799,13 @@ class Orchestrator:
                     self.claimed.discard(issue_id)
                     self.safety_blocked.add(issue_id)
                 else:
-                    self._schedule_retry(
+                    await self._schedule_retry(
                         issue_id,
                         entry.issue.identifier,
                         next_attempt,
                         str(error),
                         config,
+                        run_record_id=entry.run_record_id,
                     )
                 await log.aerror(
                     "worker_failed",
@@ -646,7 +820,7 @@ class Orchestrator:
             for tracker in retired:
                 await tracker.close()
 
-    def _schedule_retry(
+    async def _schedule_retry(
         self,
         issue_id: str,
         identifier: str,
@@ -655,6 +829,7 @@ class Orchestrator:
         config: ServiceConfig,
         *,
         continuation: bool = False,
+        run_record_id: int | None = None,
     ) -> None:
         delay_ms = (
             1000
@@ -664,14 +839,122 @@ class Orchestrator:
                 config.agent.max_retry_backoff_ms,
             )
         )
+        due_at = utcnow() + timedelta(milliseconds=delay_ms)
         self.retries[issue_id] = RetryEntry(
             issue_id=issue_id,
             identifier=identifier,
             attempt=attempt,
-            due_at=utcnow() + timedelta(milliseconds=delay_ms),
+            due_at=due_at,
             error=error,
+            run_record_id=run_record_id,
         )
         self.claimed.add(issue_id)
+        if self.persistence and run_record_id:
+            await self.persistence.schedule_retry(
+                run_record_id,
+                attempt=attempt,
+                due_at=due_at,
+                error=error,
+            )
+
+    async def control_run(
+        self,
+        run_id: int,
+        action: str,
+        payload: dict[str, Any],
+        *,
+        user_id: int,
+        idempotency_key: str,
+    ) -> tuple[bool, str]:
+        if not self.persistence:
+            return False, "persistence_unavailable"
+        from tempo_web.models import AgentRun, OperatorAction
+
+        context = await self.persistence.run_control_context(run_id)
+        if not context:
+            return False, "run_not_found"
+        issue_id = context["issue_id"]
+        entry = self.running.get(issue_id)
+        valid_actions = {
+            "pause",
+            "resume",
+            "cancel",
+            "retry",
+            "requeue",
+            "unblock",
+            "reprioritize",
+            "feedback",
+        }
+        if action not in valid_actions:
+            return False, "unsupported_action"
+        message = ""
+        if action in {"pause", "cancel"}:
+            if not entry and action == "pause":
+                return False, "run_not_active"
+            if entry:
+                self._operator_outcomes[issue_id] = "paused" if action == "pause" else "cancelled"
+                entry.task.cancel()
+                message = f"{action} requested"
+            else:
+                await self.persistence.set_control_state(
+                    run_id,
+                    status=AgentRun.Status.CANCELLED,
+                    phase="CancelledByOperator",
+                )
+                self.claimed.discard(issue_id)
+                self.retries.pop(issue_id, None)
+                self.safety_blocked.discard(issue_id)
+                message = "run cancelled"
+        elif action in {"resume", "retry", "requeue", "unblock"}:
+            if entry:
+                return False, "run_already_active"
+            attempt = context["attempt"] + (1 if action == "retry" else 0)
+            self.safety_blocked.discard(issue_id)
+            self.completed.discard(issue_id)
+            due_at = utcnow()
+            await self.persistence.set_control_state(
+                run_id,
+                status=AgentRun.Status.RETRY_SCHEDULED,
+                phase="RequeuedByOperator",
+                available_at=due_at,
+            )
+            self.retries[issue_id] = RetryEntry(
+                issue_id=issue_id,
+                identifier=context["identifier"],
+                attempt=attempt,
+                due_at=due_at,
+                error=None,
+                run_record_id=run_id,
+            )
+            self.claimed.add(issue_id)
+            self._refresh.set()
+            message = "run queued"
+        elif action == "reprioritize":
+            priority = payload.get("priority")
+            if not isinstance(priority, int) or isinstance(priority, bool) or priority < 1:
+                return False, "priority_must_be_a_positive_integer"
+            await self.persistence.set_control_state(run_id, priority=priority)
+            message = f"priority set to {priority}"
+        elif action == "feedback":
+            feedback = str(payload.get("message", "")).strip()
+            if not feedback:
+                return False, "feedback_message_required"
+            previous = str(context.get("feedback", "")).strip()
+            combined = f"{previous}\n{feedback}".strip()
+            await self.persistence.set_control_state(run_id, feedback=combined)
+            self._feedback[issue_id] = combined
+            message = "feedback queued for the next turn"
+        await self.persistence.record_operator_action(
+            run_id,
+            action=action,
+            payload=payload,
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+            status=OperatorAction.Status.APPLIED,
+            message=message,
+        )
+        self._publish_live_state()
+        return True, message
 
     def snapshot(self) -> dict[str, Any]:
         _, config = self.store.current()
@@ -705,10 +988,14 @@ class Orchestrator:
                 "validation_timeout_ms": config.validation.command_timeout_ms,
                 "approval_policy": config.codex.approval_policy,
                 "thread_sandbox": config.codex.thread_sandbox,
+                "project": (f"{config.project.organization}/{config.project.slug}"),
+                "environment": config.project.environment,
             },
             "running": [
                 {
                     "issue_id": issue_id,
+                    "run_id": entry.run_record_id,
+                    "project": f"{config.project.organization}/{config.project.slug}",
                     "identifier": entry.issue.identifier,
                     "title": entry.issue.title,
                     "state": entry.issue.state,
@@ -746,6 +1033,8 @@ class Orchestrator:
                     "attempt": entry.attempt,
                     "due_at": entry.due_at.isoformat(),
                     "error": entry.error,
+                    "run_id": entry.run_record_id,
+                    "project": f"{config.project.organization}/{config.project.slug}",
                 }
                 for entry in self.retries.values()
             ],
