@@ -172,6 +172,101 @@ Prompt variables are `issue` and `attempt`; unknown variables fail the attempt. 
 paths resolve beside the workflow file, `~` expands, and a path containing only `$VAR` reads that
 environment variable.
 
+### Run multiple projects or repositories
+
+Tempo uses one workflow file per project/repository. A single control-plane process can load
+several workflow files and runs an independent orchestrator for each one. The dashboard and API
+combine their runtime state while preserving project-scoped queues, limits, history, and tracker
+configuration.
+
+For example:
+
+```text
+projects/
+├── api/WORKFLOW.md
+└── web/WORKFLOW.md
+```
+
+Each workflow must configure:
+
+- A unique `project.organization` and `project.slug` pair. Tempo rejects duplicate project keys at
+  startup.
+- The repository monitored by that workflow in `tracker.provider.repo`.
+- Repository-specific clone and fetch commands in `hooks`.
+- A distinct `workspace.root`. GitHub issue identifiers such as `GH-42` are only unique within a
+  repository, so sharing a workspace root could make projects use the same issue directory.
+
+An API workflow might begin with:
+
+```yaml
+---
+project:
+  organization: acme
+  slug: api
+  name: Acme API
+  environment: development
+  max_concurrent_runs: 3
+  environment_max_concurrent_runs: 2
+tracker:
+  kind: github
+  provider:
+    repo: acme/api
+    token: $GITHUB_TOKEN
+  required_labels: [tempo]
+  active_states: [open]
+  terminal_states: [closed]
+workspace:
+  root: /data/workspaces/api
+hooks:
+  after_create: |
+    git -c credential.helper='!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f' \
+      clone https://github.com/acme/api.git .
+  before_run: |
+    git -c credential.helper='!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f' \
+      fetch origin
+---
+```
+
+The web workflow would use a different project slug, repository, clone URL, and workspace root such
+as `/data/workspaces/web`. A single fine-grained `GITHUB_TOKEN` may cover all configured
+repositories; grant it access only to the repositories Tempo needs.
+
+Start both workflows locally by passing every path to `tempo`:
+
+```bash
+tempo ./projects/api/WORKFLOW.md ./projects/web/WORKFLOW.md
+```
+
+For Docker Compose, mount every workflow into the Tempo container and pass the container paths as
+command arguments:
+
+```yaml
+services:
+  tempo:
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - /app/workflows/api.md
+      - /app/workflows/web.md
+    volumes:
+      - ./projects/api/WORKFLOW.md:/app/workflows/api.md:ro
+      - ./projects/web/WORKFLOW.md:/app/workflows/web.md:ro
+      - tempo-workspaces:/data/workspaces
+      - tempo-database:/data/database
+      - tempo-codex-home:/home/tempo/.codex
+```
+
+The validation runner and project runner should keep the shared `tempo-workspaces` volume mounted
+at `/data/workspaces`, as in the checked-in Compose configuration. Project-specific workspace roots
+can be subdirectories of that shared volume.
+
+Concurrency settings apply independently to each project. For example, two projects with
+`max_concurrent_runs: 3` can run up to six jobs in total, subject to each workflow's agent and
+environment limits. Editing an already loaded workflow is hot-reloaded, but adding or removing a
+workflow path requires updating the startup command and restarting Tempo.
+
 The default security posture is deliberately conservative:
 
 - Codex uses `workspace-write`.
