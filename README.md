@@ -37,18 +37,19 @@ operator actions are authoritative; in-process state is a live cache of leased w
 
 ## Quick start
 
-The checked-in workflow uses an empty in-memory tracker, so the service starts safely without
-dispatching work:
+The checked-in workflow uses a GitHub tracker, so configure its repository token before startup:
 
 ```bash
+cp .env.example .env
+# Add GITHUB_TOKEN and either OPENAI_API_KEY or a persisted Codex login.
 docker compose up --build
 ```
 
-Open <http://localhost:8000>. Verify health with:
+Open <http://localhost:8030> (or the `TEMPO_PORT` set in `.env`). Verify health with:
 
 ```bash
-curl http://localhost:8000/healthz
-curl http://localhost:8000/api/v1/state
+curl http://localhost:${TEMPO_PORT:-8030}/healthz
+curl http://localhost:${TEMPO_PORT:-8030}/api/v1/state
 ```
 
 The Compose service persists issue workspaces, runtime history, and Codex state in named volumes.
@@ -132,8 +133,9 @@ environment. `github_api` is advertised to Codex so the workflow can read or upd
 the configured credential. Its reach is the token's reach, so use a fine-grained token scoped to
 the configured repository.
 
-If you use an existing ChatGPT login instead of `OPENAI_API_KEY`, copy or mount its Codex home into
-the `tempo-codex-home` volume before starting the service.
+If you use an existing ChatGPT login instead of `OPENAI_API_KEY`, authenticate the persisted
+Codex home with `docker compose run --rm --entrypoint codex tempo login`, then start the service
+normally.
 
 ## Local validation and pull requests
 

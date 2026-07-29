@@ -67,11 +67,26 @@ def test_health_and_state():
     assert b"Control center" in dashboard.content
     assert b"Approval inbox" in dashboard.content
     assert b"Projects" in dashboard.content
+    assert dashboard.content.count(b'<nav class="side-nav"') == 1
+    assert b"Django admin" not in dashboard.content
     assert "csrftoken" in dashboard.cookies
-    assert b"Runtime" in client.get("/ops/").content
-    assert b"Configuration" in client.get("/ops/configuration/").content
+    runtime = client.get("/ops/")
+    assert b"Runtime" in runtime.content
+    assert runtime.content.count(b'<nav class="side-nav"') == 1
+    assert b'<nav class="topnav"' not in runtime.content
+    assert b"Django Admin" not in runtime.content
+    configuration = client.get("/ops/configuration/")
+    assert b"Configuration" in configuration.content
+    assert configuration.content.count(b'<nav class="side-nav"') == 1
+    assert b'<nav class="topnav"' not in configuration.content
+    assert b"Django Admin" not in configuration.content
     assert client.get("/admin/").status_code == 302
-    assert client.get("/static/tempo.css").status_code == 200
+    stylesheet = client.get("/static/tempo.css")
+    assert stylesheet.status_code == 200
+    assert b"--content-max: 1440px" in stylesheet.content
+    assert b"font: 16px/1.6" in stylesheet.content
+    assert b"grid-template-columns: repeat(2, minmax(0, 1fr))" in stylesheet.content
+    assert b"@media (max-width: 960px)" in stylesheet.content
     assert client.get("/static/admin/css/base.css").status_code == 200
     set_orchestrator(None)
 

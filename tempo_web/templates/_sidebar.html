@@ -1,0 +1,42 @@
+<aside class="sidebar">
+  <a class="wordmark" href="/" aria-label="Tempo home">
+    <span class="wordmark-mark">T</span>
+    <span>tempo</span>
+  </a>
+  <nav class="side-nav" aria-label="Primary">
+    <a{% if request.resolver_match.url_name == "dashboard" %} class="active"{% endif %} href="/">
+      <span class="nav-icon">◫</span>
+      Control center
+    </a>
+    <a href="/#runs">
+      <span class="nav-icon">↯</span>
+      Runs
+    </a>
+    <a href="/#approvals">
+      <span class="nav-icon">◇</span>
+      Approvals
+      <span id="nav-approval-count" class="nav-count" hidden>0</span>
+    </a>
+    <a href="/#projects">
+      <span class="nav-icon">⌘</span>
+      Projects
+    </a>
+    <a class="operations-link{% if request.resolver_match.url_name == "admin_runtime" %} active{% endif %}" href="/ops/">
+      <span class="nav-icon">◉</span>
+      Operations
+    </a>
+    <a{% if request.resolver_match.url_name == "admin_configuration" %} class="active"{% endif %} href="/ops/configuration/">
+      <span class="nav-icon">⌁</span>
+      Configuration
+    </a>
+  </nav>
+  <div class="sidebar-foot">
+    {% if request.user.is_authenticated %}
+      <span class="avatar">{{ request.user.username|slice:":1"|upper }}</span>
+      <span><strong>{{ request.user.username }}</strong><small>Operator session</small></span>
+    {% else %}
+      <span class="avatar guest">?</span>
+      <span><strong>Read-only</strong><small><a href="/admin/login/?next={{ request.path|urlencode }}">Sign in to intervene</a></small></span>
+    {% endif %}
+  </div>
+</aside>

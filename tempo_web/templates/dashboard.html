@@ -7,49 +7,11 @@
   <meta name="color-scheme" content="dark">
   <title>Control center · Tempo</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23b9f65f'/><path d='M8 9h16v4h-6v11h-4V13H8z' fill='%2311150d'/></svg>">
-  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260728-4">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260729-2">
 </head>
 <body data-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}">
   <div class="app-shell">
-    <aside class="sidebar">
-      <a class="wordmark" href="/" aria-label="Tempo home">
-        <span class="wordmark-mark">T</span>
-        <span>tempo</span>
-      </a>
-      <nav class="side-nav" aria-label="Primary">
-        <a class="active" href="/">
-          <span class="nav-icon">◫</span>
-          Control center
-        </a>
-        <a href="#runs">
-          <span class="nav-icon">↯</span>
-          Runs
-        </a>
-        <a href="#approvals">
-          <span class="nav-icon">◇</span>
-          Approvals
-          <span id="nav-approval-count" class="nav-count" hidden>0</span>
-        </a>
-        <a href="#projects">
-          <span class="nav-icon">⌘</span>
-          Projects
-        </a>
-      </nav>
-      <div class="side-nav secondary-nav">
-        <a href="/ops/"><span class="nav-icon">◉</span> Operations</a>
-        <a href="/ops/configuration/"><span class="nav-icon">⌁</span> Configuration</a>
-        <a href="/admin/"><span class="nav-icon">⚙</span> Django admin</a>
-      </div>
-      <div class="sidebar-foot">
-        {% if request.user.is_authenticated %}
-          <span class="avatar">{{ request.user.username|slice:":1"|upper }}</span>
-          <span><strong>{{ request.user.username }}</strong><small>Operator session</small></span>
-        {% else %}
-          <span class="avatar guest">?</span>
-          <span><strong>Read-only</strong><small><a href="/admin/login/?next=/">Sign in to intervene</a></small></span>
-        {% endif %}
-      </div>
-    </aside>
+    {% include "_sidebar.html" %}
 
     <main class="workspace">
       <header class="workspace-header">
@@ -181,6 +143,6 @@
 
   <div id="toast-region" class="toast-region" aria-live="polite"></div>
   {% csrf_token %}
-  <script src="{% static 'tempo.js' %}?v=20260728-4"></script>
+  <script src="{% static 'tempo.js' %}?v=20260729-1"></script>
 </body>
 </html>

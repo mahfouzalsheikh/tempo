@@ -11,6 +11,7 @@ services:
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       TEMPO_LOG_LEVEL: "${TEMPO_LOG_LEVEL:-INFO}"
+      TEMPO_TIME_ZONE: "${TEMPO_TIME_ZONE:-UTC}"
       TEMPO_WORKSPACE_ROOT: /data/workspaces
       TEMPO_DATABASE_PATH: /data/database/tempo.sqlite3
       DATABASE_URL: "postgresql://tempo:${TEMPO_POSTGRES_PASSWORD:-tempo-local}@postgres:5432/tempo"
