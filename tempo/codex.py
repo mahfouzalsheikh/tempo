@@ -21,6 +21,7 @@ from .workspace import WorkspaceManager
 
 log = structlog.get_logger(__name__)
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
+ApprovalCallback = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 @dataclass
@@ -44,12 +45,14 @@ class CodexAppServer:
         workspace_manager: WorkspaceManager,
         tracker: Tracker,
         on_event: EventCallback,
+        approval_callback: ApprovalCallback | None = None,
     ) -> None:
         self.config = config.codex
         self.validation_enabled = config.validation.enabled
         self.workspace_manager = workspace_manager
         self.tracker = tracker
         self.on_event = on_event
+        self.approval_callback = approval_callback
         self.validator = ProjectValidator(
             config.validation,
             workspace_manager,
@@ -194,6 +197,33 @@ class CodexAppServer:
             params = message.get("params", {})
             name = params.get("tool") or params.get("name")
             arguments = params.get("arguments") or {}
+            mutating_tool_call = name == "github_api" and str(
+                arguments.get("method", "GET")
+            ).upper() not in {"GET", "HEAD"}
+            if (
+                mutating_tool_call
+                and self.config.approval_policy != "never"
+                and self.approval_callback
+            ):
+                outcome = await self.approval_callback(f"tool:{name}", message)
+                if not outcome.get("approved"):
+                    result = {
+                        "success": False,
+                        "output": "The operator rejected this tool call.",
+                        "contentItems": [],
+                    }
+                    await self._send(session, {"id": request_id, "result": result})
+                    await self.on_event(
+                        {
+                            "event": "tool_call_rejected",
+                            "tool": str(name),
+                            "arguments": arguments,
+                        }
+                    )
+                    return
+                edited = outcome.get("edited_arguments")
+                if isinstance(edited, dict) and edited:
+                    arguments = edited
             if name == "project_validation" and self.validation_enabled:
                 result = await self._execute_project_validation(
                     session,
@@ -231,11 +261,8 @@ class CodexAppServer:
                         "contentItems": [],
                     }
             else:
-                mutating_github_call = name == "github_api" and str(
-                    arguments.get("method", "GET")
-                ).upper() not in {"GET", "HEAD"}
                 if (
-                    mutating_github_call
+                    mutating_tool_call
                     and session.validation_fingerprint
                     and session.validation_fingerprint
                     != await self._workspace_fingerprint(session.workspace)
@@ -278,6 +305,35 @@ class CodexAppServer:
                 )
                 await self._send(session, {"id": request_id, "result": {"decision": decision}})
                 await self.on_event({"event": "approval_auto_approved", "payload": message})
+                return
+            if self.approval_callback:
+                outcome = await self.approval_callback(str(method), message)
+                if outcome.get("approved"):
+                    decision = (
+                        "approved"
+                        if method in {"execCommandApproval", "applyPatchApproval"}
+                        else "accept"
+                    )
+                    await self._send(
+                        session,
+                        {"id": request_id, "result": {"decision": decision}},
+                    )
+                    await self.on_event({"event": "approval_approved", "payload": message})
+                    return
+                await self._send(
+                    session,
+                    {
+                        "id": request_id,
+                        "result": {
+                            "decision": (
+                                "denied"
+                                if method in {"execCommandApproval", "applyPatchApproval"}
+                                else "decline"
+                            )
+                        },
+                    },
+                )
+                await self.on_event({"event": "approval_rejected", "payload": message})
                 return
             await self._send(
                 session,

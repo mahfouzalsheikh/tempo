@@ -110,7 +110,25 @@ class CodexConfig(BaseModel):
         return value
 
 
+class ProjectConfig(BaseModel):
+    organization: str = "default"
+    slug: str = "default"
+    name: str = "Default project"
+    environment: str = "development"
+    max_concurrent_runs: int = Field(default=3, gt=0)
+    environment_max_concurrent_runs: int = Field(default=3, gt=0)
+
+    @field_validator("organization", "slug", "environment")
+    @classmethod
+    def identifier_nonblank(cls, value: str) -> str:
+        normalized = value.strip().lower().replace("_", "-").replace(" ", "-")
+        if not normalized:
+            raise ValueError("must not be blank")
+        return normalized
+
+
 class ServiceConfig(BaseModel):
+    project: ProjectConfig = Field(default_factory=ProjectConfig)
     tracker: TrackerConfig
     polling: PollingConfig = Field(default_factory=PollingConfig)
     workspace: WorkspaceConfig

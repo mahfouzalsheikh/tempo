@@ -1,4 +1,11 @@
 ---
+project:
+  organization: mahfouzalsheikh
+  slug: drawing-algorithms
+  name: Drawing Algorithms
+  environment: development
+  max_concurrent_runs: 3
+  environment_max_concurrent_runs: 3
 tracker:
   kind: github
   provider:

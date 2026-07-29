@@ -168,3 +168,47 @@ async def test_github_mutations_are_scoped_to_configured_repository():
     )
     assert result["success"] is False
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_github_pr_creation_reuses_an_existing_head_branch():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        assert request.method == "GET"
+        assert request.url.params["head"] == "openai:tempo/issue-1"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 12,
+                    "html_url": "https://github.test/pull/12",
+                    "head": {"ref": "tempo/issue-1"},
+                }
+            ],
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tracker = GitHubTracker(repo="openai/example", client=client)
+    issue = (
+        await MemoryTracker(
+            [{"id": "1", "identifier": "A-1", "title": "One", "state": "Todo"}]
+        ).fetch_issues_by_ids(["1"])
+    )[0]
+    tracker.authorize_publication(issue.id)
+
+    result = await tracker.execute_agent_tool(
+        "github_api",
+        {
+            "method": "POST",
+            "path": "/repos/openai/example/pulls",
+            "body": {"head": "tempo/issue-1", "base": "main", "title": "Fix"},
+        },
+        issue,
+    )
+
+    assert result["success"] is True
+    assert '"number": 12' in result["output"]
+    assert len(requests) == 1
+    await client.aclose()

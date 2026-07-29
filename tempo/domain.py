@@ -117,6 +117,7 @@ class RetryEntry:
     attempt: int
     due_at: datetime
     error: str | None = None
+    run_record_id: int | None = None
 
 
 @dataclass

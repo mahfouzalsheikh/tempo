@@ -5,7 +5,7 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      - "${TEMPO_PORT:-8000}:8000"
+      - "${TEMPO_PORT:-8030}:8000"
     environment:
       DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY:-local-development-only}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
@@ -13,6 +13,7 @@ services:
       TEMPO_LOG_LEVEL: "${TEMPO_LOG_LEVEL:-INFO}"
       TEMPO_WORKSPACE_ROOT: /data/workspaces
       TEMPO_DATABASE_PATH: /data/database/tempo.sqlite3
+      DATABASE_URL: "postgresql://tempo:${TEMPO_POSTGRES_PASSWORD:-tempo-local}@postgres:5432/tempo"
       TEMPO_ADMIN_USERNAME: "${TEMPO_ADMIN_USERNAME:-}"
       TEMPO_ADMIN_PASSWORD: "${TEMPO_ADMIN_PASSWORD:-}"
       TEMPO_ADMIN_EMAIL: "${TEMPO_ADMIN_EMAIL:-}"
@@ -24,10 +25,27 @@ services:
       - tempo-database:/data/database
       - tempo-codex-home:/home/tempo/.codex
     depends_on:
+      postgres:
+        condition: service_healthy
       project-runner:
         condition: service_healthy
       validation-runner:
         condition: service_healthy
+
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tempo
+      POSTGRES_USER: tempo
+      POSTGRES_PASSWORD: "${TEMPO_POSTGRES_PASSWORD:-tempo-local}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tempo -d tempo"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - tempo-postgres:/var/lib/postgresql/data
 
   validation-runner:
     build:
@@ -72,3 +90,4 @@ volumes:
   tempo-workspaces:
   tempo-database:
   tempo-codex-home:
+  tempo-postgres:

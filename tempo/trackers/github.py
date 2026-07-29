@@ -237,6 +237,21 @@ class GitHubTracker(Tracker):
             description = str(body.get("body", "")).rstrip()
             if closing_line.lower() not in description.lower():
                 body["body"] = f"{description}\n\n{closing_line}".strip()
+            head = str(body.get("head", "")).strip()
+            if head:
+                qualified_head = head if ":" in head else f"{self.repo.split('/', 1)[0]}:{head}"
+                existing = await self._request(
+                    "GET",
+                    f"/repos/{self.repo}/pulls",
+                    params={"state": "open", "head": qualified_head},
+                )
+                if isinstance(existing, list) and existing:
+                    text = json.dumps(existing[0], ensure_ascii=False)
+                    return {
+                        "success": True,
+                        "output": text,
+                        "contentItems": [{"type": "inputText", "text": text}],
+                    }
         try:
             output = await self._request(
                 method,
@@ -262,11 +277,21 @@ class GitHubTracker(Tracker):
         await self._remove_dispatch_labels(issue)
 
     async def finalize_without_changes(self, issue: Issue, reason: str) -> None:
-        await self._request(
-            "POST",
+        comment_body = f"Tempo completed this ticket without a code change:\n\n{reason}"
+        comments = await self._request(
+            "GET",
             f"/repos/{self.repo}/issues/{issue.id}/comments",
-            json={"body": f"Tempo completed this ticket without a code change:\n\n{reason}"},
+            params={"per_page": 100},
         )
+        if not any(
+            isinstance(comment, dict) and comment.get("body") == comment_body
+            for comment in (comments if isinstance(comments, list) else [])
+        ):
+            await self._request(
+                "POST",
+                f"/repos/{self.repo}/issues/{issue.id}/comments",
+                json={"body": comment_body},
+            )
         await self._remove_dispatch_labels(issue)
 
     async def _remove_dispatch_labels(self, issue: Issue) -> None:

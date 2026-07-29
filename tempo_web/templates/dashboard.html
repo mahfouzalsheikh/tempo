@@ -4,64 +4,183 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Tempo</title>
-  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260728-3">
+  <meta name="color-scheme" content="dark">
+  <title>Control center · Tempo</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23b9f65f'/><path d='M8 9h16v4h-6v11h-4V13H8z' fill='%2311150d'/></svg>">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260728-4">
 </head>
-<body>
-  <main>
-    <nav class="topnav">
-      <a class="brand active" href="/">Tempo</a>
-      <a href="/ops/">Operations</a>
-      <a href="/ops/configuration/">Configuration</a>
-      <a href="/admin/">Django Admin</a>
-    </nav>
-    <header>
-      <div>
-        <p class="eyebrow">AUTONOMOUS ENGINEERING</p>
-        <h1>Tempo</h1>
-        <p class="subtitle">Live engineering runs, local validation evidence, and publication readiness.</p>
+<body data-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="wordmark" href="/" aria-label="Tempo home">
+        <span class="wordmark-mark">T</span>
+        <span>tempo</span>
+      </a>
+      <nav class="side-nav" aria-label="Primary">
+        <a class="active" href="/">
+          <span class="nav-icon">◫</span>
+          Control center
+        </a>
+        <a href="#runs">
+          <span class="nav-icon">↯</span>
+          Runs
+        </a>
+        <a href="#approvals">
+          <span class="nav-icon">◇</span>
+          Approvals
+          <span id="nav-approval-count" class="nav-count" hidden>0</span>
+        </a>
+        <a href="#projects">
+          <span class="nav-icon">⌘</span>
+          Projects
+        </a>
+      </nav>
+      <div class="side-nav secondary-nav">
+        <a href="/ops/"><span class="nav-icon">◉</span> Operations</a>
+        <a href="/ops/configuration/"><span class="nav-icon">⌁</span> Configuration</a>
+        <a href="/admin/"><span class="nav-icon">⚙</span> Django admin</a>
       </div>
-      <div class="actions">
-        <span id="status" class="status">LIVE</span>
-        <button id="refresh">Poll now</button>
+      <div class="sidebar-foot">
+        {% if request.user.is_authenticated %}
+          <span class="avatar">{{ request.user.username|slice:":1"|upper }}</span>
+          <span><strong>{{ request.user.username }}</strong><small>Operator session</small></span>
+        {% else %}
+          <span class="avatar guest">?</span>
+          <span><strong>Read-only</strong><small><a href="/admin/login/?next=/">Sign in to intervene</a></small></span>
+        {% endif %}
       </div>
-    </header>
+    </aside>
 
-    <section id="unavailable" class="notice" {% if snapshot %}hidden{% endif %}>
-      The orchestrator is starting. This page will reconnect automatically.
-    </section>
-
-    <div id="content" {% if not snapshot %}hidden{% endif %}>
-      <section class="metrics">
-        <article><span>Running</span><strong id="running-count">0</strong></article>
-        <article><span>Claimed</span><strong id="claimed-count">0</strong></article>
-        <article><span>Retry queue</span><strong id="retry-count">0</strong></article>
-        <article><span>Completed</span><strong id="completed-count">0</strong></article>
-        <article><span>Safety stops</span><strong id="safety-blocked-count">0</strong></article>
-        <article><span>Validated runs</span><strong id="validated-count">0</strong></article>
-        <article><span>Validation passes</span><strong id="validation-pass-count">0</strong></article>
-        <article><span>Total tokens</span><strong id="token-count">0</strong></article>
-      </section>
-
-      <section class="panel">
-        <div class="panel-title">
-          <h2>Active runs</h2>
-          <span id="capacity"></span>
+    <main class="workspace">
+      <header class="workspace-header">
+        <div>
+          <p class="breadcrumb">CONTROL PLANE <span>/</span> OVERVIEW</p>
+          <h1>Engineering operations</h1>
+          <p class="subtitle">One surface for active agents, durable work, approvals, and project health.</p>
         </div>
-        <div id="running" class="rows"></div>
+        <div class="header-actions">
+          <span id="status" class="status"><i></i> Connecting</span>
+          <button id="refresh" class="button secondary" type="button">
+            <span>↻</span> Poll now
+          </button>
+        </div>
+      </header>
+
+      <section id="unavailable" class="system-notice" {% if snapshot %}hidden{% endif %}>
+        <span class="notice-icon">⋯</span>
+        <div><strong>Control plane is starting</strong><p>This view will reconnect automatically.</p></div>
       </section>
 
-      <section class="panel">
-        <div class="panel-title"><h2>Retry queue</h2></div>
-        <div id="retries" class="rows"></div>
-      </section>
+      <div id="content" {% if not snapshot %}hidden{% endif %}>
+        <section class="metric-grid" aria-label="Control plane metrics">
+          <article class="metric-card featured">
+            <div class="metric-label"><span class="metric-icon running-icon">↯</span>Active runs</div>
+            <strong id="running-count">0</strong>
+            <small id="capacity">0 available slots</small>
+          </article>
+          <article class="metric-card">
+            <div class="metric-label"><span class="metric-icon approval-icon">◇</span>Approvals</div>
+            <strong id="approval-count">0</strong>
+            <small>Waiting on an operator</small>
+          </article>
+          <article class="metric-card">
+            <div class="metric-label"><span class="metric-icon queue-icon">↻</span>Durable queue</div>
+            <strong id="retry-count">0</strong>
+            <small><span id="claimed-count">0</span> accepted runs</small>
+          </article>
+          <article class="metric-card">
+            <div class="metric-label"><span class="metric-icon stop-icon">!</span>Needs attention</div>
+            <strong id="attention-count">0</strong>
+            <small><span id="safety-blocked-count">0</span> safety stops</small>
+          </article>
+          <article class="metric-card">
+            <div class="metric-label"><span class="metric-icon success-icon">✓</span>Validated</div>
+            <strong id="validated-count">0</strong>
+            <small><span id="validation-pass-count">0</span> accepted passes</small>
+          </article>
+          <article class="metric-card">
+            <div class="metric-label"><span class="metric-icon token-icon">◌</span>Tokens used</div>
+            <strong id="token-count">0</strong>
+            <small><span id="completed-count">0</span> completed runs</small>
+          </article>
+        </section>
 
-      <section class="panel service">
-        <div class="panel-title"><h2>Service</h2></div>
-        <dl id="service"></dl>
-      </section>
-    </div>
-  </main>
-  <script src="{% static 'tempo.js' %}?v=20260728-3"></script>
+        <section id="projects" class="section-block">
+          <div class="section-heading">
+            <div><p class="section-kicker">PORTFOLIO</p><h2>Projects</h2></div>
+            <span id="project-count" class="section-meta">0 projects</span>
+          </div>
+          <div id="project-grid" class="project-grid"></div>
+        </section>
+
+        <div class="control-grid">
+          <section id="runs" class="panel run-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">EXECUTION</p>
+                <h2>Live runs</h2>
+              </div>
+              <span class="live-caption"><i></i> Streaming</span>
+            </div>
+            <div id="running" class="run-list"></div>
+          </section>
+
+          <aside class="control-rail">
+            <section id="approvals" class="panel">
+              <div class="panel-heading">
+                <div><p class="section-kicker">HUMAN GATES</p><h2>Approval inbox</h2></div>
+                <span id="approval-caption" class="panel-count">0 pending</span>
+              </div>
+              <div id="approvals-list" class="compact-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div><p class="section-kicker">RECOVERY</p><h2>Needs attention</h2></div>
+                <span id="attention-caption" class="panel-count">0 runs</span>
+              </div>
+              <div id="attention-list" class="compact-list"></div>
+            </section>
+          </aside>
+        </div>
+
+        <section class="panel queue-panel">
+          <div class="panel-heading">
+            <div><p class="section-kicker">DURABLE EXECUTION</p><h2>Retry queue</h2></div>
+            <span class="panel-count">Ordered by due time</span>
+          </div>
+          <div id="retries" class="queue-list"></div>
+        </section>
+
+        <section class="panel service-panel">
+          <div class="panel-heading">
+            <div><p class="section-kicker">SYSTEM</p><h2>Control-plane details</h2></div>
+          </div>
+          <dl id="service" class="definition-grid"></dl>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="action-dialog" class="action-dialog">
+    <form method="dialog" id="action-form">
+      <div class="dialog-heading">
+        <div><p class="section-kicker" id="dialog-kicker">RUN CONTROL</p><h2 id="dialog-title">Send feedback</h2></div>
+        <button class="icon-button" type="button" data-dialog-close aria-label="Close">×</button>
+      </div>
+      <p id="dialog-description" class="dialog-description"></p>
+      <label id="dialog-field-label" for="dialog-value">Message</label>
+      <textarea id="dialog-value" rows="7"></textarea>
+      <p id="dialog-error" class="form-error" hidden></p>
+      <div class="dialog-actions">
+        <button class="button ghost" type="button" data-dialog-close>Cancel</button>
+        <button id="dialog-submit" class="button primary" type="submit">Apply</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
+  {% csrf_token %}
+  <script src="{% static 'tempo.js' %}?v=20260728-4"></script>
 </body>
 </html>

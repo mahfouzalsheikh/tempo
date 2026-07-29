@@ -14,5 +14,17 @@ urlpatterns = [
     path("api/v1/events", views.state_events, name="state_events"),
     path("api/v1/admin", views.admin_state, name="admin_state"),
     path("api/v1/refresh", views.refresh, name="refresh"),
+    path("api/v1/approvals", views.approvals, name="approvals"),
+    path("api/v1/control", views.control_state, name="control_state"),
+    path(
+        "api/v1/approvals/<int:approval_id>/decision",
+        views.approval_decision,
+        name="approval_decision",
+    ),
+    path(
+        "api/v1/runs/<int:run_id>/<str:action>",
+        views.run_action,
+        name="run_action",
+    ),
     path("api/v1/<str:identifier>", views.issue, name="issue"),
 ]

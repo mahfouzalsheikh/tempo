@@ -7,8 +7,8 @@ from pathlib import Path
 
 import uvicorn
 
+from .control_plane import ControlPlane
 from .logging import configure_logging
-from .orchestrator import Orchestrator
 from .runtime import set_orchestrator
 
 
@@ -34,9 +34,9 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument(
         "workflow",
-        nargs="?",
-        default=os.getenv("TEMPO_WORKFLOW_PATH", "./WORKFLOW.md"),
-        help="Path to WORKFLOW.md (default: ./WORKFLOW.md)",
+        nargs="*",
+        default=[os.getenv("TEMPO_WORKFLOW_PATH", "./WORKFLOW.md")],
+        help="One or more WORKFLOW.md paths (default: ./WORKFLOW.md)",
     )
     result.add_argument("--host", default="127.0.0.1")
     result.add_argument("--port", type=int, default=8000)
@@ -45,15 +45,16 @@ def parser() -> argparse.ArgumentParser:
 
 
 async def run(args: argparse.Namespace) -> None:
-    path = Path(args.workflow)
-    if not path.is_file():  # noqa: ASYNC240 - one startup metadata check
-        raise SystemExit(f"Workflow file does not exist: {path}")
+    paths = [Path(value) for value in args.workflow]
+    for path in paths:
+        if not path.is_file():  # noqa: ASYNC240 - startup metadata checks
+            raise SystemExit(f"Workflow file does not exist: {path}")
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tempo_web.settings")
     configure_logging()
     await asyncio.to_thread(prepare_database)
-    orchestrator = Orchestrator(str(path))
-    await orchestrator.start()
-    set_orchestrator(orchestrator)
+    control_plane = ControlPlane([str(path) for path in paths])
+    await control_plane.start()
+    set_orchestrator(control_plane)
     try:
         if args.no_http:
             await asyncio.Event().wait()
@@ -70,7 +71,7 @@ async def run(args: argparse.Namespace) -> None:
             await server.serve()
     finally:
         set_orchestrator(None)
-        await orchestrator.stop()
+        await control_plane.stop()
 
 
 def main() -> None:

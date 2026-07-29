@@ -5,10 +5,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Configuration · Tempo</title>
-  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260728-3">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23b9f65f'/><path d='M8 9h16v4h-6v11h-4V13H8z' fill='%2311150d'/></svg>">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260728-4">
 </head>
 <body>
-  <main>
+  <main class="legacy-shell">
     <nav class="topnav">
       <a class="brand" href="/">Tempo</a>
       <a href="/ops/">Operations</a>
@@ -21,9 +22,10 @@
         <h1>Configuration</h1>
         <p class="subtitle">Effective workflow policy. Credentials and hook bodies are never displayed.</p>
       </div>
-      <div class="actions"><span id="status" class="status">LIVE</span></div>
+      <div class="actions"><span id="status" class="status"><i></i> Connecting</span></div>
     </header>
     <div class="config-grid">
+      <section class="panel validation-panel"><div class="panel-title"><h2>Projects & environments</h2></div><div id="config-projects" class="project-grid"></div></section>
       <section class="panel"><div class="panel-title"><h2>Tracker</h2></div><dl id="config-tracker"></dl></section>
       <section class="panel"><div class="panel-title"><h2>Agents</h2></div><dl id="config-agents"></dl></section>
       <section class="panel validation-panel"><div class="panel-title"><h2>Validation & publication</h2></div><dl id="config-validation"></dl></section>
@@ -31,6 +33,7 @@
       <section class="panel"><div class="panel-title"><h2>Workflow</h2></div><dl id="config-workflow"></dl></section>
     </div>
   </main>
-  <script src="{% static 'admin.js' %}?v=20260728-3"></script>
+  {% csrf_token %}
+  <script src="{% static 'admin.js' %}?v=20260728-4"></script>
 </body>
 </html>

@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -8,15 +9,33 @@ DEBUG = False
 ALLOWED_HOSTS = ["*"]
 ROOT_URLCONF = "tempo_web.urls"
 ASGI_APPLICATION = "tempo_web.asgi.application"
-DATABASE_PATH = Path(os.getenv("TEMPO_DATABASE_PATH", BASE_DIR / "var" / "tempo.sqlite3"))
-DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": DATABASE_PATH,
-        "OPTIONS": {"timeout": 30},
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if DATABASE_URL:
+    parsed_database_url = urlparse(DATABASE_URL)
+    if parsed_database_url.scheme not in {"postgres", "postgresql"}:
+        raise RuntimeError("DATABASE_URL must use postgres:// or postgresql://")
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": unquote(parsed_database_url.path.lstrip("/")),
+            "USER": unquote(parsed_database_url.username or ""),
+            "PASSWORD": unquote(parsed_database_url.password or ""),
+            "HOST": parsed_database_url.hostname or "",
+            "PORT": parsed_database_url.port or 5432,
+            "CONN_MAX_AGE": 60,
+            "OPTIONS": {"connect_timeout": 10},
+        }
     }
-}
+else:
+    DATABASE_PATH = Path(os.getenv("TEMPO_DATABASE_PATH", BASE_DIR / "var" / "tempo.sqlite3"))
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": DATABASE_PATH,
+            "OPTIONS": {"timeout": 30},
+        }
+    }
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
