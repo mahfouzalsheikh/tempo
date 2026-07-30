@@ -1,252 +1,152 @@
 # Tempo
 
-A Dockerized Python implementation of OpenAI's
-[autonomous coding service specification](https://github.com/openai/symphony/blob/main/SPEC.md).
-It continuously polls an issue tracker, creates an isolated workspace for each issue, and runs
-Codex app-server sessions until the issue leaves an active state.
+Tempo is a Python and Django control plane for autonomous coding work. It polls one or more issue
+trackers, leases eligible issues, creates an isolated workspace for each issue, and drives Codex
+app-server through implementation, project-native validation, pull-request review, and merge or
+human handoff.
 
-This port uses Django for the operator dashboard, JSON API, authenticated admin, and a durable
-PostgreSQL execution kernel. Database claims, leases, heartbeats, checkpoints, retry timers, and
-operator actions are authoritative; in-process state is a live cache of leased work.
+The service currently supports GitHub Issues and a deterministic in-memory adapter. GitHub is the
+only production tracker implementation, and Codex app-server is the only agent runtime.
 
-## What is included
+For the complete internal design, data model, lifecycle, recovery behavior, and security
+boundaries, read [System architecture](docs/ARCHITECTURE.md). Future work is tracked in
+[ROADMAP.md](ROADMAP.md).
 
-- Strict `WORKFLOW.md` YAML front matter and Jinja-compatible prompt rendering
-- Dynamic workflow reload with last-known-good fallback
-- GitHub Issues adapter and deterministic in-memory development adapter
-- Global and per-state concurrency, priority ordering, claims, reconciliation, stall detection,
-  continuation runs, and exponential retry backoff
-- Collision-resistant, root-contained per-issue workspaces and all four lifecycle hooks
-- Codex app-server JSONL client with implementation and independent-review sessions, timeouts,
-  token/rate-limit telemetry, approval/input handling, and host-side GitHub tool execution
-- Project-native local validation with captured commands, exit codes, logs, cleanup, and a hard
-  pull-request publication gate
-- Validation-gated independent pull-request review, automatic merge policy, and explicit human
-  handoff when the reviewer or GitHub repository policy requires a person
-- Per-run token, turn, validation-attempt, retry, and stall limits with durable safety stops
-- Durable Codex thread resumption after unblock, retry, lease recovery, and service restart, with
-  a fresh per-attempt token budget and workspace/checkpoint recovery if a thread is unavailable
-- Durable completion dispositions that prevent completed issues from being dispatched after restart
-- Persistent Django models, a first-class JWT operator login, and authenticated admin views for
-  issues, runs, sessions, validation attempts, and validation commands
-- PostgreSQL-backed accepted work, retries, worker leases, heartbeats, idempotency keys, and
-  checkpoints with SQLite retained for local development and deterministic tests
-- Authenticated pause, resume, cancel, retry, requeue, unblock, reprioritize, feedback, and durable
-  approval-inbox APIs with audited operator actions
-- First-class organizations, projects, repositories, environments, workflow versions, credential
-  references, quotas, and concurrent multi-workflow hosting
-- Structured JSON logs, Django dashboard, health check, and REST status endpoints
-- A non-root Docker image containing Python, Git, SSH, Node, and the Codex CLI
-- Deterministic tests with fake tracker and app-server implementations
+## What works today
 
-## Quick start
+- One independently configured orchestrator per `WORKFLOW.md`, with several workflows hosted by
+  one process
+- GitHub issue polling, label-based routing, priority ordering, concurrency limits, and terminal
+  issue cleanup
+- Durable runs, claims, leases, heartbeats, retries, checkpoints, completion dispositions, and
+  operator actions in PostgreSQL or SQLite
+- Root-contained issue workspaces with create, pre-run, post-run, and pre-remove hooks
+- Separate Codex implementation and review threads, including durable thread resumption
+- Repository-native validation with command output capture and workspace fingerprinting
+- Validation-gated GitHub writes, no-change completion, independent review, optional automatic
+  merge, and explicit human handoff
+- JWT operator login, audited run controls, approval decisions, a live Django dashboard, JSON
+  APIs, and server-sent state updates
+- A Docker Compose deployment with PostgreSQL, a credential-free validation service, and a
+  dedicated Docker daemon for validation workloads
 
-The checked-in workflow uses a GitHub tracker, so configure its repository token before startup:
+## Quick start with Docker Compose
+
+Requirements:
+
+- Docker with Compose
+- A GitHub token scoped to the repository configured in `WORKFLOW.md`
+- Either `OPENAI_API_KEY` or an authenticated Codex login
+
+Create the local environment file and set the required credentials:
 
 ```bash
 cp .env.example .env
-# Add GITHUB_TOKEN and either OPENAI_API_KEY or a persisted Codex login.
+# Edit .env and set GITHUB_TOKEN plus your Codex authentication.
+```
+
+The checked-in `WORKFLOW.md` points at
+`mahfouzalsheikh/drawing-algorithms`. Change its project, repository, hook URLs, labels, and
+reviewers before using Tempo for another repository.
+
+Start the stack:
+
+```bash
 docker compose up --build
 ```
 
-Open <http://localhost:8030> (or the `TEMPO_PORT` set in `.env`). Verify health with:
+Open <http://localhost:8030>. The port can be changed with `TEMPO_PORT` in `.env`.
 
-```bash
-curl http://localhost:${TEMPO_PORT:-8030}/healthz
-curl http://localhost:${TEMPO_PORT:-8030}/api/v1/state
-```
-
-The Compose service persists issue workspaces, runtime history, and Codex state in named volumes.
-Stop it with `docker compose down`; add `-v` only when you intentionally want to delete those
-volumes.
-
-After changing Tempo, rebuild and restart every service with:
-
-```bash
-./scripts/restart-tempo.sh
-```
-
-The script preserves the workspace, database, and Codex home volumes, force-recreates the
-containers, waits for their health checks, and prints the resulting service status.
-
-## Operator sign-in
-
-Tempo has its own operator login at `/login/`. It authenticates active Django users and issues an
-expiring HS256 access JWT. The web UI stores the token in an HttpOnly, SameSite=Lax cookie; API
-clients can send the returned token as `Authorization: Bearer <token>`. Cookie-based state changes
-retain Django's CSRF protection.
-
-Tempo applies database migrations automatically at startup. Create the first Django superuser with:
+The first operator can be created interactively:
 
 ```bash
 docker compose exec tempo python manage.py createsuperuser
 ```
 
 Alternatively, set `TEMPO_ADMIN_USERNAME`, `TEMPO_ADMIN_PASSWORD`, and optionally
-`TEMPO_ADMIN_EMAIL` in `.env` before the first startup; Tempo creates that account only when the
-username does not already exist. The password is removed from Codex and validation environments.
+`TEMPO_ADMIN_EMAIL` before the first startup. Sign in at `/login/`.
 
-Set `DJANGO_SECRET_KEY` to a long random production secret because it signs the JWTs. Token lifetime
-defaults to eight hours and is controlled by `TEMPO_JWT_ACCESS_TTL_SECONDS`. Set
-`TEMPO_JWT_COOKIE_SECURE=true` whenever Tempo is served over HTTPS.
+To authenticate Codex with an existing ChatGPT login instead of `OPENAI_API_KEY`:
 
-The separate `/admin/` Django Admin remains available for administrative inspection. Runtime
-records are read-only there because editing them would not change the authoritative tracker or live
-scheduler. Normal operator access uses `/login/`, `/`, `/ops/`, and `/ops/configuration/`.
-
-## Configure GitHub Issues
-
-Replace the `tracker` section in `WORKFLOW.md`:
-
-```yaml
-project:
-  organization: your-org
-  slug: your-project
-  name: Your project
-  environment: development
-  max_concurrent_runs: 3
-  environment_max_concurrent_runs: 2
-tracker:
-  kind: github
-  provider:
-    repo: your-org/your-repo
-    token: $GITHUB_TOKEN
-    # Optional second GitHub identity for a formal APPROVE review:
-    review_token: $GITHUB_REVIEW_TOKEN
-  required_labels: [tempo]
-  active_states: [open]
-  terminal_states: [closed]
-workspace:
-  root: $TEMPO_WORKSPACE_ROOT
-hooks:
-  after_create: |
-    git clone https://github.com/your-org/your-repo.git .
-  before_run: |
-    git fetch origin
-agent:
-  max_concurrent_agents: 3
-  max_turns: 6
-  max_tokens_per_run: 1000000
-  max_retries: 2
-validation:
-  enabled: true
-  command_timeout_ms: 1800000
-  max_attempts_per_run: 5
-review:
-  enabled: true
-  max_turns: 3
-  auto_merge: true
-  merge_method: squash
-  reviewers: []
-  team_reviewers: []
-codex:
-  command: codex app-server
+```bash
+docker compose run --rm --entrypoint codex tempo login
+docker compose up
 ```
 
-Put secrets in `.env`, which is ignored by Git:
+Compose persists PostgreSQL data, workspaces, SQLite fallback data, and Codex state in named
+volumes. `docker compose down` preserves them; `docker compose down -v` intentionally deletes them.
+After source changes, rebuild and health-check all services with:
 
-```dotenv
-GITHUB_TOKEN=github_pat_...
-# Optional separate reviewer identity:
-GITHUB_REVIEW_TOKEN=github_pat_...
-OPENAI_API_KEY=sk-...
+```bash
+./scripts/restart-tempo.sh
 ```
 
-The GitHub token is used by Tempo on the host side and removed from the Codex child
-environment. `github_api` is advertised to Codex so the workflow can read or update GitHub through
-the configured credential. Its reach is the token's reach, so use a fine-grained token scoped to
-the configured repository.
+## Local development with Pipenv
 
-If you use an existing ChatGPT login instead of `OPENAI_API_KEY`, authenticate the persisted
-Codex home with `docker compose run --rm --entrypoint codex tempo login`, then start the service
-normally.
+Requirements:
 
-## Local validation and pull requests
+- Python 3.12
+- Pipenv
+- Git and Bash
+- The Codex CLI, authenticated with an API key or persisted login
 
-Tempo does not hard-code a test framework or command. The agent inspects each repository's own
-documentation and tooling, then submits its complete build, launch, and test sequence to Tempo's
-`project_validation` tool. Tempo executes those commands in the issue workspace, captures their
-exit codes and output, and unlocks pull-request creation only after the entire sequence succeeds.
-Failed validation is returned to the agent so it can fix the project and try again.
+Install the exact locked application and development dependencies:
 
-Tempo fingerprints the workspace before and after validation and rejects an attempt if its
-commands modify project files. Code changes must happen through normal workspace tools, not through
-the validation runner. Successful pull requests automatically receive a `Closes #N` link. When
-`review.enabled` is true, Tempo stops the implementation session and starts a fresh Codex thread as
-an independent reviewer. That reviewer inspects the full change, may fix findings, must validate
-the final workspace again, and records either `approve` or `human_review` through a review-only
-tool.
-
-After approval, Tempo applies `review.auto_merge` and `review.merge_method`. The agents cannot call
-GitHub's merge API directly. If GitHub permits the merge, Tempo merges and comments on the
-originating issue. If the reviewer requests a person, automatic merge is disabled, branch
-protection or checks block the merge, or GitHub rejects the configured credentials, Tempo requests
-the configured users or teams and posts explicit handoff comments on both the PR and issue. Tempo
-then removes the dispatch label so the implementation is not repeated.
-
-GitHub does not allow a pull-request author to formally approve its own PR. Configure
-`tracker.provider.review_token` with a separate GitHub identity when a formal GitHub `APPROVE`
-review is desired. Without it, Tempo records the independent review in a PR comment and attempts
-the merge; repositories requiring a distinct approval naturally fall back to human review.
-
-When validated behavior is already present, the implementation agent can record a no-change
-completion through `tempo_complete`; Tempo comments on the issue and removes the dispatch label.
-
-The bundled Compose setup includes a credential-free validation runner and an isolated Docker
-daemon for projects that use containers. The workspace volume is shared with both, so
-repository-native commands, Compose files, and bind mounts work at their expected paths. The
-runner does not receive the GitHub, OpenAI, or Django credentials or the Codex home. Merge calls
-remain unavailable to both agents; only the post-review control-plane policy may merge.
-
-The dashboard reports validation passes as attempts and validated runs as distinct runs with at
-least one accepted pass. Review and merge state is reported separately in the live session.
-
-Repositories still need to describe enough of their setup to run locally. If required services,
-credentials, or instructions are unavailable, validation remains blocked and Tempo will not create
-a pull request.
-
-## Workflow behavior
-
-`WORKFLOW.md` owns tracker, polling, workspaces, hooks, concurrency, Codex policy, and the prompt.
-Prompt variables are `issue` and `attempt`; unknown variables fail the attempt. Relative workspace
-paths resolve beside the workflow file, `~` expands, and a path containing only `$VAR` reads that
-environment variable.
-
-### Run multiple projects or repositories
-
-Tempo uses one workflow file per project/repository. A single control-plane process can load
-several workflow files and runs an independent orchestrator for each one. The dashboard and API
-combine their runtime state while preserving project-scoped queues, limits, history, and tracker
-configuration.
-
-For example:
-
-```text
-projects/
-├── api/WORKFLOW.md
-└── web/WORKFLOW.md
+```bash
+cp .env.example .env
+pipenv sync --dev
 ```
 
-Each workflow must configure:
+Set `GITHUB_TOKEN` in `.env`, adjust `WORKFLOW.md`, then start Tempo:
 
-- A unique `project.organization` and `project.slug` pair. Tempo rejects duplicate project keys at
-  startup.
-- The repository monitored by that workflow in `tracker.provider.repo`.
-- Repository-specific clone and fetch commands in `hooks`.
-- A distinct `workspace.root`. GitHub issue identifiers such as `GH-42` are only unique within a
-  repository, so sharing a workspace root could make projects use the same issue directory.
+```bash
+pipenv run start
+```
 
-An API workflow might begin with:
+Pipenv loads `.env` automatically. The example sets `TEMPO_WORKSPACE_ROOT=./var/workspaces`; local
+runs use SQLite at `./var/tempo.sqlite3` unless `DATABASE_URL` is set.
 
-```yaml
+Useful commands:
+
+```bash
+pipenv run tempo --help
+pipenv run start-no-http
+pipenv run tempo --host 127.0.0.1 --port 9000 ./WORKFLOW.md
+pipenv run lint
+pipenv run test
+pipenv run check
+```
+
+To host several projects in one process, give each workflow a unique
+`project.organization`/`project.slug`, repository, and workspace root:
+
+```bash
+pipenv run tempo ./projects/api/WORKFLOW.md ./projects/web/WORKFLOW.md
+```
+
+Add or update dependencies through Pipenv and commit both dependency files:
+
+```bash
+pipenv install package-name
+pipenv install --dev package-name
+pipenv lock
+```
+
+`Pipfile` is the dependency source of truth and `Pipfile.lock` supplies reproducible versions and
+hashes. `pyproject.toml` contains package metadata, the `tempo` console entry point, and tool
+configuration; it intentionally does not duplicate dependency declarations.
+
+## Workflow configuration
+
+Every workflow is a Markdown file with YAML front matter followed by a Jinja prompt:
+
+```markdown
 ---
 project:
   organization: acme
   slug: api
   name: Acme API
   environment: development
-  max_concurrent_runs: 3
-  environment_max_concurrent_runs: 2
 tracker:
   kind: github
   provider:
@@ -256,160 +156,117 @@ tracker:
   active_states: [open]
   terminal_states: [closed]
 workspace:
-  root: /data/workspaces/api
+  root: $TEMPO_WORKSPACE_ROOT
 hooks:
   after_create: |
-    git -c credential.helper='!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f' \
-      clone https://github.com/acme/api.git .
-  before_run: |
-    git -c credential.helper='!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f' \
-      fetch origin
+    git clone https://github.com/acme/api.git .
+agent:
+  max_concurrent_agents: 3
+validation:
+  enabled: true
+review:
+  enabled: true
+  auto_merge: false
+codex:
+  command: codex app-server
 ---
+
+Work on {{ issue.identifier }}: {{ issue.title }}.
 ```
 
-The web workflow would use a different project slug, repository, clone URL, and workspace root such
-as `/data/workspaces/web`. A single fine-grained `GITHUB_TOKEN` may cover all configured
-repositories; grant it access only to the repositories Tempo needs.
+Only `issue` and `attempt` are valid prompt variables. Configuration is validated with Pydantic.
+Tempo watches each workflow's modification time and applies a valid change on the next tick; an
+invalid edit is reported while the last valid definition remains active.
 
-Start both workflows locally by passing every path to `tempo`:
+The checked-in [WORKFLOW.md](WORKFLOW.md) provides a complete working configuration example. The
+behavior and defaults of every section are described in
+[System architecture](docs/ARCHITECTURE.md#workflow-and-configuration).
+
+## Validation and publication
+
+When validation is enabled, Codex must call Tempo's `project_validation` tool with the repository's
+own build, launch, and test commands. Tempo runs the sequence, stops at the first failed command,
+always runs an optional cleanup command, and records the result.
+
+A successful run is accepted only if validation did not change tracked or untracked project files.
+The resulting workspace fingerprint authorizes GitHub writes. Any later workspace change
+invalidates that authorization and requires another validation run.
+
+After the implementation agent creates a pull request:
+
+1. Tempo starts a separate review thread when review is enabled.
+2. The reviewer inspects and may fix the branch, then validates the final workspace.
+3. The reviewer records `approve` or `human_review`.
+4. Tempo—not either agent—applies the configured merge policy.
+
+If review is disabled, automatic review and merge do not occur; Tempo creates a human-review
+handoff. If no code change is required, a validated implementation agent can finish with
+`tempo_complete`.
+
+## HTTP surfaces
+
+The main pages are:
+
+- `/` — live control center
+- `/login/` — operator sign-in
+- `/ops/` — runtime and intervention view
+- `/ops/configuration/` — redacted effective configuration
+- `/admin/` — Django Admin inspection
+- `/healthz` — readiness
+
+Core API routes:
+
+| Method | Route | Authentication | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/state` | No | Complete live snapshot |
+| `GET` | `/api/v1/events` | No | Server-sent snapshots and keepalives |
+| `GET` | `/api/v1/admin` | No | Redacted effective configuration |
+| `GET` | `/api/v1/<identifier>` | No | Active or retrying issue status |
+| `POST` | `/api/v1/refresh` | Yes | Wake all poll loops |
+| `GET` | `/api/v1/control` | Yes | Paused, approval-blocked, and safety-stopped runs |
+| `POST` | `/api/v1/runs/<id>/<action>` | Yes | Apply an audited run action |
+| `GET` | `/api/v1/approvals` | Yes | List pending approvals |
+| `POST` | `/api/v1/approvals/<id>/decision` | Yes | Approve or reject, optionally editing arguments |
+| `POST` | `/api/v1/auth/login` | No | Exchange Django credentials for a JWT and cookie |
+| `POST` | `/api/v1/auth/logout` | No | Clear the JWT cookie |
+| `GET` | `/api/v1/auth/me` | Yes | Return the current operator |
+
+Run actions are `pause`, `resume`, `cancel`, `retry`, `requeue`, `unblock`, `reprioritize`, and
+`feedback`. API clients can use `Authorization: Bearer <token>`. Browser mutations use an
+HttpOnly, SameSite=Lax JWT cookie and retain CSRF protection.
+
+## Production notes
+
+The shipped settings are development-oriented. Before exposing Tempo outside a trusted network:
+
+- Set a long, random `DJANGO_SECRET_KEY`.
+- Serve it behind HTTPS and set `TEMPO_JWT_COOKIE_SECURE=true`.
+- Restrict network access to the unauthenticated read-only dashboard and state/configuration APIs
+  if their operational metadata is sensitive.
+- Replace the default PostgreSQL password and scope GitHub credentials to only required
+  repositories and permissions.
+- Protect database and Django Admin access. Workflow versions currently persist the resolved
+  effective configuration, including provider credential values.
+- Review the configured Codex approval policy. The checked-in workflow uses `never`, which
+  auto-accepts Codex command/file approval requests for the session.
+- Treat the Compose Docker-in-Docker validation service as privileged infrastructure.
+
+## Test guarantees and current limits
+
+The deterministic suite uses fake tracker and app-server implementations and makes no external
+network calls:
 
 ```bash
-tempo ./projects/api/WORKFLOW.md ./projects/web/WORKFLOW.md
+pipenv run check
 ```
 
-For Docker Compose, mount every workflow into the Tempo container and pass the container paths as
-command arguments:
+Current limitations are deliberate:
 
-```yaml
-services:
-  tempo:
-    command:
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - /app/workflows/api.md
-      - /app/workflows/web.md
-    volumes:
-      - ./projects/api/WORKFLOW.md:/app/workflows/api.md:ro
-      - ./projects/web/WORKFLOW.md:/app/workflows/web.md:ro
-      - tempo-workspaces:/data/workspaces
-      - tempo-database:/data/database
-      - tempo-codex-home:/home/tempo/.codex
-```
-
-The validation runner and project runner should keep the shared `tempo-workspaces` volume mounted
-at `/data/workspaces`, as in the checked-in Compose configuration. Project-specific workspace roots
-can be subdirectories of that shared volume.
-
-Concurrency settings apply independently to each project. For example, two projects with
-`max_concurrent_runs: 3` can run up to six jobs in total, subject to each workflow's agent and
-environment limits. Editing an already loaded workflow is hot-reloaded, but adding or removing a
-workflow path requires updating the startup command and restarting Tempo.
-
-The default security posture is deliberately conservative:
-
-- Codex uses `workspace-write`.
-- The generated turn policy writes only under the current issue workspace and disables network.
-- Approval requests and interactive input fail the attempt instead of waiting forever.
-- Set `codex.approval_policy: never` only in a trusted environment if you want Tempo to accept
-  app-server approval callbacks automatically.
-- Enable `networkAccess: true` in an explicit `codex.turn_sandbox_policy` only when the task needs
-  outbound access.
-- Hook scripts are trusted repository policy and run through `bash -lc`; review them like code.
-- Repository validation runs project code in the credential-free runner and directs containers to
-  the dedicated Compose Docker daemon. Do not replace it with the host Docker socket.
-
-Changes to workflow settings and prompts are reloaded without restart. Invalid changes remain
-operator-visible while the last valid configuration stays active.
-
-## API
-
-- `GET /` — live dashboard
-- `GET /healthz` — process readiness
-- `GET /api/v1/state` — complete runtime snapshot
-- `GET /api/v1/events` — live server-sent stream of runtime snapshots
-- `GET /api/v1/admin` — redacted effective configuration and operator state
-- `GET /api/v1/<issue_identifier>` — running/retry status for one issue
-- `POST /api/v1/refresh` — authenticated; wake every project poll loop immediately
-- `POST /api/v1/runs/<run_id>/<action>` — authenticated and audited; actions are `pause`,
-  `resume`, `cancel`, `retry`, `requeue`, `unblock`, `reprioritize`, and `feedback`
-- `GET /api/v1/approvals` — authenticated pending approval inbox
-- `POST /api/v1/approvals/<approval_id>/decision` — authenticated approve, edit, or reject
-- `POST /api/v1/auth/login` — exchange username/password for an access JWT and secure cookie
-- `POST /api/v1/auth/logout` — clear the browser access-token cookie
-- `GET /api/v1/auth/me` — inspect the authenticated operator and authentication mechanism
-
-The control center at `/` combines the project portfolio, live agent timelines, durable retry
-queue, blocked and paused runs, approval inbox, validation evidence, and direct operator actions.
-It uses a reconnecting live stream for agent messages, commands, tool calls, file changes, phases,
-tokens, and session details. Private reasoning text is not exposed. Intervention and approval
-details appear only to authenticated operators. `/ops/` and `/ops/configuration/` provide compact
-runtime and redacted policy views without exposing credentials or hook bodies. Authenticated
-Django Admin remains available at `/admin/`.
-
-The HTTP server binds to `127.0.0.1` by default outside Docker. Docker explicitly binds the process
-to `0.0.0.0` and publishes port 8000.
-
-## Run locally
-
-Python 3.12+, Git, Bash, and an authenticated Codex CLI are required:
-
-```bash
-python -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
-tempo ./WORKFLOW.md
-
-# Host several projects and trackers in one control-plane process:
-tempo ./projects/api/WORKFLOW.md ./projects/web/WORKFLOW.md
-```
-
-Useful options:
-
-```bash
-tempo --help
-tempo --no-http ./WORKFLOW.md
-tempo --host 127.0.0.1 --port 9000 ./WORKFLOW.md
-```
-
-## Test
-
-Run all quality checks in an isolated container:
-
-```bash
-docker build -t tempo-python .
-docker run --rm -v "$PWD:/src" -w /src --entrypoint sh tempo-python \
-  -lc "pip install -e '.[dev]' && ruff check . && pytest -q"
-```
-
-For a real integration check, use a dedicated repository/label, a fine-grained GitHub token, and
-an isolated workspace volume. The deterministic suite intentionally makes no network calls.
-
-## Architecture
-
-```text
-WORKFLOW.md(s) ──> ControlPlane ──> project Orchestrator(s) ──> leased workers
-                         │                    │                    ├─ Workspace + hooks
-                         │                    │                    └─ Codex app-server
-                         │                    │
-                         └──── PostgreSQL durable queue, checkpoints, approvals, and audit
-                                      │
-                               Django + /api/v1/*
-```
-
-After restart, accepted and retry-scheduled runs are restored from PostgreSQL. Expired worker
-leases return to the durable queue and resume the stored Codex implementation or review thread.
-Unblocking a safety-stopped run grants a fresh per-attempt token budget without discarding thread
-context. If Codex can no longer reopen a stored thread, Tempo explicitly reconstructs from the
-existing workspace, git history, tracker, pull request, and durable checkpoints. Live leases
-prevent a second control-plane process from claiming the same run. Completed dispositions and
-safety stops prevent duplicate dispatch. Terminal workspaces are swept during startup and on
-terminal transitions.
-
-## Current scope
-
-Each workflow still selects one tracker, but a Tempo process can host several uniquely scoped
-project workflows concurrently. It ships GitHub Issues plus a development adapter. Linear, Jira,
-Asana, GitLab, and SSH workers remain extension work. Rich tracker mutations remain workflow/tool
-policy rather than orchestrator business logic.
+- GitHub Issues and the in-memory test adapter are the only trackers.
+- Scheduling uses polling, not webhooks.
+- Workers run inside the control-plane process; leases support recovery but not an independently
+  scalable worker service.
+- The implementation/review sequence is built in rather than a general workflow graph.
+- SQLite is suitable for local development and tests; Compose uses PostgreSQL for durable
+  multi-process-safe claims.
+- The application has no project-scoped RBAC or SSO.

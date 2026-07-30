@@ -8,11 +8,16 @@ FROM python:3.12-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    PIPENV_NOSPIN=1 \
     TEMPO_WORKFLOW_PATH=/app/WORKFLOW.md
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends bash ca-certificates git openssh-client \
+    && pip install --no-cache-dir pipenv \
     && rm -rf /var/lib/apt/lists/*
+
+ENV TEMPO_WORKSPACE_ROOT=/data/workspaces \
+    TEMPO_DATABASE_PATH=/data/database/tempo.sqlite3
 
 COPY --from=codex /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=codex /usr/local/bin/node /usr/local/bin/node
@@ -24,11 +29,11 @@ RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/
     && ln -s /usr/local/lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack
 
 WORKDIR /app
-COPY pyproject.toml README.md ./
+COPY Pipfile Pipfile.lock pyproject.toml README.md ./
 COPY tempo ./tempo
 COPY tempo_web ./tempo_web
 COPY manage.py WORKFLOW.md ./
-RUN pip install .
+RUN pipenv install --system --deploy
 
 RUN useradd --create-home --uid 10001 tempo \
     && mkdir -p /data/workspaces /data/database /data/log /home/tempo/.codex \

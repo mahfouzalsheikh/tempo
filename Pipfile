@@ -1,0 +1,33 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[requires]
+python_version = "3.12"
+
+[packages]
+django = ">=5.2,<6"
+httpx = ">=0.28,<1"
+jinja2 = ">=3.1,<4"
+pyjwt = ">=2.10,<3"
+pydantic = ">=2.11,<3"
+psycopg = {extras = ["binary"], version = ">=3.2,<4"}
+pyyaml = ">=6.0,<7"
+structlog = ">=25.1,<26"
+uvicorn = {extras = ["standard"], version = ">=0.34,<1"}
+tempo-python = {editable = true, path = "."}
+
+[dev-packages]
+pytest = ">=8.3,<9"
+pytest-asyncio = ">=0.26,<1"
+pytest-cov = ">=6,<7"
+pytest-django = ">=4.10,<5"
+ruff = ">=0.11,<1"
+
+[scripts]
+start = "tempo ./WORKFLOW.md"
+start-no-http = "tempo --no-http ./WORKFLOW.md"
+test = "pytest -q"
+lint = "ruff check ."
+check = "sh -c 'ruff check . && pytest -q'"
