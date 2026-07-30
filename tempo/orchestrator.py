@@ -37,7 +37,8 @@ Tempo publication policy:
 - Use the project_validation tool with the complete project-native validation sequence. Tempo, not
   your narrative assessment, determines success from the commands' exit codes.
 - If validation fails, diagnose the output, fix the project, and run project_validation again.
-- After validation passes, create a pull request but never merge it.
+- After validation passes, create a pull request. The implementation agent must never merge it;
+  Tempo starts an independent review agent and applies merge policy afterward.
 - Validation commands must not edit project files.
 - If the requested behavior is already present and validation passes, use tempo_complete with
   concrete evidence instead of repeating work or creating an empty pull request.
@@ -46,6 +47,35 @@ VALIDATION_CONTINUATION_PROMPT = (
     "Local validation has not passed yet. Inspect the repository's own instructions and tooling, "
     "then use project_validation to build or launch it and run the relevant tests. Fix failures "
     "and repeat. Do not create a pull request before validation passes."
+)
+REVIEW_POLICY_PROMPT = """
+
+Tempo independent review policy:
+- You are a separate reviewer, not a continuation of the implementation agent.
+- Inspect the full issue and pull-request diff plus the repository's own instructions.
+- Check correctness, regressions, security, tests, and maintainability.
+- You may fix material findings and update the pull-request branch; validate the final workspace
+  again after every change.
+- Never call GitHub's merge API yourself. Tempo applies merge policy after your decision.
+- Finish with tempo_review. Use approve only after unchanged local validation passes.
+- Use human_review when ambiguity, sensitive risk, repository policy, permissions, or unresolved
+  findings require a person, and state the exact reason.
+""".strip()
+REVIEW_CONTINUATION_PROMPT = (
+    "Continue the independent pull-request review. Resolve remaining findings, validate the final "
+    "workspace, then call tempo_review with approve or human_review and concrete evidence."
+)
+RECOVERY_CONTINUATION_PROMPT = (
+    "Tempo resumed this durable thread after an operator unblock or worker recovery. "
+    "Continue from the latest completed work and checkpoint. Inspect the current workspace and "
+    "tracker state before acting, and do not repeat implementation, validation, commits, or "
+    "publication steps that are already complete."
+)
+RECOVERY_FALLBACK_PROMPT = (
+    "Tempo could not reopen the prior Codex thread, so recover from durable state rather than "
+    "starting the issue over. Inspect the existing workspace, git history, tracker, open pull "
+    "requests, and validation checkpoints first. Preserve completed work and perform only the "
+    "remaining steps."
 )
 
 
@@ -415,6 +445,16 @@ class Orchestrator:
         entry = self.running[issue.id]
         if self.persistence:
             entry.run_record_id = await self.persistence.start_run(entry, workspace.path)
+        resume_context = (
+            await self.persistence.resume_context(entry.run_record_id)
+            if self.persistence and entry.run_record_id
+            else None
+        )
+        if resume_context:
+            usage_baseline = resume_context["usage_baseline"]
+            entry.session.thread_input_tokens = int(usage_baseline.get("input_tokens", 0))
+            entry.session.thread_output_tokens = int(usage_baseline.get("output_tokens", 0))
+            entry.session.thread_total_tokens = int(usage_baseline.get("total_tokens", 0))
         heartbeat_task = asyncio.create_task(
             self._heartbeat_worker(entry),
             name=f"tempo-heartbeat-{issue.identifier}",
@@ -439,9 +479,52 @@ class Orchestrator:
             if not config.validation.enabled:
                 tracker.authorize_publication(issue.id)
             await workspace_manager.before_run(workspace.path)
+            if resume_context and resume_context.get("pull_request_url"):
+                pull_request_url = str(resume_context["pull_request_url"])
+                try:
+                    pull_request_number = int(
+                        resume_context.get("pull_request_number")
+                        or pull_request_url.rstrip("/").rsplit("/", 1)[-1]
+                    )
+                except ValueError as exc:
+                    raise CodexError(
+                        "cannot recover review because the pull request number is unavailable",
+                        category="review_recovery_context",
+                    ) from exc
+                entry.session.agent_role = "review"
+                entry.session.pull_request_created = True
+                entry.session.pull_request_url = pull_request_url
+                entry.session.pull_request_number = pull_request_number
+                await self._run_review_agent(
+                    issue,
+                    workspace.path,
+                    config,
+                    workspace_manager,
+                    tracker,
+                    pull_request_number,
+                    on_approval,
+                    resume_context=(
+                        resume_context if resume_context.get("agent_role") == "review" else None
+                    ),
+                )
+                return
             self.running[issue.id].phase = "LaunchingAgentProcess"
+            self.running[issue.id].session.agent_role = "implementation"
             self._publish_live_state()
-            session = await client.start_session(workspace.path)
+            implementation_resume = (
+                resume_context
+                if resume_context and resume_context.get("agent_role") == "implementation"
+                else None
+            )
+            session = await client.start_session(
+                workspace.path,
+                resume_thread_id=(
+                    str(implementation_resume["thread_id"]) if implementation_resume else None
+                ),
+                usage_baseline=(
+                    implementation_resume.get("usage_baseline") if implementation_resume else None
+                ),
+            )
             current_issue = issue
             for turn_number in range(1, config.agent.max_turns + 1):
                 entry = self.running.get(issue.id)
@@ -450,22 +533,31 @@ class Orchestrator:
                     entry.phase = "StreamingTurn"
                     entry.session.turn_count = turn_number
                     self._publish_live_state()
-                prompt = (
-                    (
-                        f"{render_prompt(definition, current_issue, attempt)}\n\n"
-                        f"{VALIDATION_POLICY_PROMPT}"
-                        if config.validation.enabled
-                        else render_prompt(definition, current_issue, attempt)
+                if turn_number == 1 and implementation_resume:
+                    prompt = (
+                        RECOVERY_CONTINUATION_PROMPT
+                        if session.resumed
+                        else RECOVERY_FALLBACK_PROMPT
                     )
-                    if turn_number == 1
-                    else (
-                        VALIDATION_CONTINUATION_PROMPT
-                        if config.validation.enabled
-                        and entry
-                        and entry.session.validation_status != "passed"
-                        else CONTINUATION_PROMPT
+                    if config.validation.enabled:
+                        prompt = f"{prompt}\n\n{VALIDATION_POLICY_PROMPT}"
+                else:
+                    prompt = (
+                        (
+                            f"{render_prompt(definition, current_issue, attempt)}\n\n"
+                            f"{VALIDATION_POLICY_PROMPT}"
+                            if config.validation.enabled
+                            else render_prompt(definition, current_issue, attempt)
+                        )
+                        if turn_number == 1
+                        else (
+                            VALIDATION_CONTINUATION_PROMPT
+                            if config.validation.enabled
+                            and entry
+                            and entry.session.validation_status != "passed"
+                            else CONTINUATION_PROMPT
+                        )
                     )
-                )
                 if operator_feedback:
                     prompt = f"Operator feedback:\n{operator_feedback}\n\n{prompt}"
                 await client.run_turn(session, prompt, current_issue)
@@ -504,10 +596,29 @@ class Orchestrator:
                         "pull request response did not include a number",
                         category="publication_response",
                     )
-                await tracker.finalize_pull_request(
-                    issue,
-                    entry.session.pull_request_number,
-                )
+                if config.review.enabled:
+                    if session:
+                        await client.stop_session(session)
+                        session = None
+                    await self._run_review_agent(
+                        issue,
+                        workspace.path,
+                        config,
+                        workspace_manager,
+                        tracker,
+                        entry.session.pull_request_number,
+                        on_approval,
+                    )
+                else:
+                    entry.phase = "HumanReviewRequired"
+                    entry.session.review_status = "human_review"
+                    entry.session.human_review_reason = (
+                        "Automated review is disabled by workflow policy."
+                    )
+                    await tracker.finalize_pull_request(
+                        issue,
+                        entry.session.pull_request_number,
+                    )
             elif entry.session.no_change_completed:
                 entry.phase = "NoChangesRequired"
                 await tracker.finalize_without_changes(
@@ -526,6 +637,155 @@ class Orchestrator:
             if session:
                 await client.stop_session(session)
             await workspace_manager.after_run(workspace.path)
+
+    async def _run_review_agent(
+        self,
+        issue: Issue,
+        workspace_path: Any,
+        config: ServiceConfig,
+        workspace_manager: WorkspaceManager,
+        tracker: Tracker,
+        pull_request_number: int,
+        approval_callback: Any,
+        *,
+        resume_context: dict[str, Any] | None = None,
+    ) -> None:
+        entry = self.running.get(issue.id)
+        if not entry:
+            raise CodexError("run was released before review", category="run_released")
+        entry.phase = "LaunchingReviewAgent"
+        entry.session.agent_role = "review"
+        entry.session.review_status = "in_progress"
+        if not resume_context:
+            entry.session.thread_input_tokens = 0
+            entry.session.thread_output_tokens = 0
+            entry.session.thread_total_tokens = 0
+        self._publish_live_state()
+
+        base_input = entry.session.codex_input_tokens
+        base_output = entry.session.codex_output_tokens
+        base_total = entry.session.codex_total_tokens
+        implementation_turns = entry.session.turn_count
+
+        async def on_review_event(event: dict[str, Any]) -> None:
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                event = {
+                    **event,
+                    "thread_usage": event.get("thread_usage", usage),
+                    "usage": {
+                        **usage,
+                        "input_tokens": base_input + int(usage.get("input_tokens", 0)),
+                        "output_tokens": base_output + int(usage.get("output_tokens", 0)),
+                        "total_tokens": base_total + int(usage.get("total_tokens", 0)),
+                    },
+                }
+            await self._codex_event(issue.id, event)
+
+        review_client = CodexAppServer(
+            config,
+            workspace_manager,
+            tracker,
+            on_review_event,
+            approval_callback=approval_callback,
+        )
+        review_session = None
+        try:
+            review_session_kwargs: dict[str, Any] = {"role": "review"}
+            if resume_context:
+                review_session_kwargs.update(
+                    {
+                        "resume_thread_id": str(resume_context["thread_id"]),
+                        "usage_baseline": resume_context.get("usage_baseline"),
+                    }
+                )
+            review_session = await review_client.start_session(
+                workspace_path,
+                **review_session_kwargs,
+            )
+            pull_request_url = (
+                entry.session.pull_request_url or f"pull request #{pull_request_number}"
+            )
+            for review_turn in range(1, config.review.max_turns + 1):
+                entry = self.running.get(issue.id)
+                if not entry:
+                    raise CodexError("run was released during review", category="run_released")
+                entry.phase = "ReviewingPullRequest"
+                entry.session.turn_count = implementation_turns + review_turn
+                if review_turn == 1 and resume_context:
+                    prompt = (
+                        REVIEW_CONTINUATION_PROMPT
+                        if review_session.resumed
+                        else (
+                            f"{RECOVERY_FALLBACK_PROMPT}\n\n"
+                            f"Recover the independent review of {pull_request_url}.\n\n"
+                            f"{config.review.prompt}\n\n{REVIEW_POLICY_PROMPT}"
+                        )
+                    )
+                else:
+                    prompt = (
+                        (
+                            f"Review {pull_request_url} for {issue.identifier}: {issue.title}.\n\n"
+                            f"{config.review.prompt}\n\n{REVIEW_POLICY_PROMPT}"
+                        )
+                        if review_turn == 1
+                        else REVIEW_CONTINUATION_PROMPT
+                    )
+                self._publish_live_state()
+                await review_client.run_turn(review_session, prompt, issue)
+                if review_session.review_decision:
+                    break
+            if not review_session.review_decision:
+                raise CodexError(
+                    "review agent ended without an approve or human-review decision",
+                    category="review_completion_required",
+                )
+
+            summary = review_session.review_summary or "Independent review completed."
+            if review_session.review_decision == "approve":
+                entry.phase = "ApplyingMergePolicy"
+                outcome = await tracker.complete_pull_request_review(
+                    issue,
+                    pull_request_number,
+                    summary=summary,
+                    auto_merge=config.review.auto_merge,
+                    merge_method=config.review.merge_method,
+                    reviewers=config.review.reviewers,
+                    team_reviewers=config.review.team_reviewers,
+                )
+            else:
+                outcome = await tracker.require_human_review(
+                    issue,
+                    pull_request_number,
+                    reason=summary,
+                    summary=summary,
+                    reviewers=config.review.reviewers,
+                    team_reviewers=config.review.team_reviewers,
+                )
+
+            status = str(outcome.get("status", "human_review"))
+            entry.session.review_summary = summary
+            entry.session.review_status = status
+            if status == "merged":
+                entry.phase = "Merged"
+                entry.session.merged = True
+                entry.session.human_review_reason = None
+            else:
+                reason = str(outcome.get("reason", summary))
+                entry.phase = "HumanReviewRequired"
+                entry.session.human_review_reason = reason
+            await self._codex_event(
+                issue.id,
+                {
+                    "event": "review_outcome",
+                    "status": status,
+                    "summary": summary,
+                    "reason": entry.session.human_review_reason,
+                },
+            )
+        finally:
+            if review_session:
+                await review_client.stop_session(review_session)
 
     async def _heartbeat_worker(self, entry: RunningEntry) -> None:
         while entry.issue.id in self.running:
@@ -593,6 +853,19 @@ class Orchestrator:
         session.codex_total_tokens = max(
             session.codex_total_tokens, int(usage.get("total_tokens", 0))
         )
+        thread_usage = event.get("thread_usage") or usage
+        session.thread_input_tokens = max(
+            session.thread_input_tokens,
+            int(thread_usage.get("input_tokens", 0)),
+        )
+        session.thread_output_tokens = max(
+            session.thread_output_tokens,
+            int(thread_usage.get("output_tokens", 0)),
+        )
+        session.thread_total_tokens = max(
+            session.thread_total_tokens,
+            int(thread_usage.get("total_tokens", 0)),
+        )
         if "rate_limits" in event:
             self.rate_limits = event["rate_limits"]
         event_name = event.get("event")
@@ -653,21 +926,22 @@ class Orchestrator:
             session.validation_finished_at = None
             entry.phase = "ValidationRequired"
         elif event_name == "tool_call_completed" and event.get("tool") == "github_api":
-            arguments = event.get("arguments") or {}
-            if str(arguments.get("method", "GET")).upper() == "POST" and str(
-                arguments.get("path", "")
-            ).rstrip().endswith("/pulls"):
-                if event.get("success"):
-                    entry.phase = "PullRequestCreated"
-                    session.pull_request_created = True
-                    with contextlib.suppress(json.JSONDecodeError):
-                        payload = json.loads(str(event.get("output", "")))
-                        session.pull_request_url = payload.get("html_url")
-                        session.pull_request_number = payload.get("number")
+            pull_request = PersistenceStore._pull_request_from_checkpoint(event)
+            if pull_request:
+                entry.phase = "PullRequestCreated"
+                session.pull_request_created = True
+                session.pull_request_url, session.pull_request_number = pull_request
         elif event_name == "no_change_completed":
             entry.phase = "NoChangesRequired"
             session.no_change_completed = True
             session.completion_summary = str(event.get("reason", "")).strip()
+        elif event_name == "review_completed":
+            decision = str(event.get("decision", "human_review"))
+            entry.phase = "ReviewApproved" if decision == "approve" else "HumanReviewRequired"
+            session.review_status = decision
+            session.review_summary = str(event.get("summary", "")).strip()
+            if decision == "human_review":
+                session.human_review_reason = session.review_summary
         self._publish_live_state()
         if self.persistence and "delta" not in str(event_name).lower():
             await self.persistence.record_event(entry, event)
@@ -678,6 +952,8 @@ class Orchestrator:
                     "validation_fingerprint_recorded",
                     "tool_call_completed",
                     "no_change_completed",
+                    "review_completed",
+                    "review_outcome",
                 }:
                     event_key = hashlib.sha256(
                         json.dumps(event, sort_keys=True, default=str).encode()
@@ -988,6 +1264,8 @@ class Orchestrator:
                 "validation_timeout_ms": config.validation.command_timeout_ms,
                 "approval_policy": config.codex.approval_policy,
                 "thread_sandbox": config.codex.thread_sandbox,
+                "review_enabled": config.review.enabled,
+                "auto_merge": config.review.auto_merge,
                 "project": (f"{config.project.organization}/{config.project.slug}"),
                 "environment": config.project.environment,
             },
@@ -1083,7 +1361,20 @@ class Orchestrator:
                 "max_attempts_per_run": config.validation.max_attempts_per_run,
                 "max_output_chars": config.validation.max_output_chars,
                 "publication_gate": "GitHub writes locked until validation passes",
-                "merge_policy": "Tempo never merges branches or pull requests",
+                "merge_policy": (
+                    f"independent review, then {config.review.merge_method} merge"
+                    if config.review.enabled and config.review.auto_merge
+                    else "human merge required"
+                ),
+            },
+            "review": {
+                "enabled": config.review.enabled,
+                "max_turns": config.review.max_turns,
+                "auto_merge": config.review.auto_merge,
+                "merge_method": config.review.merge_method,
+                "reviewers": config.review.reviewers,
+                "team_reviewers": config.review.team_reviewers,
+                "separate_github_identity": bool(config.tracker.provider.get("review_token")),
             },
             "hooks": {
                 "after_create": bool(config.hooks.after_create),

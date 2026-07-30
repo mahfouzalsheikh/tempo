@@ -31,6 +31,36 @@ class Tracker(ABC):
     async def finalize_pull_request(self, issue: Issue, pull_request_number: int) -> None:
         return None
 
+    async def complete_pull_request_review(
+        self,
+        issue: Issue,
+        pull_request_number: int,
+        *,
+        summary: str,
+        auto_merge: bool,
+        merge_method: str,
+        reviewers: list[str],
+        team_reviewers: list[str],
+    ) -> dict[str, Any]:
+        if auto_merge:
+            return {"status": "merged", "summary": summary}
+        return {
+            "status": "human_review",
+            "reason": "Automatic merge is disabled by workflow policy.",
+        }
+
+    async def require_human_review(
+        self,
+        issue: Issue,
+        pull_request_number: int,
+        *,
+        reason: str,
+        summary: str = "",
+        reviewers: list[str] | None = None,
+        team_reviewers: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {"status": "human_review", "reason": reason, "summary": summary}
+
     async def finalize_without_changes(self, issue: Issue, reason: str) -> None:
         return None
 

@@ -71,6 +71,7 @@ class Workspace:
 
 @dataclass
 class LiveSession:
+    agent_role: str = "implementation"
     session_id: str | None = None
     thread_id: str | None = None
     turn_id: str | None = None
@@ -81,6 +82,9 @@ class LiveSession:
     codex_input_tokens: int = 0
     codex_output_tokens: int = 0
     codex_total_tokens: int = 0
+    thread_input_tokens: int = 0
+    thread_output_tokens: int = 0
+    thread_total_tokens: int = 0
     turn_count: int = 0
     validation_status: str = "pending"
     validation_summary: str | None = None
@@ -94,6 +98,10 @@ class LiveSession:
     pull_request_created: bool = False
     pull_request_url: str | None = None
     pull_request_number: int | None = None
+    review_status: str = "pending"
+    review_summary: str | None = None
+    human_review_reason: str | None = None
+    merged: bool = False
     no_change_completed: bool = False
     completion_summary: str | None = None
     validation_record_id: int | None = None

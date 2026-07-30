@@ -1,6 +1,8 @@
 import json
 import sys
 
+resumed = False
+
 
 def send(payload):
     print(json.dumps(payload), flush=True)
@@ -11,6 +13,17 @@ for line in sys.stdin:
     method = message.get("method")
     if method == "initialize":
         send({"id": message["id"], "result": {"userAgent": "fake"}})
+    elif method == "thread/resume":
+        if "--reject-resume" in sys.argv:
+            send({"id": message["id"], "error": {"message": "thread unavailable"}})
+        else:
+            resumed = True
+            send(
+                {
+                    "id": message["id"],
+                    "result": {"thread": {"id": message["params"]["threadId"]}},
+                }
+            )
     elif method == "thread/start":
         send({"id": message["id"], "result": {"thread": {"id": "thread-test"}}})
     elif method == "turn/start":
@@ -20,9 +33,9 @@ for line in sys.stdin:
                 "method": "thread/tokenUsage/updated",
                 "params": {
                     "tokenUsage": {
-                        "inputTokens": 10,
-                        "outputTokens": 5,
-                        "totalTokens": 15,
+                        "inputTokens": 110 if resumed else 10,
+                        "outputTokens": 55 if resumed else 5,
+                        "totalTokens": 165 if resumed else 15,
                     }
                 },
             }

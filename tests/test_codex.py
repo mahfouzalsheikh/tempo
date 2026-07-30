@@ -46,6 +46,91 @@ async def test_codex_jsonl_lifecycle(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_codex_resumes_thread_with_fresh_attempt_usage(tmp_path):
+    manager = WorkspaceManager(tmp_path / "root", HooksConfig())
+    workspace = await manager.create("A-RESUME")
+    events = []
+
+    async def on_event(event):
+        events.append(event)
+
+    script = Path(__file__).parent / "fixtures" / "fake_app_server.py"
+    client = CodexAppServer(
+        ServiceConfig.model_validate(
+            {
+                "tracker": {
+                    "kind": "memory",
+                    "active_states": ["Todo"],
+                    "terminal_states": ["Done"],
+                },
+                "workspace": {"root": tmp_path / "root"},
+                "validation": {"enabled": False},
+                "codex": {"command": f"python {script}"},
+            }
+        ),
+        manager,
+        MemoryTracker(),
+        on_event,
+    )
+    session = await client.start_session(
+        workspace.path,
+        resume_thread_id="thread-existing",
+        usage_baseline={
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "total_tokens": 150,
+        },
+    )
+    issue = Issue(id="resume", identifier="A-RESUME", title="Resume", state="Todo")
+    await client.run_turn(session, "Continue", issue)
+    await client.stop_session(session)
+
+    assert session.resumed is True
+    assert session.thread_id == "thread-existing"
+    assert any(event["event"] == "thread_resumed" for event in events)
+    assert any(event.get("usage", {}).get("total_tokens") == 15 for event in events)
+
+
+@pytest.mark.asyncio
+async def test_codex_resume_failure_falls_back_with_explicit_state(tmp_path):
+    manager = WorkspaceManager(tmp_path / "root", HooksConfig())
+    workspace = await manager.create("A-FALLBACK")
+    events = []
+
+    async def on_event(event):
+        events.append(event)
+
+    script = Path(__file__).parent / "fixtures" / "fake_app_server.py"
+    client = CodexAppServer(
+        ServiceConfig.model_validate(
+            {
+                "tracker": {
+                    "kind": "memory",
+                    "active_states": ["Todo"],
+                    "terminal_states": ["Done"],
+                },
+                "workspace": {"root": tmp_path / "root"},
+                "validation": {"enabled": False},
+                "codex": {"command": f"python {script} --reject-resume"},
+            }
+        ),
+        manager,
+        MemoryTracker(),
+        on_event,
+    )
+    session = await client.start_session(
+        workspace.path,
+        resume_thread_id="thread-missing",
+    )
+    await client.stop_session(session)
+
+    assert session.resumed is False
+    assert session.resume_failure
+    assert session.thread_id == "thread-test"
+    assert any(event["event"] == "thread_resume_failed" for event in events)
+
+
+@pytest.mark.asyncio
 async def test_workspace_fingerprint_changes_with_project_content(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
@@ -99,3 +184,67 @@ async def test_validation_that_modifies_workspace_is_rejected(tmp_path):
     assert "modified project files" in result["output"]
     assert session.validation_fingerprint is None
     assert any(event["event"] == "validation_invalidated" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_independent_review_agent_records_typed_decision(tmp_path):
+    manager = WorkspaceManager(tmp_path / "root", HooksConfig())
+    workspace = await manager.create("A-3")
+    events = []
+    responses = []
+
+    async def on_event(event):
+        events.append(event)
+
+    client = CodexAppServer(
+        ServiceConfig.model_validate(
+            {
+                "tracker": {
+                    "kind": "memory",
+                    "active_states": ["Todo"],
+                    "terminal_states": ["Done"],
+                },
+                "workspace": {"root": tmp_path / "root"},
+                "validation": {"enabled": False},
+            }
+        ),
+        manager,
+        MemoryTracker(),
+        on_event,
+    )
+    session = SimpleNamespace(
+        role="review",
+        workspace=workspace.path,
+        validation_fingerprint=None,
+        review_decision=None,
+        review_summary=None,
+    )
+
+    async def capture_send(_session, message):
+        responses.append(message)
+
+    client._send = capture_send
+    issue = Issue(id="3", identifier="A-3", title="Review", state="Todo")
+    await client._handle_server_request(
+        session,
+        {
+            "id": 41,
+            "method": "item/tool/call",
+            "params": {
+                "tool": "tempo_review",
+                "arguments": {
+                    "decision": "approve",
+                    "summary": "Reviewed the diff and relevant tests.",
+                },
+            },
+        },
+        issue,
+    )
+
+    assert session.review_decision == "approve"
+    assert responses[0]["result"]["success"] is True
+    assert any(event["event"] == "review_completed" for event in events)
+    assert CodexAppServer._review_tool_spec()["inputSchema"]["properties"]["decision"]["enum"] == [
+        "approve",
+        "human_review",
+    ]

@@ -4,13 +4,13 @@
 
 Tempo is a trustworthy control plane for turning real engineering work into validated, reviewable
 changes. The platform now has a durable PostgreSQL execution kernel, concurrent multi-project
-hosting, authenticated operator controls, approval gates, isolated validation, and a responsive
-control center.
+hosting, authenticated operator controls, approval gates, isolated validation, independent
+pull-request review, policy-controlled merging, and a responsive control center.
 
-The remaining constraints are explicit: workflows still use a single Codex-centered prompt loop,
-GitHub Issues and the in-memory adapter are the only tracker implementations, workers are managed
-by the control-plane process, and enterprise identity, generic MCP connectivity, OpenTelemetry,
-evaluation, and replay are not yet implemented.
+The remaining constraints are explicit: workflows have one built-in implement-review sequence
+rather than a general graph, GitHub Issues and the in-memory adapter are the only tracker
+implementations, workers are managed by the control-plane process, and enterprise identity,
+generic MCP connectivity, OpenTelemetry, evaluation, and replay are not yet implemented.
 
 Status labels used below:
 
@@ -27,13 +27,20 @@ The following capabilities are implemented:
   keys, safety stops, and durable completion dispositions.
 - Authenticated and audited pause, resume, cancel, retry, requeue, unblock, reprioritize, feedback,
   refresh, and approval-decision APIs.
+- A first-class operator login using expiring signed JWTs, HttpOnly browser cookies, Bearer-token
+  API authentication, and CSRF protection for cookie-authenticated mutations.
 - Durable approval requests with approve, edit, and reject decisions.
 - First-class organizations, projects, repositories, environments, workflow versions, credential
   references, and per-project/environment concurrency limits.
 - Concurrent hosting of multiple workflow files and project orchestrators in one control plane.
 - GitHub Issues and deterministic in-memory tracker adapters.
-- Codex app-server sessions with continuation, timeouts, token and rate-limit telemetry, host-side
-  GitHub tooling, and approval/input handling.
+- Codex app-server sessions with durable implementation/review thread resumption across unblock,
+  retry, lease recovery, and restart; fresh per-attempt safety budgets; explicit checkpoint
+  fallback; timeouts; token/rate-limit telemetry; host-side GitHub tooling; and approval/input
+  handling.
+- A built-in two-stage workflow with separate implementation and review threads,
+  validation-gated review decisions, policy-controlled automatic merges, and explicit GitHub human
+  handoffs when risk or repository rules require a person.
 - Isolated issue workspaces, lifecycle hooks, credential filtering, a credential-free validation
   runner, a dedicated Docker daemon, and validation-gated pull-request publication.
 - Structured logs, health and state APIs, server-sent runtime events, live activity timelines,
@@ -47,7 +54,9 @@ The following capabilities are implemented:
 
 Accepted work, claims, retries, checkpoints, worker leases, heartbeats, idempotency keys, and
 completion state are authoritative in PostgreSQL. Restart reconciliation and lease expiry prevent
-accepted work from being silently lost.
+accepted work from being silently lost. Operator unblocks, scheduled retries, lease recovery, and
+service restarts resume the durable Codex thread without replaying the original issue prompt; an
+unavailable thread falls back to explicit workspace/tracker/checkpoint reconstruction.
 
 Remaining work:
 
@@ -88,12 +97,20 @@ Remaining work:
 **Definition of done:** One Tempo deployment can operate a real portfolio without duplicating
 services or sharing credentials, limits, or authorization boundaries across projects.
 
-### 4. Typed workflow graphs and agent teams — Planned
+### 4. Typed workflow graphs and agent teams — Foundation implemented
 
-Evolve the single prompt loop into versioned nodes and edges: sequential steps, conditionals,
-fan-out and join, dependency gates, retries, human gates, and specialist agents such as planner,
-implementer, reviewer, and tester. Preserve the current issue-to-pull-request loop as a built-in
-template.
+The built-in issue workflow now runs separate implementer and reviewer Codex threads. The reviewer
+has a typed `approve`/`human_review` disposition, must revalidate before approval, and hands control
+to a merge-policy step. GitHub merge restrictions, required checks, permissions, and explicit
+reviewer uncertainty become a visible human-review outcome with reviewer assignment and issue/PR
+notifications.
+
+Remaining work:
+
+- Generalize the built-in sequence into versioned nodes and edges.
+- Add arbitrary conditionals, fan-out and join, dependency gates, and reusable human gates.
+- Add configurable planner, tester, security, and domain-specialist roles.
+- Persist each agent session as a first-class child execution rather than a combined run session.
 
 **Definition of done:** A workflow can express "plan -> parallel implementation and research ->
 review -> validation -> publication," with typed state visible at every node.
@@ -122,9 +139,9 @@ and each capability has explicit scopes and approval policy.
 
 ### 7. Enterprise security and governance — In progress
 
-Implemented security foundations include authenticated state-changing APIs, audited operator
+Implemented security foundations include JWT-authenticated state-changing APIs, audited operator
 actions, workspace-write sandboxing, filtered child environments, credential-free validation,
-isolated Docker execution, explicit approval policy, and human-only pull-request merging.
+isolated Docker execution, explicit approval policy, and policy-controlled pull-request merging.
 
 Remaining work:
 
@@ -148,7 +165,7 @@ Remaining work:
 - OpenTelemetry traces across workflows, runs, turns, tools, and validation.
 - Queue-latency, success-rate, retry-cause, and SLO dashboards.
 - Dollar-cost accounting and project/workflow/model comparisons.
-- Pull-request review and merge outcome ingestion.
+- Historical pull-request review and merge outcome analytics across external activity.
 - OTLP export and alerting.
 
 **Definition of done:** Every failure is diagnosable from one correlated trace, and cost and
@@ -201,7 +218,7 @@ containers.
 
 ### Next: orchestration platform
 
-1. Typed workflow graphs and agent teams
+1. Generalized typed workflow graphs and expanded agent teams
 2. Provider-neutral agent runtime
 3. MCP-native tool and connector platform
 

@@ -17,14 +17,18 @@ operator actions are authoritative; in-process state is a live cache of leased w
 - Global and per-state concurrency, priority ordering, claims, reconciliation, stall detection,
   continuation runs, and exponential retry backoff
 - Collision-resistant, root-contained per-issue workspaces and all four lifecycle hooks
-- Codex app-server JSONL client with thread/turn continuation, timeouts, token/rate-limit telemetry,
-  approval/input handling, and host-side GitHub tool execution
+- Codex app-server JSONL client with implementation and independent-review sessions, timeouts,
+  token/rate-limit telemetry, approval/input handling, and host-side GitHub tool execution
 - Project-native local validation with captured commands, exit codes, logs, cleanup, and a hard
   pull-request publication gate
+- Validation-gated independent pull-request review, automatic merge policy, and explicit human
+  handoff when the reviewer or GitHub repository policy requires a person
 - Per-run token, turn, validation-attempt, retry, and stall limits with durable safety stops
+- Durable Codex thread resumption after unblock, retry, lease recovery, and service restart, with
+  a fresh per-attempt token budget and workspace/checkpoint recovery if a thread is unavailable
 - Durable completion dispositions that prevent completed issues from being dispatched after restart
-- Persistent Django models and authenticated admin views for issues, runs, sessions, validation
-  attempts, and validation commands
+- Persistent Django models, a first-class JWT operator login, and authenticated admin views for
+  issues, runs, sessions, validation attempts, and validation commands
 - PostgreSQL-backed accepted work, retries, worker leases, heartbeats, idempotency keys, and
   checkpoints with SQLite retained for local development and deterministic tests
 - Authenticated pause, resume, cancel, retry, requeue, unblock, reprioritize, feedback, and durable
@@ -65,7 +69,12 @@ After changing Tempo, rebuild and restart every service with:
 The script preserves the workspace, database, and Codex home volumes, force-recreates the
 containers, waits for their health checks, and prints the resulting service status.
 
-## Django admin
+## Operator sign-in
+
+Tempo has its own operator login at `/login/`. It authenticates active Django users and issues an
+expiring HS256 access JWT. The web UI stores the token in an HttpOnly, SameSite=Lax cookie; API
+clients can send the returned token as `Authorization: Bearer <token>`. Cookie-based state changes
+retain Django's CSRF protection.
 
 Tempo applies database migrations automatically at startup. Create the first Django superuser with:
 
@@ -77,9 +86,13 @@ Alternatively, set `TEMPO_ADMIN_USERNAME`, `TEMPO_ADMIN_PASSWORD`, and optionall
 `TEMPO_ADMIN_EMAIL` in `.env` before the first startup; Tempo creates that account only when the
 username does not already exist. The password is removed from Codex and validation environments.
 
-Open `/admin/` for Django Admin. Runtime records are read-only there because editing them would not
-change the authoritative tracker or live scheduler. The live operator screens remain available at
-`/ops/` and `/ops/configuration/`.
+Set `DJANGO_SECRET_KEY` to a long random production secret because it signs the JWTs. Token lifetime
+defaults to eight hours and is controlled by `TEMPO_JWT_ACCESS_TTL_SECONDS`. Set
+`TEMPO_JWT_COOKIE_SECURE=true` whenever Tempo is served over HTTPS.
+
+The separate `/admin/` Django Admin remains available for administrative inspection. Runtime
+records are read-only there because editing them would not change the authoritative tracker or live
+scheduler. Normal operator access uses `/login/`, `/`, `/ops/`, and `/ops/configuration/`.
 
 ## Configure GitHub Issues
 
@@ -98,6 +111,8 @@ tracker:
   provider:
     repo: your-org/your-repo
     token: $GITHUB_TOKEN
+    # Optional second GitHub identity for a formal APPROVE review:
+    review_token: $GITHUB_REVIEW_TOKEN
   required_labels: [tempo]
   active_states: [open]
   terminal_states: [closed]
@@ -117,6 +132,13 @@ validation:
   enabled: true
   command_timeout_ms: 1800000
   max_attempts_per_run: 5
+review:
+  enabled: true
+  max_turns: 3
+  auto_merge: true
+  merge_method: squash
+  reviewers: []
+  team_reviewers: []
 codex:
   command: codex app-server
 ```
@@ -125,6 +147,8 @@ Put secrets in `.env`, which is ignored by Git:
 
 ```dotenv
 GITHUB_TOKEN=github_pat_...
+# Optional separate reviewer identity:
+GITHUB_REVIEW_TOKEN=github_pat_...
 OPENAI_API_KEY=sk-...
 ```
 
@@ -147,19 +171,35 @@ Failed validation is returned to the agent so it can fix the project and try aga
 
 Tempo fingerprints the workspace before and after validation and rejects an attempt if its
 commands modify project files. Code changes must happen through normal workspace tools, not through
-the validation runner. Successful pull requests automatically receive a `Closes #N` link and Tempo
-removes the dispatch label, preventing the issue from being picked up again while it awaits human
-review. When validated behavior is already present, the agent can record a reviewed no-change
+the validation runner. Successful pull requests automatically receive a `Closes #N` link. When
+`review.enabled` is true, Tempo stops the implementation session and starts a fresh Codex thread as
+an independent reviewer. That reviewer inspects the full change, may fix findings, must validate
+the final workspace again, and records either `approve` or `human_review` through a review-only
+tool.
+
+After approval, Tempo applies `review.auto_merge` and `review.merge_method`. The agents cannot call
+GitHub's merge API directly. If GitHub permits the merge, Tempo merges and comments on the
+originating issue. If the reviewer requests a person, automatic merge is disabled, branch
+protection or checks block the merge, or GitHub rejects the configured credentials, Tempo requests
+the configured users or teams and posts explicit handoff comments on both the PR and issue. Tempo
+then removes the dispatch label so the implementation is not repeated.
+
+GitHub does not allow a pull-request author to formally approve its own PR. Configure
+`tracker.provider.review_token` with a separate GitHub identity when a formal GitHub `APPROVE`
+review is desired. Without it, Tempo records the independent review in a PR comment and attempts
+the merge; repositories requiring a distinct approval naturally fall back to human review.
+
+When validated behavior is already present, the implementation agent can record a no-change
 completion through `tempo_complete`; Tempo comments on the issue and removes the dispatch label.
 
 The bundled Compose setup includes a credential-free validation runner and an isolated Docker
 daemon for projects that use containers. The workspace volume is shared with both, so
 repository-native commands, Compose files, and bind mounts work at their expected paths. The
-runner does not receive the GitHub, OpenAI, or Django credentials or the Codex home. Pull-request
-merges are always denied; a human remains responsible for review and merge.
+runner does not receive the GitHub, OpenAI, or Django credentials or the Codex home. Merge calls
+remain unavailable to both agents; only the post-review control-plane policy may merge.
 
 The dashboard reports validation passes as attempts and validated runs as distinct runs with at
-least one accepted pass. Neither number means that a pull request was merged.
+least one accepted pass. Review and merge state is reported separately in the live session.
 
 Repositories still need to describe enough of their setup to run locally. If required services,
 credentials, or instructions are unavailable, validation remains blocked and Tempo will not create
@@ -296,6 +336,9 @@ operator-visible while the last valid configuration stays active.
   `resume`, `cancel`, `retry`, `requeue`, `unblock`, `reprioritize`, and `feedback`
 - `GET /api/v1/approvals` — authenticated pending approval inbox
 - `POST /api/v1/approvals/<approval_id>/decision` — authenticated approve, edit, or reject
+- `POST /api/v1/auth/login` — exchange username/password for an access JWT and secure cookie
+- `POST /api/v1/auth/logout` — clear the browser access-token cookie
+- `GET /api/v1/auth/me` — inspect the authenticated operator and authentication mechanism
 
 The control center at `/` combines the project portfolio, live agent timelines, durable retry
 queue, blocked and paused runs, approval inbox, validation evidence, and direct operator actions.
@@ -356,9 +399,13 @@ WORKFLOW.md(s) ──> ControlPlane ──> project Orchestrator(s) ──> leas
 ```
 
 After restart, accepted and retry-scheduled runs are restored from PostgreSQL. Expired worker
-leases return to the durable queue at their last checkpoint, while live leases prevent a second
-control-plane process from claiming the same run. Completed dispositions and safety stops prevent
-duplicate dispatch. Terminal workspaces are swept during startup and on terminal transitions.
+leases return to the durable queue and resume the stored Codex implementation or review thread.
+Unblocking a safety-stopped run grants a fresh per-attempt token budget without discarding thread
+context. If Codex can no longer reopen a stored thread, Tempo explicitly reconstructs from the
+existing workspace, git history, tracker, pull request, and durable checkpoints. Live leases
+prevent a second control-plane process from claiming the same run. Completed dispositions and
+safety stops prevent duplicate dispatch. Terminal workspaces are swept during startup and on
+terminal transitions.
 
 ## Current scope
 

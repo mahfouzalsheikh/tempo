@@ -33,10 +33,17 @@
   <div class="sidebar-foot">
     {% if request.user.is_authenticated %}
       <span class="avatar">{{ request.user.username|slice:":1"|upper }}</span>
-      <span><strong>{{ request.user.username }}</strong><small>Operator session</small></span>
+      <span class="operator-identity">
+        <strong>{{ request.user.username }}</strong>
+        <small>Operator session</small>
+        <form action="{% url 'logout' %}" method="post">
+          {% csrf_token %}
+          <button class="sign-out-link" type="submit">Sign out</button>
+        </form>
+      </span>
     {% else %}
       <span class="avatar guest">?</span>
-      <span><strong>Read-only</strong><small><a href="/admin/login/?next={{ request.path|urlencode }}">Sign in to intervene</a></small></span>
+      <span><strong>Read-only</strong><small><a href="{% url 'login' %}?next={{ request.path|urlencode }}">Sign in to intervene</a></small></span>
     {% endif %}
   </div>
 </aside>

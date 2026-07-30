@@ -5,6 +5,8 @@ from . import views
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path("login/", views.login_page, name="login"),
+    path("logout/", views.logout_page, name="logout"),
     path("admin/", admin.site.urls),
     path("ops/", views.admin_runtime, name="admin_runtime"),
     path("ops/configuration/", views.admin_configuration, name="admin_configuration"),
@@ -16,6 +18,9 @@ urlpatterns = [
     path("api/v1/refresh", views.refresh, name="refresh"),
     path("api/v1/approvals", views.approvals, name="approvals"),
     path("api/v1/control", views.control_state, name="control_state"),
+    path("api/v1/auth/login", views.auth_login, name="auth_login"),
+    path("api/v1/auth/logout", views.auth_logout, name="auth_logout"),
+    path("api/v1/auth/me", views.auth_me, name="auth_me"),
     path(
         "api/v1/approvals/<int:approval_id>/decision",
         views.approval_decision,

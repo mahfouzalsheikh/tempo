@@ -7,7 +7,7 @@ import pytest
 from tempo.control_plane import ControlPlane
 from tempo.domain import Issue, utcnow
 from tempo.persistence import PersistenceStore
-from tempo_web.models import AgentRun, Project, TrackedIssue
+from tempo_web.models import AgentRun, AgentSession, Project, TrackedIssue
 
 
 def store_config(project_slug: str, root: Path):
@@ -24,6 +24,22 @@ def store_config(project_slug: str, root: Path):
         tracker=SimpleNamespace(provider={}),
         model_dump=lambda **_: {"project": project_slug},
     )
+
+
+def test_pull_request_checkpoint_recovers_from_truncated_subresource_output():
+    recovered = PersistenceStore._pull_request_from_checkpoint(
+        {
+            "tool": "github_api",
+            "success": True,
+            "arguments": {
+                "method": "GET",
+                "path": "/repos/acme/widgets/pulls/17/commits",
+            },
+            "output": '[{"sha":"truncated',
+        }
+    )
+
+    assert recovered == ("https://github.com/acme/widgets/pull/17", 17)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -51,6 +67,62 @@ async def test_durable_claim_is_recovered_after_lease_expiry(tmp_path):
     assert run.phase == "Recovering"
     assert (await store.pending_runs())[0]["run_id"] == run_id
     assert await store.claim_run(run_id, "worker-b", lease_seconds=30)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_resume_context_restores_thread_role_and_usage_baseline(tmp_path):
+    store = PersistenceStore(
+        "memory",
+        config=store_config("resume", tmp_path),
+        workflow_path=tmp_path / "WORKFLOW.md",
+    )
+    await store.initialize()
+    run_id = await store.enqueue_issue(
+        Issue(id="resume", identifier="R-1", title="Continue", state="open")
+    )
+    assert run_id is not None
+    await AgentSession.objects.aupdate_or_create(
+        run_id=run_id,
+        defaults={
+            "agent_role": "review",
+            "thread_id": "thread-durable",
+            "input_tokens": 400,
+            "output_tokens": 100,
+            "total_tokens": 500,
+            "thread_input_tokens": 400,
+            "thread_output_tokens": 100,
+            "thread_total_tokens": 500,
+        },
+    )
+    await store.checkpoint(
+        run_id,
+        "tool_call_completed",
+        {
+            "event": "tool_call_completed",
+            "tool": "github_api",
+            "success": True,
+            "arguments": {
+                "method": "GET",
+                "path": "/repos/acme/widgets/pulls",
+            },
+            "output": (
+                '[{"html_url":"https://github.example/acme/widgets/pull/17",'
+                '"number":17,"state":"open"}]'
+            ),
+        },
+        idempotency_key=f"{run_id}:recover-pr",
+    )
+
+    context = await store.resume_context(run_id)
+
+    assert context is not None
+    assert context["thread_id"] == "thread-durable"
+    assert context["agent_role"] == "review"
+    assert context["usage_baseline"]["total_tokens"] == 500
+    assert context["pull_request_url"] == "https://github.example/acme/widgets/pull/17"
+    assert context["pull_request_number"] == 17
+    assert (await AgentRun.objects.aget(pk=run_id)).pull_request_url.endswith("/pull/17")
 
 
 @pytest.mark.django_db(transaction=True)

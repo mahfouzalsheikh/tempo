@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 from asgiref.sync import async_to_sync
+from django.contrib.auth import authenticate
 from django.contrib.staticfiles import finders
 from django.http import (
     Http404,
@@ -16,11 +17,14 @@ from django.http import (
     JsonResponse,
     StreamingHttpResponse,
 )
-from django.shortcuts import render
+from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.csrf import ensure_csrf_cookie
 
 from tempo.runtime import get_orchestrator
+from tempo_web.jwt_auth import clear_access_cookie, issue_access_token, set_access_cookie
 
 
 async def static_asset(request: HttpRequest, name: str) -> HttpResponse:
@@ -103,6 +107,36 @@ def issue(request: HttpRequest, identifier: str) -> JsonResponse:
     return JsonResponse(row)
 
 
+def _safe_next_url(request: HttpRequest, value: object) -> str:
+    candidate = str(value or "").strip()
+    if candidate and url_has_allowed_host_and_scheme(
+        candidate,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return candidate
+    return reverse("dashboard")
+
+
+@ensure_csrf_cookie
+def login_page(request: HttpRequest) -> HttpResponse:
+    next_url = _safe_next_url(request, request.GET.get("next"))
+    if request.user.is_authenticated:
+        return redirect(next_url)
+    response = render(request, "login.html", {"next_url": next_url})
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+def logout_page(request: HttpRequest) -> HttpResponse | HttpResponseNotAllowed:
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    response = redirect("login")
+    clear_access_cookie(response)
+    response["Cache-Control"] = "no-store"
+    return response
+
+
 def refresh(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -125,6 +159,67 @@ def _json_payload(request: HttpRequest) -> dict:
     if not isinstance(value, dict):
         raise ValueError("request body must be a JSON object")
     return value
+
+
+def auth_login(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed:
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    try:
+        payload = _json_payload(request)
+    except ValueError as exc:
+        return JsonResponse({"error": "invalid_request", "message": str(exc)}, status=400)
+    username = str(payload.get("username", "")).strip()
+    password = str(payload.get("password", ""))
+    if not username or not password:
+        return JsonResponse(
+            {"error": "credentials_required", "message": "Username and password are required."},
+            status=400,
+        )
+    user = authenticate(request, username=username, password=password)
+    if user is None:
+        return JsonResponse(
+            {"error": "invalid_credentials", "message": "Invalid username or password."},
+            status=401,
+        )
+    token, expires_at = issue_access_token(user)
+    response = JsonResponse(
+        {
+            "access_token": token,
+            "token_type": "Bearer",
+            "expires_at": expires_at.isoformat(),
+            "user": {"id": user.pk, "username": user.get_username()},
+            "redirect": _safe_next_url(request, payload.get("next")),
+        }
+    )
+    set_access_cookie(response, token, expires_at)
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+def auth_logout(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed:
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    response = JsonResponse({"status": "signed_out"})
+    clear_access_cookie(response)
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+def auth_me(request: HttpRequest) -> JsonResponse:
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "authentication_required"}, status=401)
+    return JsonResponse(
+        {
+            "user": {
+                "id": request.user.pk,
+                "username": request.user.get_username(),
+                "is_staff": request.user.is_staff,
+            },
+            "authentication": (
+                "jwt" if getattr(request, "tempo_jwt_authenticated", False) else "session"
+            ),
+        }
+    )
 
 
 def run_action(

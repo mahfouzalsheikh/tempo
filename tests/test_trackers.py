@@ -64,7 +64,7 @@ async def test_github_tool_rejects_absolute_url():
 
 
 @pytest.mark.asyncio
-async def test_github_pr_creation_requires_validation_and_merge_is_always_denied():
+async def test_github_pr_creation_requires_validation_and_agent_merge_is_denied():
     requests = []
 
     def handler(request):
@@ -96,6 +96,7 @@ async def test_github_pr_creation_requires_validation_and_merge_is_always_denied
         issue,
     )
     assert merged["success"] is False
+    assert "independent-review phase" in merged["output"]
     assert len(requests) == 1
     await client.aclose()
 
@@ -106,7 +107,9 @@ async def test_github_finalization_removes_dispatch_label_and_agent_cannot_edit_
 
     def handler(request):
         requests.append(request)
-        if request.method == "GET":
+        if request.url.path.endswith("/comments") and request.method == "GET":
+            return httpx.Response(200, json=[])
+        if request.url.path.endswith("/issues/1") and request.method == "GET":
             return httpx.Response(
                 200,
                 json={"labels": [{"name": "tempo"}, {"name": "enhancement"}]},
@@ -147,8 +150,121 @@ async def test_github_finalization_removes_dispatch_label_and_agent_cannot_edit_
     assert requests == []
 
     await tracker.finalize_pull_request(issue, 7)
-    assert [request.method for request in requests] == ["GET", "PATCH"]
+    assert [request.method for request in requests] == [
+        "GET",
+        "POST",
+        "GET",
+        "POST",
+        "GET",
+        "PATCH",
+    ]
+    assert b"Human review required" in requests[1].content
     assert requests[-1].content == b'{"labels":["enhancement"]}'
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_github_review_agent_documents_approval_and_merges():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        path = request.url.path
+        if path.endswith("/comments") and request.method == "GET":
+            return httpx.Response(200, json=[])
+        if path.endswith("/pulls/7/merge"):
+            return httpx.Response(200, json={"merged": True, "sha": "abc123"})
+        if path.endswith("/issues/1") and request.method == "GET":
+            return httpx.Response(
+                200,
+                json={"labels": [{"name": "tempo"}, {"name": "enhancement"}]},
+            )
+        return httpx.Response(201, json={})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tracker = GitHubTracker(
+        repo="openai/example",
+        client=client,
+        required_labels=["tempo"],
+    )
+    issue = (
+        await MemoryTracker(
+            [
+                {
+                    "id": "1",
+                    "identifier": "A-1",
+                    "title": "One",
+                    "state": "open",
+                    "labels": ["tempo", "enhancement"],
+                }
+            ]
+        ).fetch_issues_by_ids(["1"])
+    )[0]
+
+    outcome = await tracker.complete_pull_request_review(
+        issue,
+        7,
+        summary="Reviewed the complete diff and validation passed.",
+        auto_merge=True,
+        merge_method="squash",
+        reviewers=[],
+        team_reviewers=[],
+    )
+
+    assert outcome["status"] == "merged"
+    merge_request = next(request for request in requests if request.url.path.endswith("/merge"))
+    assert merge_request.method == "PUT"
+    assert merge_request.content == b'{"merge_method":"squash"}'
+    assert any(b"independent review agent approved" in request.content for request in requests)
+    assert any(b"approved and merged" in request.content for request in requests)
+    assert requests[-1].content == b'{"labels":["enhancement"]}'
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_github_merge_block_creates_explicit_human_handoff_and_requests_reviewer():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        path = request.url.path
+        if path.endswith("/comments") and request.method == "GET":
+            return httpx.Response(200, json=[])
+        if path.endswith("/pulls/7/merge"):
+            return httpx.Response(405, text="Required approving review missing")
+        if path.endswith("/issues/1") and request.method == "GET":
+            return httpx.Response(200, json={"labels": [{"name": "tempo"}]})
+        return httpx.Response(201, json={})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tracker = GitHubTracker(
+        repo="openai/example",
+        client=client,
+        required_labels=["tempo"],
+    )
+    issue = (
+        await MemoryTracker(
+            [{"id": "1", "identifier": "A-1", "title": "One", "state": "open"}]
+        ).fetch_issues_by_ids(["1"])
+    )[0]
+
+    outcome = await tracker.complete_pull_request_review(
+        issue,
+        7,
+        summary="The code and tests passed independent review.",
+        auto_merge=True,
+        merge_method="squash",
+        reviewers=["octocat"],
+        team_reviewers=["maintainers"],
+    )
+
+    assert outcome["status"] == "human_review"
+    assert "GitHub did not permit" in outcome["reason"]
+    assignment = next(
+        request for request in requests if request.url.path.endswith("/requested_reviewers")
+    )
+    assert assignment.content == b'{"reviewers":["octocat"],"team_reviewers":["maintainers"]}'
+    assert sum(b"Human review" in request.content for request in requests) == 2
     await client.aclose()
 
 

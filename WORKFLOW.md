@@ -12,6 +12,8 @@ tracker:
     # TODO: Replace with the GitHub repository Tempo should monitor.
     repo: mahfouzalsheikh/drawing-algorithms
     token: $GITHUB_TOKEN
+    # Optional separate identity for a formal GitHub APPROVE review.
+    review_token: $GITHUB_REVIEW_TOKEN
   # TODO: Replace "tempo" if you want to use a different dispatch label.
   required_labels: [tempo]
   active_states: [open]
@@ -48,6 +50,20 @@ validation:
   cleanup_timeout_ms: 120000
   max_commands: 12
   max_attempts_per_run: 5
+review:
+  enabled: true
+  max_turns: 3
+  auto_merge: true
+  merge_method: squash
+  # Notified when Tempo or repository policy requires a person.
+  reviewers: [mahfouzalsheikh]
+  team_reviewers: []
+  prompt: |
+    Independently review the issue, complete pull-request diff, and repository guidance. Check
+    correctness, regressions, security, tests, and maintainability. Fix material findings when
+    safe, rerun the complete project validation sequence, and update the pull-request branch.
+    Approve only with concrete evidence. Request human review for sensitive changes, ambiguous
+    requirements, unresolved findings, or repository policies that require a person.
 codex:
   command: codex app-server
   approval_policy: never
@@ -65,6 +81,7 @@ Work autonomously in the current issue workspace. Follow the repository's own in
 tooling to build or launch the project and run its relevant tests locally. Use project_validation
 with the complete project-native validation sequence. Fix failures and repeat validation as needed.
 Only after validation passes, leave the workspace in a reviewable state, push the branch, and open
-a pull request through available provider-native tooling. Never merge the pull request. If the
-requested work is already present and the validated project needs no change, use the
-tempo_complete tool with concrete evidence instead of repeating work.
+a pull request through available provider-native tooling. Do not merge it yourself: Tempo starts a
+separate review agent and applies the configured merge policy after that review. If the requested
+work is already present and the validated project needs no change, use the tempo_complete tool with
+concrete evidence instead of repeating work.

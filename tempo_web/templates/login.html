@@ -1,0 +1,39 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Sign in · Tempo</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23b9f65f'/><path d='M8 9h16v4h-6v11h-4V13H8z' fill='%2311150d'/></svg>">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260729-3">
+</head>
+<body class="auth-body">
+  <main class="auth-shell">
+    <a class="auth-wordmark" href="/" aria-label="Tempo home">
+      <span class="wordmark-mark">T</span>
+      <span>tempo</span>
+    </a>
+    <section class="auth-card" aria-labelledby="login-title">
+      <div class="auth-heading">
+        <p class="section-kicker">OPERATOR ACCESS</p>
+        <h1 id="login-title">Sign in to Tempo</h1>
+        <p>Use your Tempo operator account to manage runs, approvals, and recovery actions.</p>
+      </div>
+      <form id="login-form" novalidate>
+        <input id="login-next" type="hidden" value="{{ next_url }}">
+        <label for="login-username">Username</label>
+        <input id="login-username" name="username" type="text" autocomplete="username" required autofocus>
+        <label for="login-password">Password</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+        <button id="login-submit" class="button primary auth-submit" type="submit">Sign in</button>
+      </form>
+      <p class="auth-note">Authentication uses a signed, expiring JWT stored in an HttpOnly cookie.</p>
+    </section>
+  </main>
+  {% csrf_token %}
+  <script src="{% static 'login.js' %}?v=20260729-1"></script>
+</body>
+</html>

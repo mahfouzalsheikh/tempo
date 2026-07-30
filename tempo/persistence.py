@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import re
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -250,6 +252,91 @@ class PersistenceStore:
             )
         await AgentSession.objects.aget_or_create(run=run)
         return run.pk
+
+    async def resume_context(self, run_id: int) -> dict[str, Any] | None:
+        """Return the durable Codex thread state needed for a continuation attempt."""
+        from tempo_web.models import AgentRun, AgentSession, RunCheckpoint
+
+        session = await AgentSession.objects.select_related("run").filter(run_id=run_id).afirst()
+        if not session or not session.thread_id:
+            return None
+        pull_request_url = session.run.pull_request_url
+        pull_request_number: int | None = None
+        if pull_request_url:
+            with contextlib.suppress(ValueError):
+                pull_request_number = int(pull_request_url.rstrip("/").rsplit("/", 1)[-1])
+        if not pull_request_url:
+            checkpoints = RunCheckpoint.objects.filter(
+                run_id=run_id,
+                kind="tool_call_completed",
+            ).order_by("-sequence")
+            async for checkpoint in checkpoints:
+                recovered = self._pull_request_from_checkpoint(checkpoint.payload)
+                if recovered:
+                    pull_request_url, pull_request_number = recovered
+                    await AgentRun.objects.filter(pk=run_id).aupdate(
+                        pull_request_url=pull_request_url
+                    )
+                    break
+        return {
+            "thread_id": session.thread_id,
+            "agent_role": session.agent_role,
+            "turn_count": session.turn_count,
+            "usage_baseline": {
+                "input_tokens": session.thread_input_tokens,
+                "output_tokens": session.thread_output_tokens,
+                "total_tokens": session.thread_total_tokens,
+            },
+            "last_event": session.last_event,
+            "last_message": session.last_message,
+            "pull_request_url": pull_request_url,
+            "pull_request_number": pull_request_number,
+        }
+
+    @staticmethod
+    def _pull_request_from_checkpoint(
+        payload: dict[str, Any],
+    ) -> tuple[str, int] | None:
+        if payload.get("tool") != "github_api" or not payload.get("success"):
+            return None
+        arguments = payload.get("arguments") or {}
+        method = str(arguments.get("method", "GET")).upper()
+        path = str(arguments.get("path", "")).rstrip("/")
+        if method not in {"GET", "POST"}:
+            return None
+        collection_match = re.fullmatch(r"/repos/[^/]+/[^/]+/pulls", path)
+        numbered_match = re.fullmatch(
+            r"/repos/([^/]+)/([^/]+)/pulls/(\d+)(?:/.*)?",
+            path,
+        )
+        if not collection_match and not numbered_match:
+            return None
+        try:
+            output = json.loads(str(payload.get("output", "")))
+        except json.JSONDecodeError:
+            output = None
+        if output is not None:
+            candidates = output if isinstance(output, list) else [output]
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                url = str(candidate.get("html_url", ""))
+                number = candidate.get("number")
+                if url and isinstance(number, int) and candidate.get("state", "open") == "open":
+                    return url, number
+            if (
+                numbered_match
+                and isinstance(output, dict)
+                and output.get("state") not in {None, "open"}
+            ):
+                return None
+        if method == "GET" and numbered_match:
+            owner, repository, number_text = numbered_match.groups()
+            return (
+                f"https://github.com/{owner}/{repository}/pull/{number_text}",
+                int(number_text),
+            )
+        return None
 
     async def enqueue_issue(self, issue: Issue, *, attempt: int | None = None) -> int | None:
         """Accept work durably before a worker process is launched."""
@@ -612,6 +699,7 @@ class PersistenceStore:
         await AgentSession.objects.aupdate_or_create(
             run_id=entry.run_record_id,
             defaults={
+                "agent_role": session.agent_role,
                 "session_id": session.session_id or "",
                 "thread_id": session.thread_id or "",
                 "turn_id": session.turn_id or "",
@@ -623,6 +711,9 @@ class PersistenceStore:
                 "input_tokens": session.codex_input_tokens,
                 "output_tokens": session.codex_output_tokens,
                 "total_tokens": session.codex_total_tokens,
+                "thread_input_tokens": session.thread_input_tokens,
+                "thread_output_tokens": session.thread_output_tokens,
+                "thread_total_tokens": session.thread_total_tokens,
             },
         )
 

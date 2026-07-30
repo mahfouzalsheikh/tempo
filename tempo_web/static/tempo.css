@@ -127,6 +127,17 @@ a { color: inherit; }
 .sidebar-foot strong { font-size: 14px; }
 .sidebar-foot small { color: var(--muted); font-size: 13px; }
 .sidebar-foot small a { color: var(--accent); text-decoration: none; }
+.operator-identity form { margin: 2px 0 0; }
+.sign-out-link {
+  display: block;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  color: var(--accent);
+  background: transparent;
+  font-size: 13px;
+}
+.sign-out-link:hover { text-decoration: underline; }
 .avatar {
   display: grid;
   place-items: center;
@@ -211,6 +222,62 @@ h1 { margin: 0; font-size: clamp(36px, 3vw, 48px); line-height: 1.08; letter-spa
 .button.ghost { background: transparent; }
 .button.small { min-height: 34px; padding: 0 11px; font-size: 13px; }
 .button:disabled { opacity: .45; cursor: not-allowed; }
+
+.auth-body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 50% 0, rgba(185, 246, 95, .08), transparent 34rem),
+    radial-gradient(circle at 100% 100%, rgba(112, 167, 255, .07), transparent 30rem),
+    var(--canvas);
+}
+.auth-shell {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  min-height: 100vh;
+  padding: 48px 24px;
+}
+.auth-wordmark {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -.03em;
+}
+.auth-card {
+  width: min(440px, 100%);
+  padding: 36px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(17, 22, 29, .92);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .28);
+  backdrop-filter: blur(18px);
+}
+.auth-heading { margin-bottom: 28px; }
+.auth-heading h1 { font-size: 32px; }
+.auth-heading > p:last-child { margin: 10px 0 0; color: var(--muted); }
+.auth-card form { display: grid; gap: 10px; }
+.auth-card label { margin-top: 6px; color: var(--text-soft); font-size: 14px; font-weight: 600; }
+.auth-card input {
+  width: 100%;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  outline: none;
+  color: var(--text);
+  background: var(--canvas);
+}
+.auth-card input:focus {
+  border-color: rgba(185, 246, 95, .6);
+  box-shadow: 0 0 0 3px rgba(185, 246, 95, .08);
+}
+.auth-submit { width: 100%; margin-top: 12px; }
+.auth-note { margin: 24px 0 0; color: var(--muted); text-align: center; font-size: 12px; }
 
 .system-notice {
   display: flex;

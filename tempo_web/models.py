@@ -248,6 +248,7 @@ class AgentRun(models.Model):
 
 class AgentSession(models.Model):
     run = models.OneToOneField(AgentRun, on_delete=models.CASCADE, related_name="session")
+    agent_role = models.CharField(max_length=32, default="implementation")
     session_id = models.CharField(max_length=255, blank=True)
     thread_id = models.CharField(max_length=255, blank=True)
     turn_id = models.CharField(max_length=255, blank=True)
@@ -259,6 +260,9 @@ class AgentSession(models.Model):
     input_tokens = models.PositiveBigIntegerField(default=0)
     output_tokens = models.PositiveBigIntegerField(default=0)
     total_tokens = models.PositiveBigIntegerField(default=0)
+    thread_input_tokens = models.PositiveBigIntegerField(default=0)
+    thread_output_tokens = models.PositiveBigIntegerField(default=0)
+    thread_total_tokens = models.PositiveBigIntegerField(default=0)
 
     def __str__(self) -> str:
         return self.session_id or f"Session for run {self.run_id}"

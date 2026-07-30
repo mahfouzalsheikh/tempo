@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -85,6 +85,35 @@ class ValidationConfig(BaseModel):
     max_output_chars: int = Field(default=40_000, gt=0)
 
 
+class ReviewConfig(BaseModel):
+    enabled: bool = False
+    max_turns: int = Field(default=3, gt=0, le=20)
+    auto_merge: bool = False
+    merge_method: Literal["merge", "squash", "rebase"] = "squash"
+    reviewers: list[str] = Field(default_factory=list)
+    team_reviewers: list[str] = Field(default_factory=list)
+    prompt: str = (
+        "Act as an independent reviewer. Inspect the issue, pull request, complete diff, and "
+        "repository guidance. Look for correctness, regressions, security problems, missing tests, "
+        "and maintainability issues. Fix material findings when safe, rerun project validation, "
+        "and update the pull-request branch. Approve only when the reviewed workspace is "
+        "validated. If policy, ambiguity, permissions, sensitive changes, or unresolved risk "
+        "require a person, request human review with a precise reason."
+    )
+
+    @field_validator("reviewers", "team_reviewers", mode="before")
+    @classmethod
+    def normalized_reviewers(cls, value: list[str] | None) -> list[str]:
+        return list(dict.fromkeys(str(item).strip() for item in (value or []) if str(item).strip()))
+
+    @field_validator("prompt")
+    @classmethod
+    def prompt_nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value.strip()
+
+
 class CodexConfig(BaseModel):
     command: str = "codex app-server"
     approval_policy: str | dict[str, Any] = Field(
@@ -135,6 +164,7 @@ class ServiceConfig(BaseModel):
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
+    review: ReviewConfig = Field(default_factory=ReviewConfig)
     codex: CodexConfig = Field(default_factory=CodexConfig)
 
     @model_validator(mode="after")
@@ -183,6 +213,11 @@ def build_config(raw: dict[str, Any], workflow_path: Path) -> ServiceConfig:
     for secret_key in ("token", "api_key"):
         if secret_key in provider:
             provider[secret_key] = resolve_env_reference(provider[secret_key], empty_is_error=True)
+    if "review_token" in provider:
+        provider["review_token"] = resolve_env_reference(
+            provider["review_token"],
+            empty_is_error=False,
+        )
     tracker["provider"] = provider
     payload["tracker"] = tracker
 

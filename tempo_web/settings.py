@@ -5,6 +5,17 @@ from urllib.parse import unquote, urlparse
 BASE_DIR = Path(__file__).resolve().parent.parent
 PACKAGE_DIR = Path(__file__).resolve().parent
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "tempo-local-only")
+JWT_ISSUER = "tempo"
+JWT_AUDIENCE = "tempo-operators"
+JWT_ACCESS_TTL_SECONDS = int(os.getenv("TEMPO_JWT_ACCESS_TTL_SECONDS", "28800"))
+if JWT_ACCESS_TTL_SECONDS < 60:
+    raise RuntimeError("TEMPO_JWT_ACCESS_TTL_SECONDS must be at least 60")
+JWT_COOKIE_NAME = "tempo_access"
+JWT_COOKIE_SECURE = os.getenv("TEMPO_JWT_COOKIE_SECURE", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 DEBUG = False
 ALLOWED_HOSTS = ["*"]
 ROOT_URLCONF = "tempo_web.urls"
@@ -40,8 +51,10 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "tempo_web.jwt_auth.JWTBearerCSRFMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "tempo_web.jwt_auth.JWTAuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]

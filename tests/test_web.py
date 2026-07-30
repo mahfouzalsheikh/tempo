@@ -1,8 +1,10 @@
 import pytest
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import AsyncRequestFactory, Client
 
 from tempo.runtime import set_orchestrator
+from tempo_web.jwt_auth import decode_access_token
 from tempo_web.views import state_events
 
 
@@ -106,6 +108,107 @@ def test_django_admin_lists_tempo_models():
     assert b"Tracked issues" in response.content
     assert b"Agent runs" in response.content
     assert b"Validation attempts" in response.content
+
+
+@pytest.mark.django_db
+def test_jwt_login_cookie_bearer_and_logout_flow():
+    user = get_user_model().objects.create_user(username="operator", password="correct-horse")
+    client = Client(enforce_csrf_checks=True)
+
+    login_page = client.get("/login/?next=/ops/")
+    assert login_page.status_code == 200
+    assert b"Sign in to Tempo" in login_page.content
+    assert b"/admin/login/" not in login_page.content
+    csrf_token = client.cookies["csrftoken"].value
+
+    invalid = client.post(
+        "/api/v1/auth/login",
+        data='{"username":"operator","password":"wrong"}',
+        content_type="application/json",
+        HTTP_X_CSRFTOKEN=csrf_token,
+    )
+    assert invalid.status_code == 401
+    assert settings.JWT_COOKIE_NAME not in invalid.cookies
+
+    response = client.post(
+        "/api/v1/auth/login",
+        data='{"username":"operator","password":"correct-horse","next":"/ops/"}',
+        content_type="application/json",
+        HTTP_X_CSRFTOKEN=csrf_token,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["token_type"] == "Bearer"
+    assert payload["redirect"] == "/ops/"
+    claims = decode_access_token(payload["access_token"])
+    assert claims["sub"] == str(user.pk)
+    assert claims["username"] == "operator"
+    cookie = response.cookies[settings.JWT_COOKIE_NAME]
+    assert cookie["httponly"] is True
+    assert cookie["samesite"] == "Lax"
+
+    me = client.get("/api/v1/auth/me")
+    assert me.status_code == 200
+    assert me.json()["user"]["username"] == "operator"
+    assert me.json()["authentication"] == "jwt"
+    dashboard = client.get("/")
+    assert b"Operator session" in dashboard.content
+    assert b"Sign out" in dashboard.content
+
+    bearer_client = Client()
+    bearer_me = bearer_client.get(
+        "/api/v1/auth/me",
+        HTTP_AUTHORIZATION=f"Bearer {payload['access_token']}",
+    )
+    assert bearer_me.status_code == 200
+    assert bearer_me.json()["authentication"] == "jwt"
+    assert (
+        bearer_client.get("/api/v1/auth/me", HTTP_AUTHORIZATION="Bearer invalid").status_code == 401
+    )
+
+    orchestrator = FakeOrchestrator()
+    set_orchestrator(orchestrator)
+    bearer_mutation = Client(enforce_csrf_checks=True).post(
+        "/api/v1/runs/7/reprioritize",
+        data='{"priority":2}',
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {payload['access_token']}",
+        HTTP_IDEMPOTENCY_KEY="jwt-action-7",
+    )
+    assert bearer_mutation.status_code == 202
+    assert orchestrator.control["user_id"] == user.pk
+    set_orchestrator(None)
+
+    logout = client.post("/logout/", HTTP_X_CSRFTOKEN=csrf_token)
+    assert logout.status_code == 302
+    assert logout.url == "/login/"
+    assert logout.cookies[settings.JWT_COOKIE_NAME]["max-age"] == 0
+    assert client.get("/api/v1/auth/me").status_code == 401
+
+
+@pytest.mark.django_db
+def test_jwt_login_rejects_missing_csrf_and_open_redirects():
+    get_user_model().objects.create_user(username="operator", password="secret")
+    csrf_client = Client(enforce_csrf_checks=True)
+    assert (
+        csrf_client.post(
+            "/api/v1/auth/login",
+            data='{"username":"operator","password":"secret"}',
+            content_type="application/json",
+        ).status_code
+        == 403
+    )
+
+    client = Client()
+    response = client.post(
+        "/api/v1/auth/login",
+        data=(
+            '{"username":"operator","password":"secret","next":"https://attacker.example/steal"}'
+        ),
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    assert response.json()["redirect"] == "/"
 
 
 @pytest.mark.django_db

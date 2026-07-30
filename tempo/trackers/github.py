@@ -27,7 +27,10 @@ class GitHubTracker(Tracker):
         api_url: str = "https://api.github.com",
         terminal_states: list[str] | None = None,
         client: httpx.AsyncClient | None = None,
+        review_token: str | None = None,
+        review_client: httpx.AsyncClient | None = None,
         token_env_name: str = "GITHUB_TOKEN",
+        review_token_env_name: str = "GITHUB_REVIEW_TOKEN",
         required_labels: list[str] | None = None,
     ) -> None:
         parsed = urlparse(api_url)
@@ -36,7 +39,9 @@ class GitHubTracker(Tracker):
         self.repo = repo
         self.api_url = api_url.rstrip("/")
         self.token = token or os.getenv(token_env_name) or None
+        self.review_token = review_token or os.getenv(review_token_env_name) or None
         self.token_env_name = token_env_name
+        self.review_token_env_name = review_token_env_name
         self.required_labels = {
             str(label).strip().lower() for label in (required_labels or []) if str(label).strip()
         }
@@ -51,17 +56,43 @@ class GitHubTracker(Tracker):
             headers["Authorization"] = f"Bearer {self.token}"
         self.client = client or httpx.AsyncClient(headers=headers, timeout=20)
         self._owns_client = client is None
+        if review_client:
+            self.review_client = review_client
+            self._owns_review_client = False
+        elif self.review_token:
+            review_headers = dict(headers)
+            review_headers["Authorization"] = f"Bearer {self.review_token}"
+            self.review_client = httpx.AsyncClient(headers=review_headers, timeout=20)
+            self._owns_review_client = True
+        else:
+            self.review_client = self.client
+            self._owns_review_client = False
 
     async def close(self) -> None:
+        if self._owns_review_client:
+            await self.review_client.aclose()
         if self._owns_client:
             await self.client.aclose()
 
     def secret_environment_names(self) -> set[str]:
-        return {"GITHUB_TOKEN", self.token_env_name}
+        return {
+            "GITHUB_TOKEN",
+            "GITHUB_REVIEW_TOKEN",
+            self.token_env_name,
+            self.review_token_env_name,
+        }
 
-    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        review_identity: bool = False,
+        **kwargs: Any,
+    ) -> Any:
         try:
-            response = await self.client.request(method, f"{self.api_url}{path}", **kwargs)
+            client = self.review_client if review_identity else self.client
+            response = await client.request(method, f"{self.api_url}{path}", **kwargs)
         except httpx.HTTPError as exc:
             raise TrackerError(str(exc), category="tracker_transport") from exc
         if response.status_code == 429:
@@ -206,7 +237,9 @@ class GitHubTracker(Tracker):
         ):
             return {
                 "success": False,
-                "output": "Tempo never merges branches or pull requests; human review is required.",
+                "output": (
+                    "Only Tempo's completed independent-review phase may merge a pull request."
+                ),
                 "contentItems": [],
             }
         if method not in {"GET", "HEAD"} and issue.id not in self._publication_authorized:
@@ -274,7 +307,180 @@ class GitHubTracker(Tracker):
             }
 
     async def finalize_pull_request(self, issue: Issue, pull_request_number: int) -> None:
+        await self.require_human_review(
+            issue,
+            pull_request_number,
+            reason="Automated review is disabled by workflow policy.",
+        )
+
+    async def complete_pull_request_review(
+        self,
+        issue: Issue,
+        pull_request_number: int,
+        *,
+        summary: str,
+        auto_merge: bool,
+        merge_method: str,
+        reviewers: list[str],
+        team_reviewers: list[str],
+    ) -> dict[str, Any]:
+        marker = f"<!-- tempo-review:{issue.id}:{pull_request_number} -->"
+        review_body = (
+            f"{marker}\nTempo's independent review agent approved this pull request.\n\n{summary}"
+        ).strip()
+
+        try:
+            current = await self._request(
+                "GET",
+                f"/repos/{self.repo}/pulls/{pull_request_number}",
+            )
+        except TrackerError:
+            current = {}
+        if isinstance(current, dict) and current.get("merged"):
+            return await self._finalize_merged_review(
+                issue,
+                pull_request_number,
+                summary=summary,
+                merge=current,
+            )
+
+        if self.review_token:
+            try:
+                reviews = await self._request(
+                    "GET",
+                    f"/repos/{self.repo}/pulls/{pull_request_number}/reviews",
+                    review_identity=True,
+                )
+                already_approved = any(
+                    isinstance(review, dict)
+                    and marker in str(review.get("body", ""))
+                    and str(review.get("state", "")).upper() == "APPROVED"
+                    for review in (reviews if isinstance(reviews, list) else [])
+                )
+                if not already_approved:
+                    await self._request(
+                        "POST",
+                        f"/repos/{self.repo}/pulls/{pull_request_number}/reviews",
+                        review_identity=True,
+                        json={"event": "APPROVE", "body": review_body},
+                    )
+            except TrackerError as exc:
+                return await self.require_human_review(
+                    issue,
+                    pull_request_number,
+                    reason=f"GitHub rejected the configured reviewer identity: {exc}",
+                    summary=summary,
+                    reviewers=reviewers,
+                    team_reviewers=team_reviewers,
+                )
+        else:
+            await self._post_comment_once(
+                f"/repos/{self.repo}/issues/{pull_request_number}/comments",
+                marker,
+                review_body,
+            )
+
+        if not auto_merge:
+            return await self.require_human_review(
+                issue,
+                pull_request_number,
+                reason="The review passed, but automatic merge is disabled by workflow policy.",
+                summary=summary,
+                reviewers=reviewers,
+                team_reviewers=team_reviewers,
+            )
+
+        try:
+            merge = await self._request(
+                "PUT",
+                f"/repos/{self.repo}/pulls/{pull_request_number}/merge",
+                json={"merge_method": merge_method},
+            )
+        except TrackerError as exc:
+            return await self.require_human_review(
+                issue,
+                pull_request_number,
+                reason=(
+                    "GitHub did not permit the automatic merge. Branch protection, required "
+                    f"checks, permissions, or a merge conflict may require a person: {exc}"
+                ),
+                summary=summary,
+                reviewers=reviewers,
+                team_reviewers=team_reviewers,
+            )
+
+        if not isinstance(merge, dict) or not merge.get("merged"):
+            message = (
+                str(merge.get("message", "")).strip()
+                if isinstance(merge, dict)
+                else "GitHub returned an unexpected merge response."
+            )
+            return await self.require_human_review(
+                issue,
+                pull_request_number,
+                reason=(
+                    "GitHub did not merge the reviewed pull request"
+                    f"{f': {message}' if message else '.'}"
+                ),
+                summary=summary,
+                reviewers=reviewers,
+                team_reviewers=team_reviewers,
+            )
+
+        return await self._finalize_merged_review(
+            issue,
+            pull_request_number,
+            summary=summary,
+            merge=merge,
+        )
+
+    async def require_human_review(
+        self,
+        issue: Issue,
+        pull_request_number: int,
+        *,
+        reason: str,
+        summary: str = "",
+        reviewers: list[str] | None = None,
+        team_reviewers: list[str] | None = None,
+    ) -> dict[str, Any]:
+        reviewers = reviewers or []
+        team_reviewers = team_reviewers or []
+        if reviewers or team_reviewers:
+            try:
+                await self._request(
+                    "POST",
+                    f"/repos/{self.repo}/pulls/{pull_request_number}/requested_reviewers",
+                    json={"reviewers": reviewers, "team_reviewers": team_reviewers},
+                )
+            except TrackerError:
+                # The durable comments below remain the guaranteed handoff if reviewer assignment
+                # is rejected because of repository membership or permissions.
+                pass
+
+        pull_request_url = f"https://github.com/{self.repo}/pull/{pull_request_number}"
+        marker = f"<!-- tempo-human-review:{issue.id}:{pull_request_number} -->"
+        body = (
+            f"{marker}\n"
+            "## Human review required\n\n"
+            f"{reason.strip()}\n\n"
+            f"{f'Tempo review summary: {summary.strip()}' if summary.strip() else ''}"
+        ).strip()
+        await self._post_comment_once(
+            f"/repos/{self.repo}/issues/{pull_request_number}/comments",
+            marker,
+            body,
+        )
+        await self._post_comment_once(
+            f"/repos/{self.repo}/issues/{issue.id}/comments",
+            marker,
+            (
+                f"{marker}\nHuman review is required for "
+                f"[pull request #{pull_request_number}]({pull_request_url}).\n\n{reason.strip()}"
+            ),
+        )
         await self._remove_dispatch_labels(issue)
+        return {"status": "human_review", "reason": reason, "summary": summary}
 
     async def finalize_without_changes(self, issue: Issue, reason: str) -> None:
         comment_body = f"Tempo completed this ticket without a code change:\n\n{reason}"
@@ -310,6 +516,41 @@ class GitHubTracker(Tracker):
             json={"labels": labels},
         )
 
+    async def _post_comment_once(self, path: str, marker: str, body: str) -> None:
+        comments = await self._request("GET", path, params={"per_page": 100})
+        if any(
+            isinstance(comment, dict) and marker in str(comment.get("body", ""))
+            for comment in (comments if isinstance(comments, list) else [])
+        ):
+            return
+        await self._request("POST", path, json={"body": body})
+
+    async def _finalize_merged_review(
+        self,
+        issue: Issue,
+        pull_request_number: int,
+        *,
+        summary: str,
+        merge: dict[str, Any],
+    ) -> dict[str, Any]:
+        issue_marker = f"<!-- tempo-merge:{issue.id}:{pull_request_number} -->"
+        pull_request_url = f"https://github.com/{self.repo}/pull/{pull_request_number}"
+        await self._post_comment_once(
+            f"/repos/{self.repo}/issues/{issue.id}/comments",
+            issue_marker,
+            (
+                f"{issue_marker}\nTempo's independent review agent approved and merged "
+                f"[pull request #{pull_request_number}]({pull_request_url}).\n\n{summary}"
+            ).strip(),
+        )
+        await self._remove_dispatch_labels(issue)
+        return {
+            "status": "merged",
+            "summary": summary,
+            "sha": merge.get("sha") or merge.get("merge_commit_sha"),
+            "message": merge.get("message"),
+        }
+
 
 def build_tracker(
     kind: str,
@@ -320,15 +561,22 @@ def build_tracker(
     if kind == "memory":
         return MemoryTracker(provider.get("issues") or [])
     token_value = provider.get("token")
+    review_token_value = provider.get("review_token")
     token_env_name = "GITHUB_TOKEN"
+    review_token_env_name = "GITHUB_REVIEW_TOKEN"
     if isinstance(token_value, str) and token_value.startswith("$"):
         token_env_name = token_value[1:]
         token_value = os.getenv(token_env_name)
+    if isinstance(review_token_value, str) and review_token_value.startswith("$"):
+        review_token_env_name = review_token_value[1:]
+        review_token_value = os.getenv(review_token_env_name)
     return GitHubTracker(
         repo=str(provider["repo"]),
         token=token_value,
+        review_token=review_token_value,
         api_url=str(provider.get("api_url", "https://api.github.com")),
         terminal_states=terminal_states,
         token_env_name=token_env_name,
+        review_token_env_name=review_token_env_name,
         required_labels=required_labels,
     )

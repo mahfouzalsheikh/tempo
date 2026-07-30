@@ -1,11 +1,14 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from tempo.domain import Issue, RunningEntry, Totals
 from tempo.errors import CodexError
 from tempo.orchestrator import Orchestrator
+from tempo.trackers.memory import MemoryTracker
+from tempo.workspace import WorkspaceManager
 
 
 def workflow(tmp_path: Path) -> Path:
@@ -139,6 +142,36 @@ async def test_runtime_safety_limits_stop_token_and_validation_loops(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_existing_pull_request_discovery_advances_implementation(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    await orchestrator.store.initialize()
+    issue = Issue(id="existing-pr", identifier="A-PR", title="Already published", state="Todo")
+    entry = RunningEntry(issue=issue, task=None, attempt=None)
+    orchestrator.running[issue.id] = entry
+
+    await orchestrator._codex_event(
+        issue.id,
+        {
+            "event": "tool_call_completed",
+            "tool": "github_api",
+            "success": True,
+            "arguments": {
+                "method": "GET",
+                "path": "/repos/acme/widgets/pulls/17",
+            },
+            "output": (
+                '{"html_url":"https://github.example/acme/widgets/pull/17",'
+                '"number":17,"state":"open"}'
+            ),
+        },
+    )
+
+    assert entry.phase == "PullRequestCreated"
+    assert entry.session.pull_request_created is True
+    assert entry.session.pull_request_number == 17
+
+
+@pytest.mark.asyncio
 async def test_safety_limit_failure_is_blocked_instead_of_retried(tmp_path):
     orchestrator = Orchestrator(str(workflow(tmp_path)))
     await orchestrator.store.initialize()
@@ -159,3 +192,67 @@ async def test_safety_limit_failure_is_blocked_instead_of_retried(tmp_path):
     assert issue.id in orchestrator.safety_blocked
     assert issue.id not in orchestrator.claimed
     assert orchestrator.retries == {}
+
+
+@pytest.mark.asyncio
+async def test_review_agent_uses_separate_session_and_applies_merge_policy(tmp_path, monkeypatch):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    await orchestrator.store.initialize()
+    _, config = orchestrator.store.current()
+    config.review.enabled = True
+    config.review.auto_merge = True
+    issue = Issue(id="review", identifier="A-REVIEW", title="Review it", state="Todo")
+    entry = RunningEntry(issue=issue, task=None, attempt=None)
+    entry.session.pull_request_url = "https://github.test/pull/7"
+    entry.session.pull_request_number = 7
+    entry.session.codex_input_tokens = 10
+    entry.session.codex_output_tokens = 5
+    entry.session.codex_total_tokens = 15
+    entry.session.turn_count = 1
+    orchestrator.running[issue.id] = entry
+    manager = WorkspaceManager(config.workspace.root, config.hooks)
+    workspace = await manager.create(issue.identifier)
+    tracker = MemoryTracker()
+    roles = []
+
+    class FakeReviewClient:
+        def __init__(self, _config, _manager, _tracker, on_event, approval_callback=None):
+            self.on_event = on_event
+
+        async def start_session(self, _workspace, *, role="implementation"):
+            roles.append(role)
+            return SimpleNamespace(review_decision=None, review_summary=None)
+
+        async def run_turn(self, session, _prompt, _issue):
+            session.review_decision = "approve"
+            session.review_summary = "Reviewed the diff and validation evidence."
+            await self.on_event(
+                {
+                    "event": "review_completed",
+                    "decision": "approve",
+                    "summary": session.review_summary,
+                }
+            )
+
+        async def stop_session(self, _session):
+            return None
+
+    monkeypatch.setattr("tempo.orchestrator.CodexAppServer", FakeReviewClient)
+
+    async def approve(_kind, _payload):
+        return {"approved": True}
+
+    await orchestrator._run_review_agent(
+        issue,
+        workspace.path,
+        config,
+        manager,
+        tracker,
+        7,
+        approve,
+    )
+
+    assert roles == ["review"]
+    assert entry.phase == "Merged"
+    assert entry.session.review_status == "merged"
+    assert entry.session.merged is True

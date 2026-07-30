@@ -121,6 +121,24 @@ def activity_from_event(event: dict[str, Any], timestamp: str) -> dict[str, Any]
             "Completed without code changes",
             str(event.get("reason", "")),
         )
+    if name == "review_completed":
+        decision = str(event.get("decision", "human_review"))
+        return _activity(
+            name,
+            timestamp,
+            "success" if decision == "approve" else "warning",
+            "Independent review approved" if decision == "approve" else "Human review requested",
+            str(event.get("summary", "")),
+        )
+    if name == "review_outcome":
+        status = str(event.get("status", "human_review"))
+        return _activity(
+            name,
+            timestamp,
+            "success" if status == "merged" else "warning",
+            "Pull request merged" if status == "merged" else "Human review required",
+            str(event.get("reason") or event.get("summary") or ""),
+        )
     if name == "tool_call_completed":
         tool = str(event.get("tool", "tool"))
         arguments = event.get("arguments") or {}

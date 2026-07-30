@@ -32,8 +32,17 @@ class CodexSession:
     inbox: asyncio.Queue[dict[str, Any]]
     reader_task: asyncio.Task[None]
     next_request_id: int = 3
+    role: str = "implementation"
     validation_fingerprint: str | None = None
     completion_disposition: str | None = None
+    review_decision: str | None = None
+    review_summary: str | None = None
+    resumed: bool = False
+    resume_failure: str | None = None
+    usage_baseline_input: int = 0
+    usage_baseline_output: int = 0
+    usage_baseline_total: int = 0
+    usage_is_cumulative: bool | None = None
 
 
 class CodexAppServer:
@@ -60,7 +69,16 @@ class CodexAppServer:
             tracker.secret_environment_names(),
         )
 
-    async def start_session(self, workspace: Path) -> CodexSession:
+    async def start_session(
+        self,
+        workspace: Path,
+        *,
+        role: str = "implementation",
+        resume_thread_id: str | None = None,
+        usage_baseline: dict[str, int] | None = None,
+    ) -> CodexSession:
+        if role not in {"implementation", "review"}:
+            raise CodexError(f"unsupported agent role: {role}", category="invalid_agent_role")
         self.workspace_manager.assert_contained(workspace)
         # This is a fast local safety check performed once per worker.
         if workspace.resolve(strict=True) == self.workspace_manager.root.resolve(  # noqa: ASYNC240
@@ -92,7 +110,18 @@ class CodexAppServer:
         inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         reader_task = asyncio.create_task(self._read_stdout(process, inbox))
         asyncio.create_task(self._read_stderr(process))
-        session = CodexSession(process, "", workspace, inbox, reader_task)
+        baseline = usage_baseline or {}
+        session = CodexSession(
+            process,
+            "",
+            workspace,
+            inbox,
+            reader_task,
+            role=role,
+            usage_baseline_input=int(baseline.get("input_tokens", 0)),
+            usage_baseline_output=int(baseline.get("output_tokens", 0)),
+            usage_baseline_total=int(baseline.get("total_tokens", 0)),
+        )
         try:
             await self._send(
                 session,
@@ -111,6 +140,9 @@ class CodexAppServer:
             )
             await self._response(session, 1, self.config.read_timeout_ms)
             await self._send(session, {"method": "initialized", "params": {}})
+            role_tools = (
+                [self._review_tool_spec()] if role == "review" else [self._completion_tool_spec()]
+            )
             params: dict[str, Any] = {
                 "cwd": str(workspace),
                 "approvalPolicy": self.config.approval_policy,
@@ -118,15 +150,55 @@ class CodexAppServer:
                 "dynamicTools": [
                     *self.tracker.agent_tool_specs(),
                     *([self.validator.tool_spec()] if self.validation_enabled else []),
-                    self._completion_tool_spec(),
+                    *role_tools,
                 ],
             }
-            await self._send(session, {"method": "thread/start", "id": 2, "params": params})
-            result = await self._response(session, 2, self.config.read_timeout_ms)
+            request_id = 2
+            if resume_thread_id:
+                resume_params = {"threadId": resume_thread_id, **params}
+                session.resumed = True
+                await self._send(
+                    session,
+                    {"method": "thread/resume", "id": request_id, "params": resume_params},
+                )
+                try:
+                    result = await self._response(session, request_id, self.config.read_timeout_ms)
+                except CodexError as exc:
+                    session.resumed = False
+                    session.resume_failure = str(exc)
+                    await self.on_event(
+                        {
+                            "event": "thread_resume_failed",
+                            "thread_id": resume_thread_id,
+                            "reason": str(exc),
+                        }
+                    )
+                    request_id += 1
+                    await self._send(
+                        session,
+                        {"method": "thread/start", "id": request_id, "params": params},
+                    )
+                    result = await self._response(session, request_id, self.config.read_timeout_ms)
+            else:
+                await self._send(
+                    session,
+                    {"method": "thread/start", "id": request_id, "params": params},
+                )
+                result = await self._response(session, request_id, self.config.read_timeout_ms)
             thread_id = result.get("thread", {}).get("id")
             if not thread_id:
-                raise CodexError("thread/start returned no thread id", category="response_error")
+                method = "thread/resume" if session.resumed else "thread/start"
+                raise CodexError(f"{method} returned no thread id", category="response_error")
             session.thread_id = str(thread_id)
+            session.next_request_id = request_id + 1
+            if session.resumed:
+                await self.on_event(
+                    {
+                        "event": "thread_resumed",
+                        "thread_id": session.thread_id,
+                        "codex_app_server_pid": str(session.process.pid),
+                    }
+                )
             return session
         except Exception:
             await self.stop_session(session)
@@ -175,7 +247,7 @@ class CodexAppServer:
             if "id" in message and method:
                 await self._handle_server_request(session, message, issue)
                 continue
-            event = self._event_from_message(message)
+            event = self._normalize_usage_for_attempt(session, self._event_from_message(message))
             await self.on_event(event)
             if method == "turn/completed":
                 status = message.get("params", {}).get("turn", {}).get("status", "completed")
@@ -187,6 +259,44 @@ class CodexAppServer:
                     f"{method}: {message.get('params')}",
                     category=method.replace("/", "_"),
                 )
+
+    @staticmethod
+    def _normalize_usage_for_attempt(
+        session: CodexSession, event: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert a resumed thread's cumulative usage into this attempt's usage."""
+        usage = event.get("usage")
+        if not session.resumed or not isinstance(usage, dict):
+            return event
+        raw_total = int(usage.get("total_tokens", 0))
+        if session.usage_is_cumulative is None:
+            if raw_total <= 0:
+                return event
+            session.usage_is_cumulative = (
+                session.usage_baseline_total > 0 and raw_total >= session.usage_baseline_total
+            )
+        if not session.usage_is_cumulative:
+            return event
+        normalized = {
+            "input_tokens": max(
+                0,
+                int(usage.get("input_tokens", 0)) - session.usage_baseline_input,
+            ),
+            "output_tokens": max(
+                0,
+                int(usage.get("output_tokens", 0)) - session.usage_baseline_output,
+            ),
+            "total_tokens": max(0, raw_total - session.usage_baseline_total),
+        }
+        return {
+            **event,
+            "usage": {**usage, **normalized},
+            "thread_usage": {
+                "input_tokens": int(usage.get("input_tokens", 0)),
+                "output_tokens": int(usage.get("output_tokens", 0)),
+                "total_tokens": raw_total,
+            },
+        }
 
     async def _handle_server_request(
         self, session: CodexSession, message: dict[str, Any], issue: Issue
@@ -231,6 +341,14 @@ class CodexAppServer:
                     issue,
                 )
             elif name == "tempo_complete":
+                if session.role != "implementation":
+                    result = {
+                        "success": False,
+                        "output": "Only the implementation agent may complete without changes.",
+                        "contentItems": [],
+                    }
+                    await self._send(session, {"id": request_id, "result": result})
+                    return
                 reason = str(arguments.get("reason", "")).strip()
                 fingerprint_matches = not self.validation_enabled or (
                     session.validation_fingerprint is not None
@@ -258,6 +376,59 @@ class CodexAppServer:
                     result = {
                         "success": True,
                         "output": "Tempo recorded the ticket as complete without code changes.",
+                        "contentItems": [],
+                    }
+            elif name == "tempo_review":
+                decision = str(arguments.get("decision", "")).strip().lower()
+                summary = str(arguments.get("summary", "")).strip()
+                fingerprint_matches = not self.validation_enabled or (
+                    session.validation_fingerprint is not None
+                    and session.validation_fingerprint
+                    == await self._workspace_fingerprint(session.workspace)
+                )
+                if session.role != "review":
+                    result = {
+                        "success": False,
+                        "output": "Only the independent review agent may record a review.",
+                        "contentItems": [],
+                    }
+                elif decision not in {"approve", "human_review"}:
+                    result = {
+                        "success": False,
+                        "output": "decision must be approve or human_review.",
+                        "contentItems": [],
+                    }
+                elif not summary:
+                    result = {
+                        "success": False,
+                        "output": "A concrete review summary is required.",
+                        "contentItems": [],
+                    }
+                elif decision == "approve" and not fingerprint_matches:
+                    result = {
+                        "success": False,
+                        "output": (
+                            "The reviewed workspace must pass unchanged local validation before "
+                            "Tempo can approve it."
+                        ),
+                        "contentItems": [],
+                    }
+                else:
+                    session.review_decision = decision
+                    session.review_summary = summary
+                    await self.on_event(
+                        {
+                            "event": "review_completed",
+                            "decision": decision,
+                            "summary": summary,
+                        }
+                    )
+                    result = {
+                        "success": True,
+                        "output": (
+                            "Tempo recorded the independent review decision. "
+                            "The control plane will now apply merge and human-review policy."
+                        ),
                         "contentItems": [],
                     }
             else:
@@ -416,6 +587,34 @@ class CodexAppServer:
         }
 
     @staticmethod
+    def _review_tool_spec() -> dict[str, Any]:
+        return {
+            "name": "tempo_review",
+            "description": (
+                "Finish the independent pull-request review. Choose approve only after the current "
+                "workspace passes unchanged local validation. Choose human_review when policy, "
+                "ambiguity, permissions, sensitive changes, or unresolved risk require a person."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "decision": {
+                        "type": "string",
+                        "enum": ["approve", "human_review"],
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": (
+                            "Concrete findings, evidence checked, and the reason for the decision."
+                        ),
+                    },
+                },
+                "required": ["decision", "summary"],
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
     async def _workspace_fingerprint(workspace: Path) -> str:
         process = await asyncio.create_subprocess_exec(
             "git",
@@ -481,7 +680,9 @@ class CodexAppServer:
         while True:
             message = await self._next_message(session, timeout_ms)
             if message.get("id") != request_id:
-                await self.on_event(self._event_from_message(message))
+                await self.on_event(
+                    self._normalize_usage_for_attempt(session, self._event_from_message(message))
+                )
                 continue
             if "error" in message:
                 raise CodexError(
