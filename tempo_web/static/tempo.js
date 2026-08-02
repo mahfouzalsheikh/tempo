@@ -67,12 +67,12 @@ function projectCard(project) {
         <span class="project-mark">${esc(initials || "P")}</span>
         <span><strong>${esc(name)}</strong><small>${esc(key)} · ${esc(project.environment || "default")}</small></span>
       </div>
-      <span class="health-pill"><i></i> healthy</span>
+      <span class="health-pill configured"><i></i> configured</span>
     </div>
     <div class="project-stats">
       <div><b>${number(project.running)}</b><span>running</span></div>
       <div><b>${number(project.retries)}</b><span>queued</span></div>
-      <div><b>${number(project.completed)}</b><span>complete</span></div>
+      <div><b>${number(project.completed)}</b><span>completed</span></div>
     </div>
   </article>`;
 }
@@ -236,7 +236,7 @@ function render(data) {
     ? running.map(runCard).join("")
     : emptyState("No active runs", "Accepted work will appear here when a worker claims it.", "↯");
   for (const node of document.querySelectorAll("[data-run-card]")) {
-    if (openRuns.has(node.dataset.runCard) || running.length === 1) node.open = true;
+    if (openRuns.has(node.dataset.runCard)) node.open = true;
   }
   byId("retries").innerHTML = retries.length
     ? retries.map(queueRow).join("")
@@ -294,6 +294,7 @@ async function update() {
     const status = byId("status");
     status.className = "status live";
     status.innerHTML = "<i></i> Live";
+    status.title = `Last updated ${new Date().toLocaleTimeString()}`;
   } catch (error) {
     const status = byId("status");
     status.className = "status error";
@@ -485,15 +486,23 @@ byId("action-form").addEventListener("submit", async event => {
 });
 
 byId("refresh").addEventListener("click", async () => {
-  if (authenticated) {
-    try {
-      await request("/api/v1/refresh", {method: "POST", body: "{}"});
-      toast("Poll scheduled");
-    } catch (error) {
-      toast(error.message, "error");
+  const button = byId("refresh");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    if (authenticated) {
+      try {
+        await request("/api/v1/refresh", {method: "POST", body: "{}"});
+        toast("Poll scheduled");
+      } catch (error) {
+        toast(error.message, "error");
+      }
     }
+    await update();
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
   }
-  await update();
 });
 
 let pendingState = null;
@@ -513,6 +522,7 @@ stream.onopen = () => {
   const status = byId("status");
   status.className = "status live";
   status.innerHTML = "<i></i> Streaming";
+  status.title = "Receiving live control-plane updates";
 };
 stream.onmessage = event => {
   try {

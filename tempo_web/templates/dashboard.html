@@ -7,9 +7,10 @@
   <meta name="color-scheme" content="dark">
   <title>Control center · Tempo</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23b9f65f'/><path d='M8 9h16v4h-6v11h-4V13H8z' fill='%2311150d'/></svg>">
-  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260728-4">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260731-3">
 </head>
 <body data-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}">
+  <a class="skip-link" href="#main-content">Skip to dashboard</a>
   <div class="app-shell">
     <aside class="sidebar">
       <a class="wordmark" href="/" aria-label="Tempo home">
@@ -17,22 +18,22 @@
         <span>tempo</span>
       </a>
       <nav class="side-nav" aria-label="Primary">
-        <a class="active" href="/">
+        <a class="active" href="/" aria-current="page">
           <span class="nav-icon">◫</span>
-          Control center
+          <span class="nav-label">Overview</span>
         </a>
         <a href="#runs">
           <span class="nav-icon">↯</span>
-          Runs
+          <span class="nav-label">Runs</span>
         </a>
         <a href="#approvals">
           <span class="nav-icon">◇</span>
-          Approvals
+          <span class="nav-label">Approvals</span>
           <span id="nav-approval-count" class="nav-count" hidden>0</span>
         </a>
         <a href="#projects">
           <span class="nav-icon">⌘</span>
-          Projects
+          <span class="nav-label">Projects</span>
         </a>
       </nav>
       <div class="side-nav secondary-nav">
@@ -51,17 +52,18 @@
       </div>
     </aside>
 
-    <main class="workspace">
+    <main id="main-content" class="workspace">
       <header class="workspace-header">
         <div>
-          <p class="breadcrumb">CONTROL PLANE <span>/</span> OVERVIEW</p>
-          <h1>Engineering operations</h1>
-          <p class="subtitle">One surface for active agents, durable work, approvals, and project health.</p>
+          <p class="breadcrumb">TEMPO <span>/</span> OVERVIEW</p>
+          <h1>Control center</h1>
+          <p class="subtitle">Monitor active agents, review approvals, and resolve blocked work.</p>
         </div>
         <div class="header-actions">
-          <span id="status" class="status"><i></i> Connecting</span>
+          <span id="status" class="status" role="status" aria-live="polite"><i></i> Connecting</span>
           <button id="refresh" class="button secondary" type="button">
-            <span>↻</span> Poll now
+            <span aria-hidden="true">↻</span>
+            <span>{% if request.user.is_authenticated %}Poll now{% else %}Refresh view{% endif %}</span>
           </button>
         </div>
       </header>
@@ -74,19 +76,19 @@
       <div id="content" {% if not snapshot %}hidden{% endif %}>
         <section class="metric-grid" aria-label="Control plane metrics">
           <article class="metric-card featured">
-            <div class="metric-label"><span class="metric-icon running-icon">↯</span>Active runs</div>
+            <div class="metric-label"><span class="metric-icon running-icon">↯</span>In progress</div>
             <strong id="running-count">0</strong>
             <small id="capacity">0 available slots</small>
           </article>
           <article class="metric-card">
-            <div class="metric-label"><span class="metric-icon approval-icon">◇</span>Approvals</div>
+            <div class="metric-label"><span class="metric-icon approval-icon">◇</span>Awaiting approval</div>
             <strong id="approval-count">0</strong>
             <small>Waiting on an operator</small>
           </article>
           <article class="metric-card">
-            <div class="metric-label"><span class="metric-icon queue-icon">↻</span>Durable queue</div>
+            <div class="metric-label"><span class="metric-icon queue-icon">↻</span>Retry queue</div>
             <strong id="retry-count">0</strong>
-            <small><span id="claimed-count">0</span> accepted runs</small>
+            <small><span id="claimed-count">0</span> claimed runs</small>
           </article>
           <article class="metric-card">
             <div class="metric-label"><span class="metric-icon stop-icon">!</span>Needs attention</div>
@@ -94,23 +96,15 @@
             <small><span id="safety-blocked-count">0</span> safety stops</small>
           </article>
           <article class="metric-card">
-            <div class="metric-label"><span class="metric-icon success-icon">✓</span>Validated</div>
+            <div class="metric-label"><span class="metric-icon success-icon">✓</span>Validated runs</div>
             <strong id="validated-count">0</strong>
             <small><span id="validation-pass-count">0</span> accepted passes</small>
           </article>
           <article class="metric-card">
-            <div class="metric-label"><span class="metric-icon token-icon">◌</span>Tokens used</div>
+            <div class="metric-label"><span class="metric-icon token-icon">◌</span>Token usage</div>
             <strong id="token-count">0</strong>
             <small><span id="completed-count">0</span> completed runs</small>
           </article>
-        </section>
-
-        <section id="projects" class="section-block">
-          <div class="section-heading">
-            <div><p class="section-kicker">PORTFOLIO</p><h2>Projects</h2></div>
-            <span id="project-count" class="section-meta">0 projects</span>
-          </div>
-          <div id="project-grid" class="project-grid"></div>
         </section>
 
         <div class="control-grid">
@@ -123,6 +117,14 @@
               <span class="live-caption"><i></i> Streaming</span>
             </div>
             <div id="running" class="run-list"></div>
+          </section>
+
+          <section id="projects" class="panel project-panel">
+            <div class="panel-heading">
+              <div><p class="section-kicker">PORTFOLIO</p><h2>Projects</h2></div>
+              <span id="project-count" class="section-meta">0 projects</span>
+            </div>
+            <div id="project-grid" class="project-grid"></div>
           </section>
 
           <aside class="control-rail">
@@ -152,12 +154,17 @@
           <div id="retries" class="queue-list"></div>
         </section>
 
-        <section class="panel service-panel">
-          <div class="panel-heading">
-            <div><p class="section-kicker">SYSTEM</p><h2>Control-plane details</h2></div>
-          </div>
+        <details class="panel service-panel">
+          <summary class="panel-heading disclosure-heading">
+            <div>
+              <p class="section-kicker">SYSTEM</p>
+              <h2>System details</h2>
+              <p class="heading-description">Tracker, workspace, workflow, and polling information</p>
+            </div>
+            <span class="disclosure-icon" aria-hidden="true">⌄</span>
+          </summary>
           <dl id="service" class="definition-grid"></dl>
-        </section>
+        </details>
       </div>
     </main>
   </div>
@@ -181,6 +188,6 @@
 
   <div id="toast-region" class="toast-region" aria-live="polite"></div>
   {% csrf_token %}
-  <script src="{% static 'tempo.js' %}?v=20260728-4"></script>
+  <script src="{% static 'tempo.js' %}?v=20260731-2"></script>
 </body>
 </html>
