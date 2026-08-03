@@ -141,6 +141,22 @@ class ControlPlane:
                 )
         return False, "run_not_found"
 
+    def platform_snapshot(self) -> dict[str, Any]:
+        return {"projects": [item.platform_snapshot() for item in self.orchestrators]}
+
+    async def update_platform_config(
+        self,
+        organization: str,
+        project: str,
+        sections: dict[str, Any],
+    ) -> bool:
+        key = f"{organization}/{project}"
+        for orchestrator in self.orchestrators:
+            if self._project_key(orchestrator) == key:
+                await orchestrator.update_platform_config(sections)
+                return True
+        return False
+
     def subscribe_events(self) -> asyncio.Queue[None]:
         output: asyncio.Queue[None] = asyncio.Queue(maxsize=1)
         subscriptions = []

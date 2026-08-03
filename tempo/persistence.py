@@ -82,11 +82,28 @@ class PersistenceStore:
         workflow_bytes = b""
         if workflow_path and workflow_path.exists():
             workflow_bytes = await sync_to_async(workflow_path.read_bytes, thread_sensitive=False)()
-        checksum = hashlib.sha256(workflow_bytes).hexdigest()
+        workflow_name = getattr(getattr(self.config, "workflow", None), "name", None)
+        workflow_name = workflow_name or "issue-to-pull-request"
+        platform_payload = {}
+        if hasattr(self.config, "runtime_providers"):
+            dumped_config = self.config.model_dump(mode="json")
+            platform_payload = {
+                key: _json_safe(dumped_config[key])
+                for key in (
+                    "runtime_providers",
+                    "model_providers",
+                    "tool_providers",
+                    "agents",
+                    "workflow",
+                )
+            }
+        checksum = hashlib.sha256(
+            workflow_bytes + json.dumps(platform_payload, sort_keys=True).encode()
+        ).hexdigest()
         latest = (
             await WorkflowVersion.objects.filter(
                 project=project,
-                name="issue-to-pull-request",
+                name=workflow_name,
             )
             .order_by("-version")
             .afirst()
@@ -95,7 +112,7 @@ class PersistenceStore:
             project=project,
             checksum=checksum,
             defaults={
-                "name": "issue-to-pull-request",
+                "name": workflow_name,
                 "version": (latest.version + 1) if latest else 1,
                 "path": str(workflow_path or ""),
                 "config": _json_safe(
@@ -107,6 +124,168 @@ class PersistenceStore:
         self.project_id = project.pk
         self.environment_id = environment.pk
         self.workflow_version_id = workflow.pk
+        await self._ensure_workflow_configuration(platform_payload)
+        await self._sync_platform_definitions()
+
+    async def workflow_configuration(self) -> tuple[dict[str, Any], Any | None]:
+        if self.project_id is None:
+            return {}, None
+        from tempo_web.models import WorkflowConfiguration
+
+        row = await WorkflowConfiguration.objects.filter(
+            project_id=self.project_id, active=True
+        ).afirst()
+        return (_json_safe(row.configuration), row.updated_at) if row else ({}, None)
+
+    async def save_workflow_configuration(self, sections: dict[str, Any]) -> Any:
+        if self.project_id is None:
+            raise RuntimeError("persistence store is not initialized")
+        from tempo_web.models import WorkflowConfiguration
+
+        row, created = await WorkflowConfiguration.objects.aget_or_create(
+            project_id=self.project_id,
+            defaults={"configuration": _json_safe(sections)},
+        )
+        if not created:
+            row.configuration = _json_safe(sections)
+            row.active = True
+            row.revision += 1
+            await row.asave(update_fields=["configuration", "active", "revision", "updated_at"])
+        return row.updated_at
+
+    async def _ensure_workflow_configuration(self, sections: dict[str, Any]) -> None:
+        if self.project_id is None or not sections:
+            return
+        from tempo_web.models import WorkflowConfiguration
+
+        await WorkflowConfiguration.objects.aget_or_create(
+            project_id=self.project_id,
+            defaults={"configuration": _json_safe(sections)},
+        )
+
+    @sync_to_async(thread_sensitive=True)
+    def _sync_platform_definitions(self) -> None:
+        if (
+            self.config is None
+            or self.project_id is None
+            or self.workflow_version_id is None
+            or not hasattr(self.config, "runtime_providers")
+        ):
+            return
+        from tempo_web.models import (
+            AgentProfile,
+            AgentRuntimeDefinition,
+            ModelProviderDefinition,
+            ToolProviderDefinition,
+            WorkflowEdgeDefinition,
+            WorkflowNodeDefinition,
+        )
+
+        runtimes = {}
+        for name, config in self.config.runtime_providers.items():
+            runtimes[name], _ = AgentRuntimeDefinition.objects.update_or_create(
+                project_id=self.project_id,
+                name=name,
+                defaults={
+                    "kind": config.kind,
+                    "configuration": {
+                        "command": config.command,
+                        "settings": _json_safe(config.settings),
+                    },
+                    "active": True,
+                },
+            )
+        models = {}
+        for name, config in self.config.model_providers.items():
+            models[name], _ = ModelProviderDefinition.objects.update_or_create(
+                project_id=self.project_id,
+                name=name,
+                defaults={
+                    "kind": config.kind,
+                    "model": config.model or "",
+                    "configuration": {
+                        "fallbacks": _json_safe(config.fallbacks),
+                        "routes": _json_safe(
+                            [route.model_dump(mode="json") for route in config.routes]
+                        ),
+                        "settings": _json_safe(config.settings),
+                    },
+                    "active": True,
+                },
+            )
+        tools = {}
+        for name, config in self.config.tool_providers.items():
+            tools[name], _ = ToolProviderDefinition.objects.update_or_create(
+                project_id=self.project_id,
+                name=name,
+                defaults={
+                    "kind": config.kind,
+                    "tools": _json_safe(config.tools),
+                    "configuration": {
+                        "allow_all": config.allow_all,
+                        "settings": _json_safe(config.settings),
+                    },
+                    "active": True,
+                },
+            )
+        agents = {}
+        for name, config in self.config.agents.items():
+            profile, _ = AgentProfile.objects.update_or_create(
+                project_id=self.project_id,
+                name=name,
+                defaults={
+                    "role": config.role,
+                    "runtime": runtimes[config.runtime],
+                    "model_provider": models[config.model],
+                    "prompt": config.prompt,
+                    "max_turns": config.max_turns,
+                    "completion": config.completion,
+                    "configuration": {
+                        "capabilities": _json_safe(config.capabilities),
+                        "max_model_cost_per_million_tokens": (
+                            config.max_model_cost_per_million_tokens
+                        ),
+                        "settings": _json_safe(config.settings),
+                    },
+                    "active": True,
+                },
+            )
+            profile.tool_providers.set([tools[item] for item in config.tool_providers])
+            agents[name] = profile
+        node_rows = {}
+        for position, node in enumerate(self.config.workflow.nodes):
+            row, _ = WorkflowNodeDefinition.objects.update_or_create(
+                workflow_version_id=self.workflow_version_id,
+                key=node.id,
+                defaults={
+                    "name": node.name or node.id.replace("-", " ").replace("_", " ").title(),
+                    "node_type": node.type,
+                    "agent_profile": agents.get(node.agent or ""),
+                    "prompt": node.prompt,
+                    "max_retries": node.max_retries,
+                    "configuration": {
+                        "approval_message": node.approval_message,
+                        **_json_safe(node.settings),
+                    },
+                    "position": position,
+                },
+            )
+            node_rows[node.id] = row
+        WorkflowEdgeDefinition.objects.filter(
+            workflow_version_id=self.workflow_version_id
+        ).delete()
+        WorkflowEdgeDefinition.objects.bulk_create(
+            [
+                WorkflowEdgeDefinition(
+                    workflow_version_id=self.workflow_version_id,
+                    source=node_rows[edge.source],
+                    target=node_rows[edge.target],
+                    condition=edge.condition,
+                    position=position,
+                )
+                for position, edge in enumerate(self.config.workflow.edges)
+            ]
+        )
 
     async def reconcile_incomplete_records(self) -> None:
         from tempo_web.models import AgentRun, ValidationAttempt
@@ -194,7 +373,11 @@ class PersistenceStore:
         rows = AgentRun.objects.filter(
             project_id=self.project_id,
             status=AgentRun.Status.SUCCEEDED,
-        ).filter(Q(pull_request_url__gt="") | Q(phase="NoChangesRequired"))
+        ).filter(
+            Q(pull_request_url__gt="")
+            | Q(phase="NoChangesRequired")
+            | Q(phase="WorkflowCompleted")
+        )
         return {
             external_id async for external_id in rows.values_list("issue__external_id", flat=True)
         }
@@ -250,6 +433,100 @@ class PersistenceStore:
             )
         await AgentSession.objects.aget_or_create(run=run)
         return run.pk
+
+    async def initialize_run_nodes(self, entry: RunningEntry) -> None:
+        if not entry.run_record_id or self.config is None:
+            return
+        from tempo_web.models import RunNode, WorkflowNodeDefinition
+
+        definitions = {
+            row.key: row
+            async for row in WorkflowNodeDefinition.objects.filter(
+                workflow_version_id=self.workflow_version_id
+            )
+        }
+        incoming: dict[str, list[str]] = {node.id: [] for node in self.config.workflow.nodes}
+        for edge in self.config.workflow.edges:
+            incoming[edge.target].append(edge.source)
+        for node in self.config.workflow.nodes:
+            profile = self.config.agents.get(node.agent or "")
+            row, _ = await RunNode.objects.aget_or_create(
+                run_id=entry.run_record_id,
+                node_key=node.id,
+                defaults={
+                    "node_definition": definitions.get(node.id),
+                    "name": node.name or node.id.replace("-", " ").replace("_", " ").title(),
+                    "node_type": node.type,
+                    "agent_name": node.agent or "",
+                    "role": profile.role if profile else "",
+                    "runtime": profile.runtime if profile else "",
+                    "model": (
+                        self.config.model_providers[profile.model].model or profile.model
+                        if profile
+                        else ""
+                    ),
+                    "dependencies": incoming[node.id],
+                },
+            )
+            state = entry.graph_nodes[node.id]
+            state.status = row.status
+            state.attempt = row.attempt
+            state.started_at = row.started_at
+            state.finished_at = row.finished_at
+            state.error = row.error or None
+            state.output = row.output
+
+    async def start_run_node(self, run_id: int, node_id: str, attempt: int) -> None:
+        from tempo_web.models import RunNode
+
+        await RunNode.objects.filter(run_id=run_id, node_key=node_id).aupdate(
+            status=RunNode.Status.RUNNING,
+            attempt=attempt,
+            started_at=utcnow(),
+            finished_at=None,
+            error="",
+        )
+
+    async def set_run_node_model(self, run_id: int, node_id: str, model: str) -> None:
+        from tempo_web.models import RunNode
+
+        await RunNode.objects.filter(run_id=run_id, node_key=node_id).aupdate(model=model)
+
+    async def finish_run_node(
+        self,
+        run_id: int,
+        node_id: str,
+        *,
+        status: str,
+        error: str | None = None,
+        output: dict[str, Any] | None = None,
+    ) -> None:
+        from tempo_web.models import RunNode
+
+        await RunNode.objects.filter(run_id=run_id, node_key=node_id).aupdate(
+            status=status,
+            finished_at=utcnow(),
+            error=error or "",
+            output=_json_safe(output or {}),
+            checkpoint={"status": status, "finished_at": utcnow().isoformat()},
+        )
+
+    async def record_run_node_event(
+        self,
+        run_id: int,
+        node_id: str,
+        session: Any,
+    ) -> None:
+        from tempo_web.models import RunNode
+
+        await RunNode.objects.filter(run_id=run_id, node_key=node_id).aupdate(
+            session_id=session.session_id or "",
+            thread_id=session.thread_id or "",
+            turn_count=session.turn_count,
+            input_tokens=session.codex_input_tokens,
+            output_tokens=session.codex_output_tokens,
+            total_tokens=session.codex_total_tokens,
+        )
 
     async def enqueue_issue(self, issue: Issue, *, attempt: int | None = None) -> int | None:
         """Accept work durably before a worker process is launched."""
@@ -596,12 +873,18 @@ class PersistenceStore:
             defaults=self._issue_defaults(issue),
         )
 
-    async def record_event(self, entry: RunningEntry, event: dict[str, Any]) -> None:
+    async def record_event(
+        self,
+        entry: RunningEntry,
+        event: dict[str, Any],
+        *,
+        live_session: Any = None,
+    ) -> None:
         if not entry.run_record_id:
             return
         from tempo_web.models import AgentRun, AgentSession, ValidationAttempt, ValidationCommand
 
-        session = entry.session
+        session = live_session or entry.session
         await AgentRun.objects.filter(pk=entry.run_record_id).aupdate(
             phase=entry.phase,
             pull_request_url=session.pull_request_url or "",

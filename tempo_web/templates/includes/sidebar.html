@@ -1,0 +1,34 @@
+<aside class="sidebar">
+  <a class="wordmark" href="/" aria-label="Tempo home">
+    <span class="wordmark-mark">T</span>
+    <span>tempo</span>
+  </a>
+  <nav class="side-nav" aria-label="Primary">
+    <a{% if active_page == "overview" %} class="active" aria-current="page"{% endif %} href="/">
+      <span class="nav-icon">◫</span><span class="nav-label">Overview</span>
+    </a>
+    <a{% if active_page == "operations" %} class="active" aria-current="page"{% endif %} href="/ops/">
+      <span class="nav-icon">↯</span><span class="nav-label">Operations</span>
+    </a>
+    <a{% if active_page == "configuration" %} class="active" aria-current="page"{% endif %} href="/ops/configuration/">
+      <span class="nav-icon">⌁</span><span class="nav-label">Configuration</span>
+    </a>
+    <a href="/#approvals">
+      <span class="nav-icon">◇</span><span class="nav-label">Approvals</span>
+      <span id="nav-approval-count" class="nav-count" hidden>0</span>
+    </a>
+  </nav>
+  <nav class="side-nav secondary-nav" aria-label="Secondary">
+    <a href="/#projects"><span class="nav-icon">⌘</span><span class="nav-label">Projects</span></a>
+    <a href="/admin/"><span class="nav-icon">⚙</span><span class="nav-label">Django admin</span></a>
+  </nav>
+  <div class="sidebar-foot">
+    {% if request.user.is_authenticated %}
+      <span class="avatar">{{ request.user.username|slice:":1"|upper }}</span>
+      <span><strong>{{ request.user.username }}</strong><small>Operator session</small></span>
+    {% else %}
+      <span class="avatar guest">?</span>
+      <span><strong>Read-only</strong><small><a href="/admin/login/?next={{ request.path|urlencode }}">Sign in to intervene</a></small></span>
+    {% endif %}
+  </div>
+</aside>

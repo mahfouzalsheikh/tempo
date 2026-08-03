@@ -89,6 +89,9 @@ function runControls(row) {
 
 function runCard(row) {
   const session = row.session || {};
+  const graph = (row.graph || []).map(node => `<div class="run-node ${esc(node.status)}" title="${esc(node.error || node.role || node.node_type)}">
+    <span></span><strong>${esc(node.name || node.node_id)}</strong><small>${esc(node.role || node.node_type)} · ${esc(node.status)}</small>
+  </div>`).join("");
   const commands = (session.validation_commands || []).map(command => `
     <details class="command ${Number(command.exit_code) === 0 ? "passed" : "failed"}">
       <summary><span>${esc(command.name)}</span><code>exit ${esc(command.exit_code)}</code></summary>
@@ -118,6 +121,8 @@ function runCard(row) {
     </summary>
     <div class="run-detail">
       <section>
+        <div class="detail-heading"><h3>Workflow graph</h3><span class="panel-count">${number((row.graph || []).length)} nodes</span></div>
+        <div class="run-graph">${graph || emptyState("Legacy workflow", "This run has no explicit graph state.", "⌁")}</div>
         <div class="detail-heading"><h3>Agent timeline</h3><span class="live-caption"><i></i> live</span></div>
         <div class="activity-feed">${events || emptyState("Waiting for activity", "The first agent event will appear here.", "↯")}</div>
         <h3>Validation evidence</h3>

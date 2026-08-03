@@ -324,6 +324,89 @@ def control_state(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed
     )
 
 
+def platform_configuration(
+    request: HttpRequest,
+) -> JsonResponse | HttpResponseNotAllowed:
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "authentication_required"}, status=401)
+    orchestrator = get_orchestrator()
+    if not orchestrator:
+        return JsonResponse({"error": "orchestrator_unavailable"}, status=503)
+    return JsonResponse(orchestrator.platform_snapshot())
+
+
+def update_platform_configuration(
+    request: HttpRequest,
+    organization: str,
+    project: str,
+) -> JsonResponse | HttpResponseNotAllowed:
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "authentication_required"}, status=401)
+    orchestrator = get_orchestrator()
+    if not orchestrator:
+        return JsonResponse({"error": "orchestrator_unavailable"}, status=503)
+    try:
+        payload = _json_payload(request)
+    except ValueError as exc:
+        return JsonResponse({"error": "invalid_request", "message": str(exc)}, status=400)
+    from tempo.errors import ConfigError
+
+    from .models import PlatformConfigurationChange, Project, WorkflowVersion
+
+    project_row = (
+        Project.objects.select_related("organization")
+        .filter(organization__slug=organization, slug=project)
+        .first()
+    )
+    if not project_row:
+        return JsonResponse({"error": "project_not_found"}, status=404)
+    workflow_version = (
+        WorkflowVersion.objects.filter(project=project_row, active=True)
+        .order_by("-version")
+        .first()
+    )
+    try:
+        updated = async_to_sync(orchestrator.update_platform_config)(
+            organization,
+            project,
+            payload,
+        )
+        if not updated:
+            return JsonResponse({"error": "project_not_found"}, status=404)
+    except ConfigError as exc:
+        PlatformConfigurationChange.objects.create(
+            project=project_row,
+            workflow_version=workflow_version,
+            sections=payload,
+            requested_by=request.user,
+            status=PlatformConfigurationChange.Status.REJECTED,
+            message=str(exc),
+        )
+        return JsonResponse(
+            {"error": "invalid_platform_configuration", "message": str(exc)}, status=400
+        )
+    PlatformConfigurationChange.objects.create(
+        project=project_row,
+        workflow_version=workflow_version,
+        sections=payload,
+        requested_by=request.user,
+        status=PlatformConfigurationChange.Status.APPLIED,
+        message="Managed platform configuration stored; reload scheduled.",
+    )
+    return JsonResponse(
+        {
+            "status": "applied",
+            "project": f"{organization}/{project}",
+            "message": "Configuration validated, stored durably, and scheduled for reload.",
+        },
+        status=202,
+    )
+
+
 @ensure_csrf_cookie
 def dashboard(request: HttpRequest) -> HttpResponse:
     orchestrator = get_orchestrator()

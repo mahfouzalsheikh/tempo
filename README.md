@@ -31,14 +31,22 @@ operator actions are authoritative; in-process state is a live cache of leased w
   approval-inbox APIs with audited operator actions
 - First-class organizations, projects, repositories, environments, workflow versions, credential
   references, quotas, and concurrent multi-workflow hosting
+- Typed DAG workflows with sequential nodes, conditional edges, fan-out, bounded parallelism,
+  joins, human gates, dependency gates, per-node retries, and durable node checkpoints
+- Specialist agent profiles with role prompts, isolated runtime sessions, shared-workspace handoffs,
+  per-node telemetry, and live graph state
+- Registry-backed `AgentRuntime`, `ModelProvider`, and `ToolProvider` interfaces with native Codex
+  and external JSONL/OpenAI Agents SDK bridge runtimes
+- Declarative role, capability, and cost-aware model routing with ordered model fallbacks and named
+  tool bundles
 - Structured JSON logs, Django dashboard, health check, and REST status endpoints
 - A non-root Docker image containing Python, Git, SSH, Node, and the Codex CLI
 - Deterministic tests with fake tracker and app-server implementations
 
 ## Quick start
 
-The checked-in workflow uses an empty in-memory tracker, so the service starts safely without
-dispatching work:
+The checked-in workflow targets the repository configured in `WORKFLOW.md`. Tempo dispatches only
+open issues carrying its required label; review that file and `.env` before starting the service:
 
 ```bash
 docker compose up --build
@@ -165,7 +173,10 @@ a pull request.
 
 ## Workflow behavior
 
-`WORKFLOW.md` owns tracker, polling, workspaces, hooks, concurrency, Codex policy, and the prompt.
+`WORKFLOW.md` owns tracker, polling, workspaces, hooks, concurrency, Codex policy, and the prompt. On
+first startup it also seeds the database record for the workflow graph, specialist agents,
+runtimes, models, and tools. That `Workflow configuration` record is authoritative thereafter and
+can be edited in Django Admin without rebuilding or restarting Tempo.
 Prompt variables are `issue` and `attempt`; unknown variables fail the attempt. Relative workspace
 paths resolve beside the workflow file, `~` expands, and a path containing only `$VAR` reads that
 environment variable.
@@ -183,8 +194,117 @@ The default security posture is deliberately conservative:
 - Repository validation runs project code in the credential-free runner and directs containers to
   the dedicated Compose Docker daemon. Do not replace it with the host Docker socket.
 
-Changes to workflow settings and prompts are reloaded without restart. Invalid changes remain
-operator-visible while the last valid configuration stays active.
+Changes to file-backed service settings and prompts, plus database-backed workflow configuration,
+are reloaded without restart. Invalid changes remain operator-visible while the last valid
+configuration stays active.
+
+## Workflow graphs and agent teams
+
+Existing workflow files remain compatible: Tempo synthesizes one `implementation` node using the
+Codex runtime, default model route, all native tools, and the original issue-to-pull-request
+completion policy. An explicit specialist workflow can be configured in YAML:
+
+```yaml
+runtime_providers:
+  codex:
+    kind: codex
+  research-bridge:
+    kind: openai-agents
+    command: python -m your_agents_bridge
+
+model_providers:
+  engineering:
+    kind: openai
+    model: primary-model
+    fallbacks: [fallback-model]
+    routes:
+      - model: review-model
+        fallbacks: [primary-model]
+        roles: [reviewer]
+        capabilities: [code-review]
+        max_cost_per_million_tokens: 5
+
+tool_providers:
+  read-only:
+    kind: tempo
+    allow_all: false
+    tools: []
+  engineering:
+    kind: tempo
+    allow_all: true
+
+agents:
+  planner:
+    role: planner
+    runtime: research-bridge
+    model: engineering
+    tool_providers: [read-only]
+    completion: turn
+    prompt: Write the implementation plan into the shared workspace.
+  implementer:
+    role: implementer
+    runtime: codex
+    model: engineering
+    tool_providers: [engineering]
+    completion: turn
+  reviewer:
+    role: reviewer
+    runtime: codex
+    model: engineering
+    tool_providers: [engineering]
+    capabilities: [code-review]
+    completion: validation
+  publisher:
+    role: publisher
+    runtime: codex
+    model: engineering
+    tool_providers: [engineering]
+    completion: publication
+
+workflow:
+  name: plan-and-deliver
+  max_parallel_nodes: 2
+  require_publication: true
+  nodes:
+    - {id: plan, type: agent, agent: planner}
+    - {id: api, type: agent, agent: implementer, max_retries: 1}
+    - {id: web, type: agent, agent: implementer, max_retries: 1}
+    - {id: review, type: agent, agent: reviewer, settings: {join: all}}
+    - {id: review-gate, type: human_gate, approval_message: Review implementation}
+    - {id: publish, type: agent, agent: publisher}
+  edges:
+    - {from: plan, to: api, condition: succeeded}
+    - {from: plan, to: web, condition: succeeded}
+    - {from: api, to: review, condition: succeeded}
+    - {from: web, to: review, condition: succeeded}
+    - {from: review, to: review-gate, condition: succeeded}
+    - {from: review-gate, to: publish, condition: succeeded}
+```
+
+Edges accept `succeeded`, `failed`, `skipped`, `always`, `completed`, `issue.label:<label>`, and
+`not issue.label:<label>`. Multiple outgoing edges form a fan-out. Nodes with multiple incoming
+edges use an all-join by default; set `settings.join: any` for an any-join. Ready nodes run in
+batches bounded by `max_parallel_nodes`. All agents for an issue share its workspace, so parallel
+roles should either be read-only or own non-overlapping files.
+
+Agent completion modes are `turn`, `validation`, and `publication`. A model route matches an agent
+when its role, required capabilities, and optional cost ceiling match. Node retries automatically
+advance through the selected route's model and fallback list before failing the node.
+
+The `external` and `openai-agents` runtime kinds launch the configured command in the issue
+workspace and speak JSONL on standard input/output. The bridge receives `session/start`,
+`turn/run`, and `session/stop` requests, may stream event objects between request and response, and
+must reply with `{"id": <request-id>, "result": {...}}`. This lets an OpenAI Agents SDK or another
+runtime integrate without changing Tempo's scheduler or graph executor. Secrets owned by Tempo are
+removed from the bridge process environment.
+
+Authenticated operators can inspect and edit these five platform sections from
+`/ops/configuration/` or the editable `Workflow configuration` model in Django Admin. Tempo
+validates references and graph acyclicity, stores a revisioned PostgreSQL definition, schedules a
+live reload, and records API changes as accepted or rejected. The checked-in `WORKFLOW.md` supplies
+the initial database seed, so read-only container mounts remain compatible and live edits survive
+rebuilds. Generated runtime/provider/profile/node catalogs and every run's node execution history
+are also available in Django Admin as read-only runtime records.
 
 ## API
 
@@ -199,6 +319,9 @@ operator-visible while the last valid configuration stays active.
   `resume`, `cancel`, `retry`, `requeue`, `unblock`, `reprioritize`, and `feedback`
 - `GET /api/v1/approvals` — authenticated pending approval inbox
 - `POST /api/v1/approvals/<approval_id>/decision` — authenticated approve, edit, or reject
+- `GET /api/v1/platform` — authenticated effective workflow graphs, teams, and providers
+- `POST /api/v1/platform/<organization>/<project>` — authenticated validation and durable update of
+  runtime, model, tool, agent, and workflow sections
 
 The control center at `/` combines the project portfolio, live agent timelines, durable retry
 queue, blocked and paused runs, approval inbox, validation evidence, and direct operator actions.
@@ -256,6 +379,8 @@ WORKFLOW.md(s) ──> ControlPlane ──> project Orchestrator(s) ──> leas
                          └──── PostgreSQL durable queue, checkpoints, approvals, and audit
                                       │
                                Django + /api/v1/*
+                                      │
+                    typed DAG + AgentRuntime/ModelProvider/ToolProvider registries
 ```
 
 After restart, accepted and retry-scheduled runs are restored from PostgreSQL. Expired worker

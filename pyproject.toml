@@ -36,7 +36,7 @@ tempo = "tempo.cli:main"
 include = ["tempo*", "tempo_web*"]
 
 [tool.setuptools.package-data]
-tempo_web = ["templates/*.html", "static/*"]
+tempo_web = ["templates/*.html", "templates/includes/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "tempo_web.settings"

@@ -46,6 +46,7 @@ class CodexAppServer:
         tracker: Tracker,
         on_event: EventCallback,
         approval_callback: ApprovalCallback | None = None,
+        enabled_tools: set[str] | None = None,
     ) -> None:
         self.config = config.codex
         self.validation_enabled = config.validation.enabled
@@ -53,6 +54,7 @@ class CodexAppServer:
         self.tracker = tracker
         self.on_event = on_event
         self.approval_callback = approval_callback
+        self.enabled_tools = enabled_tools
         self.validator = ProjectValidator(
             config.validation,
             workspace_manager,
@@ -111,16 +113,24 @@ class CodexAppServer:
             )
             await self._response(session, 1, self.config.read_timeout_ms)
             await self._send(session, {"method": "initialized", "params": {}})
+            tracker_tools = self.tracker.agent_tool_specs()
+            if self.enabled_tools is not None:
+                tracker_tools = [
+                    spec for spec in tracker_tools if spec.get("name") in self.enabled_tools
+                ]
+            dynamic_tools = [*tracker_tools]
+            if self.validation_enabled and self._tool_enabled("project_validation"):
+                dynamic_tools.append(self.validator.tool_spec())
+            if self._tool_enabled("tempo_complete"):
+                dynamic_tools.append(self._completion_tool_spec())
             params: dict[str, Any] = {
                 "cwd": str(workspace),
                 "approvalPolicy": self.config.approval_policy,
                 "sandbox": self.config.thread_sandbox,
-                "dynamicTools": [
-                    *self.tracker.agent_tool_specs(),
-                    *([self.validator.tool_spec()] if self.validation_enabled else []),
-                    self._completion_tool_spec(),
-                ],
+                "dynamicTools": dynamic_tools,
             }
+            if self.config.model:
+                params["model"] = self.config.model
             await self._send(session, {"method": "thread/start", "id": 2, "params": params})
             result = await self._response(session, 2, self.config.read_timeout_ms)
             thread_id = result.get("thread", {}).get("id")
@@ -140,19 +150,22 @@ class CodexAppServer:
             "writableRoots": [str(session.workspace)],
             "networkAccess": False,
         }
+        turn_params: dict[str, Any] = {
+            "threadId": session.thread_id,
+            "input": [{"type": "text", "text": prompt}],
+            "cwd": str(session.workspace),
+            "title": f"{issue.identifier}: {issue.title}",
+            "approvalPolicy": self.config.approval_policy,
+            "sandboxPolicy": sandbox_policy,
+        }
+        if self.config.model:
+            turn_params["model"] = self.config.model
         await self._send(
             session,
             {
                 "method": "turn/start",
                 "id": request_id,
-                "params": {
-                    "threadId": session.thread_id,
-                    "input": [{"type": "text", "text": prompt}],
-                    "cwd": str(session.workspace),
-                    "title": f"{issue.identifier}: {issue.title}",
-                    "approvalPolicy": self.config.approval_policy,
-                    "sandboxPolicy": sandbox_policy,
-                },
+                "params": turn_params,
             },
         )
         result = await self._response(session, request_id, self.config.read_timeout_ms)
@@ -197,6 +210,21 @@ class CodexAppServer:
             params = message.get("params", {})
             name = params.get("tool") or params.get("name")
             arguments = params.get("arguments") or {}
+            if not self._tool_enabled(str(name)):
+                result = {
+                    "success": False,
+                    "output": f"Tool {name} is not enabled for this agent profile.",
+                    "contentItems": [],
+                }
+                await self._send(session, {"id": request_id, "result": result})
+                await self.on_event(
+                    {
+                        "event": "tool_call_rejected",
+                        "tool": str(name),
+                        "arguments": arguments,
+                    }
+                )
+                return
             mutating_tool_call = name == "github_api" and str(
                 arguments.get("method", "GET")
             ).upper() not in {"GET", "HEAD"}
@@ -414,6 +442,9 @@ class CodexAppServer:
                 "additionalProperties": False,
             },
         }
+
+    def _tool_enabled(self, name: str) -> bool:
+        return self.enabled_tools is None or name in self.enabled_tools
 
     @staticmethod
     async def _workspace_fingerprint(workspace: Path) -> str:

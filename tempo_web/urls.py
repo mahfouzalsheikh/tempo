@@ -16,6 +16,12 @@ urlpatterns = [
     path("api/v1/refresh", views.refresh, name="refresh"),
     path("api/v1/approvals", views.approvals, name="approvals"),
     path("api/v1/control", views.control_state, name="control_state"),
+    path("api/v1/platform", views.platform_configuration, name="platform_configuration"),
+    path(
+        "api/v1/platform/<slug:organization>/<slug:project>",
+        views.update_platform_configuration,
+        name="update_platform_configuration",
+    ),
     path(
         "api/v1/approvals/<int:approval_id>/decision",
         views.approval_decision,

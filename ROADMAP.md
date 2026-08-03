@@ -10,9 +10,9 @@ The winning position is not "another generic agent framework." It is:
 > The most trustworthy control plane for turning real engineering work into validated, reviewable
 > changes.
 
-The current constraints are explicit: scheduling and retries are in memory, one tracker is active
-at a time, Codex is the only agent runtime, and operator APIs provide observation but little
-intervention.
+The durable control-plane foundation, typed workflow graph, specialist-agent execution, and
+provider-neutral runtime layer are implemented. Current expansion areas are MCP-native connectors,
+enterprise governance, correlated observability, evaluation/replay, and a richer visual cockpit.
 
 ## Prioritized roadmap
 
@@ -44,6 +44,8 @@ services or sharing credentials and limits across projects.
 
 ### 4. Typed workflow graphs and agent teams
 
+**Implemented (August 2026).**
+
 Evolve the single prompt loop into versioned nodes and edges: sequential steps, conditionals,
 fan-out and join, dependency gates, retries, human gates, and specialist agents such as planner,
 implementer, reviewer, and tester. Preserve the existing issue-to-pull-request loop as a built-in
@@ -52,7 +54,14 @@ template.
 **Definition of done:** A workflow can express "plan -> parallel implementation and research ->
 review -> validation -> publication," with typed state visible at every node.
 
+Tempo now validates acyclic node/edge definitions; executes sequential, conditional, fan-out/join,
+human-gated, and retryable nodes; runs ready nodes with bounded parallelism; assigns specialist
+profiles; persists node definitions and execution checkpoints; and exposes live graph state in the
+control center and configuration console.
+
 ### 5. Provider-neutral agent runtime
+
+**Implemented (August 2026).**
 
 Introduce `AgentRuntime`, `ModelProvider`, and `ToolProvider` interfaces. Keep Codex app-server as
 the premier coding backend while supporting the OpenAI Agents SDK and external runtimes. Add model
@@ -60,6 +69,11 @@ routing and fallback by task, cost, and capability.
 
 **Definition of done:** A workflow selects runtimes and models declaratively. Adding a provider
 does not require changes to the scheduler or workflow engine.
+
+Tempo now has registry-backed runtime, model-provider, and tool-provider interfaces; native Codex
+and external JSONL/OpenAI Agents SDK bridge runtimes; named tool bundles; role/capability/cost model
+routes; ordered fallbacks; durable provider and agent-profile catalogs; and authenticated,
+audited configuration management.
 
 ### 6. MCP-native tool and connector platform
 
@@ -127,8 +141,8 @@ hardening work belongs in the later security, observability, replay, and cockpit
 
 ### Orchestration platform
 
-4. Typed workflow graphs and agent teams
-5. Provider-neutral agent runtime
+4. Typed workflow graphs and agent teams — implemented August 2026
+5. Provider-neutral agent runtime — implemented August 2026
 6. MCP-native tool and connector platform
 7. Enterprise security and governance
 

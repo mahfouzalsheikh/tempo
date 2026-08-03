@@ -1,5 +1,6 @@
 const byId = id => document.getElementById(id);
 const csrfToken = document.querySelector("[name=csrfmiddlewaretoken]")?.value || "";
+const authenticated = document.body.dataset.authenticated === "true";
 const esc = value => String(value ?? "—").replace(
   /[&<>"']/g,
   character => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[character]),
@@ -37,6 +38,56 @@ const projectCard = project => {
     </div>
   </article>`;
 };
+let platformProjects = [];
+
+const providerCard = (name, type, details) => `<article class="provider-card">
+  <span class="provider-type">${esc(type)}</span>
+  <strong>${esc(name)}</strong>
+  <small>${esc(details || "Configured")}</small>
+</article>`;
+
+function renderPlatform(project) {
+  if (!project) return;
+  const workflow = project.workflow || {};
+  const nodes = workflow.nodes || [];
+  const edges = workflow.edges || [];
+  const incoming = Object.fromEntries(nodes.map(node => [node.id, []]));
+  for (const edge of edges) (incoming[edge.to] ||= []).push(`${edge.from} [${edge.condition}]`);
+  byId("graph-summary").textContent = `${nodes.length} nodes · ${edges.length} edges · parallel ${workflow.max_parallel_nodes || 1}`;
+  byId("config-graph").innerHTML = nodes.map(node => `<article class="graph-node ${esc(node.type)}">
+    <div><span>${esc(node.type)}</span><strong>${esc(node.name || node.id)}</strong></div>
+    <small>${esc(node.agent || "control node")}</small>
+    <p>${esc((incoming[node.id] || []).length ? `after ${incoming[node.id].join(", ")}` : "entry node")}</p>
+  </article>`).join("") || "<p>No graph nodes configured.</p>";
+  byId("config-team").innerHTML = Object.entries(project.agents || {}).map(([name, agent]) =>
+    providerCard(name, agent.role, `${agent.runtime} · ${agent.model} · ${agent.completion}`),
+  ).join("");
+  const runtimeCards = Object.entries(project.runtime_providers || {}).map(([name, item]) =>
+    providerCard(name, `runtime · ${item.kind}`, item.command || "Default command"),
+  );
+  const modelCards = Object.entries(project.model_providers || {}).map(([name, item]) =>
+    providerCard(name, `model · ${item.kind}`, item.model || "Runtime default"),
+  );
+  const toolCards = Object.entries(project.tool_providers || {}).map(([name, item]) =>
+    providerCard(name, `tools · ${item.kind}`, item.allow_all
+      ? "All native tools"
+      : (item.tools || []).join(", ") || "No dynamic tools"),
+  );
+  byId("config-providers").innerHTML = [...runtimeCards, ...modelCards, ...toolCards].join("");
+}
+
+async function updatePlatform() {
+  if (!byId("config-graph")) return;
+  if (!authenticated) {
+    byId("config-graph").innerHTML = "<p>Sign in to inspect and manage workflow graphs.</p>";
+    return;
+  }
+  const response = await fetch("/api/v1/platform", {cache: "no-store"});
+  if (!response.ok) return;
+  const data = await response.json();
+  platformProjects = data.projects || [];
+  renderPlatform(platformProjects[0]);
+}
 
 function renderProjects(data) {
   const projects = Array.isArray(data.projects) ? data.projects : [data];
@@ -113,6 +164,7 @@ async function updateAdmin() {
       "Reload error": workflow.last_reload_error || "None",
     });
     renderProjects(data);
+    await updatePlatform();
     const status = byId("status");
     status.className = "status live";
     status.innerHTML = "<i></i> Live";
@@ -134,3 +186,59 @@ if (byId("refresh")) {
 }
 updateAdmin();
 setInterval(updateAdmin, 5000);
+
+if (byId("edit-platform")) {
+  const selectedSections = project => ({
+    runtime_providers: project.runtime_providers,
+    model_providers: project.model_providers,
+    tool_providers: project.tool_providers,
+    agents: project.agents,
+    workflow: project.workflow,
+  });
+  const selectProject = () => {
+    const project = platformProjects.find(item => item.key === byId("platform-project").value);
+    if (project) byId("platform-json").value = JSON.stringify(selectedSections(project), null, 2);
+  };
+  byId("edit-platform").addEventListener("click", async () => {
+    await updatePlatform();
+    byId("platform-project").innerHTML = platformProjects.map(project =>
+      `<option value="${esc(project.key)}">${esc(project.name)} · ${esc(project.key)}</option>`,
+    ).join("");
+    selectProject();
+    byId("platform-error").hidden = true;
+    byId("platform-dialog").showModal();
+  });
+  byId("platform-project").addEventListener("change", selectProject);
+  document.addEventListener("click", event => {
+    if (event.target.closest("[data-platform-close]")) byId("platform-dialog").close();
+  });
+  byId("platform-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    const save = byId("platform-save");
+    save.disabled = true;
+    byId("platform-error").hidden = true;
+    try {
+      let sections;
+      try {
+        sections = JSON.parse(byId("platform-json").value);
+      } catch {
+        throw new Error("Configuration must be valid JSON.");
+      }
+      const key = byId("platform-project").value;
+      const response = await fetch(`/api/v1/platform/${key}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken},
+        body: JSON.stringify(sections),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || "Save failed");
+      byId("platform-dialog").close();
+      setTimeout(updateAdmin, 500);
+    } catch (error) {
+      byId("platform-error").textContent = error.message;
+      byId("platform-error").hidden = false;
+    } finally {
+      save.disabled = false;
+    }
+  });
+}

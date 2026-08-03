@@ -54,6 +54,24 @@ class FakeOrchestrator:
         }
         return True, "applied"
 
+    def platform_snapshot(self):
+        return {
+            "projects": [
+                {
+                    "key": "acme/api",
+                    "agents": {},
+                    "runtime_providers": {},
+                    "model_providers": {},
+                    "tool_providers": {},
+                    "workflow": {"nodes": [], "edges": []},
+                }
+            ]
+        }
+
+    async def update_platform_config(self, organization, project, sections):
+        self.platform_update = (organization, project, sections)
+        return True
+
 
 def test_health_and_state():
     set_orchestrator(FakeOrchestrator())
@@ -68,8 +86,13 @@ def test_health_and_state():
     assert b"Approval inbox" in dashboard.content
     assert b"Projects" in dashboard.content
     assert "csrftoken" in dashboard.cookies
-    assert b"Runtime" in client.get("/ops/").content
-    assert b"Configuration" in client.get("/ops/configuration/").content
+    operations = client.get("/ops/")
+    configuration = client.get("/ops/configuration/")
+    assert b"Runtime" in operations.content
+    assert b"Configuration" in configuration.content
+    for response in (dashboard, operations, configuration):
+        assert b'class="sidebar"' in response.content
+        assert b'class="topnav"' not in response.content
     assert client.get("/admin/").status_code == 302
     assert client.get("/static/tempo.css").status_code == 200
     assert client.get("/static/admin/css/base.css").status_code == 200
@@ -91,6 +114,7 @@ def test_django_admin_lists_tempo_models():
     assert b"Tracked issues" in response.content
     assert b"Agent runs" in response.content
     assert b"Validation attempts" in response.content
+    assert b"Workflow configurations" in response.content
 
 
 @pytest.mark.django_db
@@ -116,6 +140,33 @@ def test_operator_actions_require_authentication_and_are_forwarded():
         "user_id": user.pk,
         "idempotency_key": "action-7",
     }
+    set_orchestrator(None)
+
+
+@pytest.mark.django_db
+def test_platform_management_requires_authentication_and_audits_updates():
+    from tempo_web.models import Organization, PlatformConfigurationChange, Project
+
+    organization = Organization.objects.create(name="Acme", slug="acme")
+    Project.objects.create(organization=organization, name="API", slug="api")
+    orchestrator = FakeOrchestrator()
+    set_orchestrator(orchestrator)
+    client = Client()
+    assert client.get("/api/v1/platform").status_code == 401
+    assert client.post("/api/v1/platform/acme/api", data={}).status_code == 401
+    user = get_user_model().objects.create_user(username="configurator", password="secret")
+    client.force_login(user)
+    assert client.get("/api/v1/platform").status_code == 200
+    response = client.post(
+        "/api/v1/platform/acme/api",
+        data='{"workflow":{"nodes":[{"id":"delivery","agent":"implementer"}]}}',
+        content_type="application/json",
+    )
+    assert response.status_code == 202
+    assert orchestrator.platform_update[0:2] == ("acme", "api")
+    change = PlatformConfigurationChange.objects.get()
+    assert change.status == PlatformConfigurationChange.Status.APPLIED
+    assert change.requested_by == user
     set_orchestrator(None)
 
 
