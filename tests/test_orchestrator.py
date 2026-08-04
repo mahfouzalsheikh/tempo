@@ -151,6 +151,7 @@ async def test_unblock_resumes_interrupted_node_with_fresh_token_budget(tmp_path
     assert interrupted.thread_id == "thread-test"
     assert interrupted.total_tokens == 15
     assert interrupted.thread_total_tokens == 15
+    await RunNode.objects.filter(pk=interrupted.pk).aupdate(total_tokens=10)
 
     user = await get_user_model().objects.acreate_user(username="unblock-operator")
     applied, message = await orchestrator.control_run(

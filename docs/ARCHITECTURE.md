@@ -618,6 +618,9 @@ stops immediately for operator review. Other failures use normal backoff until `
 exceeded. Stall detection cancels a worker when its last Codex event or start time is older than
 `stall_timeout_ms`.
 
+Any resumed node whose cumulative provider thread has already crossed the per-attempt token limit
+is compacted before its next turn, including cancellation, crash, and operator-requeue recovery.
+
 ### Durable recovery
 
 At startup and during ticks:

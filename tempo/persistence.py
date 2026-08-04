@@ -600,7 +600,10 @@ class PersistenceStore:
             },
             compact_before_resume=(
                 bool(self.config)
-                and row.total_tokens >= self.config.agent.max_tokens_per_run
+                and (
+                    row.total_tokens >= self.config.agent.max_tokens_per_run
+                    or row.thread_total_tokens >= self.config.agent.max_tokens_per_run
+                )
             ),
         )
 
