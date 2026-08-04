@@ -575,9 +575,6 @@ class PersistenceStore:
             started_at=utcnow(),
             finished_at=None,
             error="",
-            input_tokens=0,
-            output_tokens=0,
-            total_tokens=0,
         )
 
     async def run_node_resume_context(
@@ -600,6 +597,10 @@ class PersistenceStore:
                 "output_tokens": row.thread_output_tokens,
                 "total_tokens": row.thread_total_tokens,
             },
+            compact_before_resume=(
+                bool(self.config)
+                and row.total_tokens >= self.config.agent.max_tokens_per_run
+            ),
         )
 
     async def set_run_node_model(self, run_id: int, node_id: str, model: str) -> None:

@@ -177,6 +177,8 @@ async def test_unblock_resumes_interrupted_node_with_fresh_token_budget(tmp_path
     assert resumed.total_tokens == 10
     assert resumed.thread_total_tokens == 25
     assert resumed.output["no_change_completed"] is True
+    assert resumed.output["resumed"] is True
+    assert resumed.output["compacted"] is True
     assert "1" not in orchestrator.safety_blocked
     await orchestrator.stop()
 

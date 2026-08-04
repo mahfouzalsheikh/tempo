@@ -41,6 +41,7 @@ class RuntimeResumeContext:
 
     thread_id: str
     usage_baseline: dict[str, int]
+    compact_before_resume: bool = False
 
 
 class ModelProvider(ABC):
@@ -169,11 +170,18 @@ class CodexAgentRuntime(AgentRuntime):
         *,
         resume_context: RuntimeResumeContext | None = None,
     ) -> Any:
-        return await self.client.start_session(
+        session = await self.client.start_session(
             workspace,
             resume_thread_id=(resume_context.thread_id if resume_context else None),
             usage_baseline=(resume_context.usage_baseline if resume_context else None),
         )
+        if resume_context and resume_context.compact_before_resume and session.resumed:
+            try:
+                await self.client.compact_session(session)
+            except Exception:
+                await self.client.stop_session(session)
+                raise
+        return session
 
     async def run_turn(self, session: Any, prompt: str, issue: Issue) -> dict[str, Any]:
         return await self.client.run_turn(session, prompt, issue)
@@ -260,6 +268,7 @@ class ExternalCommandRuntime(AgentRuntime):
                     {
                         "thread_id": resume_context.thread_id,
                         "usage_baseline": resume_context.usage_baseline,
+                        "compact_before_resume": resume_context.compact_before_resume,
                     }
                     if resume_context
                     else None

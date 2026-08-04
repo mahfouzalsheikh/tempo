@@ -117,6 +117,34 @@ def test_resumed_attempt_local_usage_advances_durable_thread_baseline():
     }
 
 
+def test_token_usage_prefers_cumulative_total_over_last_request():
+    event = CodexAppServer._event_from_message(
+        {
+            "method": "thread/tokenUsage/updated",
+            "params": {
+                "tokenUsage": {
+                    "last": {
+                        "inputTokens": 90,
+                        "outputTokens": 10,
+                        "totalTokens": 100,
+                    },
+                    "total": {
+                        "inputTokens": 900,
+                        "outputTokens": 100,
+                        "totalTokens": 1000,
+                    },
+                }
+            },
+        }
+    )
+
+    assert event["usage"] == {
+        "input_tokens": 900,
+        "output_tokens": 100,
+        "total_tokens": 1000,
+    }
+
+
 @pytest.mark.asyncio
 async def test_codex_resume_failure_falls_back_with_explicit_state(tmp_path):
     manager = WorkspaceManager(tmp_path / "root", HooksConfig())

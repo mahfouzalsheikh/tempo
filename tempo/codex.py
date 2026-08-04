@@ -43,6 +43,7 @@ class CodexSession:
     usage_baseline_output: int = 0
     usage_baseline_total: int = 0
     usage_is_cumulative: bool | None = None
+    compacted: bool = False
 
 
 class CodexAppServer:
@@ -271,6 +272,91 @@ class CodexAppServer:
                     f"{method}: {message.get('params')}",
                     category=method.replace("/", "_"),
                 )
+
+    async def compact_session(self, session: CodexSession) -> None:
+        """Compact a resumed thread without charging maintenance usage to the new attempt."""
+        request_id = session.next_request_id
+        session.next_request_id += 1
+        await self._send(
+            session,
+            {
+                "method": "thread/compact/start",
+                "id": request_id,
+                "params": {"threadId": session.thread_id},
+            },
+        )
+        response_received = False
+        compaction_completed = False
+        turn_completed = False
+        latest_thread_usage = {
+            "input_tokens": session.usage_baseline_input,
+            "output_tokens": session.usage_baseline_output,
+            "total_tokens": session.usage_baseline_total,
+        }
+        while True:
+            message = await self._next_message(session, self.config.turn_timeout_ms)
+            if message.get("id") == request_id:
+                if message.get("error"):
+                    raise CodexError(
+                        f"thread compaction failed: {message['error']}",
+                        category="thread_compaction_failed",
+                    )
+                response_received = True
+                if compaction_completed and turn_completed:
+                    break
+                continue
+            method = str(message.get("method", ""))
+            if "id" in message and method:
+                await self._send(
+                    session,
+                    {
+                        "id": message["id"],
+                        "error": {
+                            "code": -32601,
+                            "message": "Server requests are unavailable during compaction",
+                        },
+                    },
+                )
+                continue
+            event = self._event_from_message(message)
+            raw_usage = event.get("usage")
+            if isinstance(raw_usage, dict):
+                latest_thread_usage = {
+                    "input_tokens": int(raw_usage.get("input_tokens", 0)),
+                    "output_tokens": int(raw_usage.get("output_tokens", 0)),
+                    "total_tokens": int(raw_usage.get("total_tokens", 0)),
+                }
+                event = {
+                    **event,
+                    "usage": {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                    },
+                    "thread_usage": latest_thread_usage,
+                }
+            await self.on_event(event)
+            item = message.get("params", {}).get("item", {})
+            if (
+                method == "item/completed"
+                and isinstance(item, dict)
+                and item.get("type") == "contextCompaction"
+            ):
+                compaction_completed = True
+            if method in {"turn/failed", "turn/cancelled"}:
+                raise CodexError(
+                    f"thread compaction ended with {method}",
+                    category="thread_compaction_failed",
+                )
+            if method == "turn/completed":
+                turn_completed = True
+                if response_received and compaction_completed:
+                    break
+        session.usage_baseline_input = latest_thread_usage["input_tokens"]
+        session.usage_baseline_output = latest_thread_usage["output_tokens"]
+        session.usage_baseline_total = latest_thread_usage["total_tokens"]
+        session.usage_is_cumulative = None
+        session.compacted = True
 
     @staticmethod
     def _normalize_usage_for_attempt(
@@ -770,9 +856,19 @@ class CodexAppServer:
             "event": message.get("method", "other_message"),
             "payload": message.get("params", message),
         }
-        usage = CodexAppServer._find_mapping(
-            message, {"inputTokens", "outputTokens", "totalTokens"}
-        )
+        token_usage = CodexAppServer._find_key(message, "tokenUsage")
+        usage = None
+        if isinstance(token_usage, dict):
+            cumulative = token_usage.get("total")
+            usage = cumulative if isinstance(cumulative, dict) else token_usage
+        if not isinstance(usage, dict) or not {
+            "inputTokens",
+            "outputTokens",
+            "totalTokens",
+        } & usage.keys():
+            usage = CodexAppServer._find_mapping(
+                message, {"inputTokens", "outputTokens", "totalTokens"}
+            )
         if usage:
             event["usage"] = {
                 "input_tokens": int(usage.get("inputTokens", 0) or 0),

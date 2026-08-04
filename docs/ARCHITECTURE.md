@@ -405,6 +405,10 @@ sequenceDiagram
     O->>G: revoke publication
     O->>DB: load interrupted node thread and usage baseline
     O->>C: start or resume the node's app-server thread
+    opt Prior attempt exhausted its token budget
+        O->>C: thread/compact/start
+        C-->>O: contextCompaction completed
+    end
     loop Up to agent.max_turns
         O->>C: issue, policy, continuation, or recovery prompt
         C->>O: events and dynamic tool calls
@@ -450,8 +454,9 @@ The protocol sequence is:
 1. `initialize`
 2. `initialized`
 3. `thread/start` or `thread/resume`
-4. Repeated `turn/start`
-5. Streamed events, server requests, and `turn/completed`
+4. Optional `thread/compact/start` before recovering a token-stopped thread
+5. Repeated `turn/start`
+6. Streamed events, server requests, and `turn/completed`
 
 If `thread/resume` fails, Tempo creates a fresh thread and sends an explicit recovery prompt
 instructing the agent to reconstruct from workspace, Git history, tracker state, and checkpoints.
@@ -606,8 +611,11 @@ reschedules it and increments the attempt.
 
 Token budget excess and validation-attempt excess go directly to a safety stop. Unblocking starts
 a new durable run attempt and a fresh attempt-level token budget, while reopening the interrupted
-node's provider thread. Other failures retry until `max_retries` is exceeded. Stall detection
-cancels a worker when its last Codex event or start time is older than `stall_timeout_ms`.
+node's provider thread. If the prior attempt exhausted its token budget, Tempo first asks Codex to
+compact that thread's history. Compaction usage advances the cumulative thread baseline but is not
+charged to the new work-attempt budget. Other failures retry until `max_retries` is exceeded. Stall
+detection cancels a worker when its last Codex event or start time is older than
+`stall_timeout_ms`.
 
 ### Durable recovery
 
@@ -623,9 +631,11 @@ At startup and during ticks:
 On recovery, succeeded and skipped `RunNode` rows remain terminal and are not repeated. An
 interrupted node is reset to pending, then its stored thread ID and cumulative token baseline are
 passed to the configured runtime. Codex uses `thread/resume`; cumulative provider usage is reduced
-by the stored baseline so only post-unblock tokens count against the fresh limit. If the provider
-cannot resume, Tempo sends a recovery prompt that first inspects the retained workspace, Git
-history, tracker, and checkpoints instead of replaying the original issue prompt.
+by the stored baseline so only post-unblock tokens count against the fresh limit. A node whose
+previous attempt reached that limit is compacted before the continuation turn so it does not spend
+the new budget repeatedly loading oversized history. If the provider cannot resume, Tempo sends a
+recovery prompt that first inspects the retained workspace, Git history, tracker, and checkpoints
+instead of replaying the original issue prompt.
 
 `AgentSession` still supplies pull-request recovery context for the post-publication review path.
 If a PR URL is absent, Tempo searches GitHub tool checkpoints and reconstructs it from a successful

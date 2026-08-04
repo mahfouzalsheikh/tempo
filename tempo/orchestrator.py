@@ -1003,6 +1003,8 @@ class Orchestrator:
                 "input_tokens": live.codex_input_tokens,
                 "output_tokens": live.codex_output_tokens,
                 "total_tokens": live.codex_total_tokens,
+                "resumed": bool(getattr(runtime_session, "resumed", False)),
+                "compacted": bool(getattr(runtime_session, "compacted", False)),
                 "validation_status": live.validation_status,
                 "pull_request_url": live.pull_request_url,
                 "no_change_completed": live.no_change_completed,

@@ -26,6 +26,38 @@ for line in sys.stdin:
             )
     elif method == "thread/start":
         send({"id": message["id"], "result": {"thread": {"id": "thread-test"}}})
+    elif method == "thread/compact/start":
+        send({"id": message["id"], "result": {}})
+        send(
+            {
+                "method": "item/started",
+                "params": {"item": {"id": "compact-test", "type": "contextCompaction"}},
+            }
+        )
+        send(
+            {
+                "method": "thread/tokenUsage/updated",
+                "params": {
+                    "tokenUsage": {
+                        "inputTokens": 10,
+                        "outputTokens": 5,
+                        "totalTokens": 15,
+                    }
+                },
+            }
+        )
+        send(
+            {
+                "method": "item/completed",
+                "params": {"item": {"id": "compact-test", "type": "contextCompaction"}},
+            }
+        )
+        send(
+            {
+                "method": "turn/completed",
+                "params": {"turn": {"id": "compact-turn", "status": "completed"}},
+            }
+        )
     elif method == "turn/start":
         send({"id": message["id"], "result": {"turn": {"id": "turn-test"}}})
         budget_resume = "--budget-resume" in sys.argv
