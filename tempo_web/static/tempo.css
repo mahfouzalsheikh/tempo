@@ -349,8 +349,20 @@ h2 { margin: 0; font-size: 20px; line-height: 1.3; letter-spacing: -.015em; }
 .project-stats b { display: block; font-size: 22px; }
 .project-stats span { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
 
-.control-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); margin-top: 40px; }
-.control-rail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); }
+.control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(340px, .75fr);
+  grid-template-areas: "runs rail" "projects rail";
+  align-items: stretch;
+  gap: var(--gap);
+  margin-top: 40px;
+}
+.run-panel { grid-area: runs; }
+.project-panel { grid-area: projects; }
+.project-panel .project-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); padding: 22px; }
+.control-rail { grid-area: rail; display: grid; grid-template-rows: repeat(2, minmax(0, 1fr)); gap: var(--gap); }
+.control-rail .panel { display: flex; min-height: 0; flex-direction: column; }
+.control-rail .compact-list { flex: 1; }
 .panel {
   min-width: 0;
   border: 1px solid var(--line);
@@ -543,10 +555,62 @@ header.compact .actions { display: flex; gap: 12px; align-items: center; }
 .config-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); }
 .config-grid .panel { margin-top: 0; }
 .config-grid .validation-panel { border-color: rgba(185,246,95,.18); }
+.operator-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.operator-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); margin-top: var(--gap); }
+.operator-grid .panel { min-width: 0; margin-top: 0; }
+.operator-definition-list { align-content: start; min-height: 128px; }
+.operator-codeblock { min-height: 128px; border-top: 0; padding: 22px; }
+.config-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.config-grid .validation-panel { grid-column: 1 / -1; }
+.graph-view, .provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  padding: 22px;
+}
+.graph-node, .provider-card {
+  min-height: 120px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255,255,255,.025);
+}
+.graph-node > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.graph-node span, .provider-type { color: var(--muted); font-size: 12px; letter-spacing: .09em; text-transform: uppercase; }
+.graph-node small, .provider-card small { display: block; color: var(--muted); margin-top: 8px; }
+.graph-node p { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
+.graph-node.agent { border-top-color: var(--accent); }
+.graph-node.human_gate { border-top-color: var(--amber); }
+.graph-node.join { border-top-color: var(--blue); }
+.provider-card strong { display: block; margin-top: 7px; }
+.platform-dialog { width: min(960px, calc(100vw - 32px)); }
+.platform-dialog textarea { min-height: 420px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.platform-dialog select {
+  width: 100%;
+  height: 42px;
+  margin-bottom: 18px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: #0b0e13;
+}
+.run-graph { display: flex; gap: 10px; overflow-x: auto; padding: 2px 0 18px; }
+.run-node { min-width: 160px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.run-node > span { display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: var(--muted); }
+.run-node strong { font-size: 14px; }
+.run-node small { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.run-node.running > span, .run-node.waiting > span { background: var(--amber); }
+.run-node.succeeded > span { background: var(--accent); }
+.run-node.failed > span { background: var(--red); }
+.run-node.skipped { opacity: .55; }
 
 @media (max-width: 1280px) {
   .metric-grid { grid-template-columns: repeat(3, 1fr); }
   .metrics { grid-template-columns: repeat(3, 1fr); }
+  .operator-metrics { grid-template-columns: repeat(3, 1fr); }
+  .control-grid { grid-template-columns: 1fr; grid-template-areas: "runs" "rail" "projects"; }
+  .control-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto; }
 }
 
 @media (max-width: 960px) {
@@ -568,6 +632,8 @@ header.compact .actions { display: flex; gap: 12px; align-items: center; }
   .queue-error { display: none; }
   .definition-grid { grid-template-columns: repeat(2, 1fr); }
   .definition-grid > div:nth-child(2n) { border-right: 0; }
+  .config-grid, .operator-grid { grid-template-columns: 1fr; }
+  .config-grid .validation-panel { grid-column: auto; }
 }
 
 @media (max-width: 680px) {

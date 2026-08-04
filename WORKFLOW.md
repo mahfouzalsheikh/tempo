@@ -71,6 +71,33 @@ codex:
   turn_timeout_ms: 3600000
   read_timeout_ms: 5000
   stall_timeout_ms: 120000
+runtime_providers:
+  codex:
+    kind: codex
+model_providers:
+  default:
+    kind: openai
+    # Omit model to use the runtime default. Add routes and fallbacks for role-aware routing.
+tool_providers:
+  engineering:
+    kind: tempo
+    allow_all: true
+agents:
+  implementer:
+    role: implementer
+    runtime: codex
+    model: default
+    tool_providers: [engineering]
+    completion: publication
+workflow:
+  name: issue-to-pull-request
+  max_parallel_nodes: 1
+  require_publication: true
+  nodes:
+    - id: implementation
+      type: agent
+      agent: implementer
+  edges: []
 ---
 
 You are working on {{ issue.identifier }}: {{ issue.title }}.

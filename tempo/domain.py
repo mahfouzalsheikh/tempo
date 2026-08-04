@@ -105,6 +105,25 @@ class LiveSession:
     no_change_completed: bool = False
     completion_summary: str | None = None
     validation_record_id: int | None = None
+    active_node_id: str | None = None
+    active_agent_role: str | None = None
+
+
+@dataclass
+class NodeExecutionState:
+    node_id: str
+    name: str
+    node_type: str
+    agent: str | None = None
+    role: str | None = None
+    runtime: str | None = None
+    model: str | None = None
+    status: str = "pending"
+    attempt: int = 0
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+    output: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -116,6 +135,9 @@ class RunningEntry:
     phase: str = "PreparingWorkspace"
     session: LiveSession = field(default_factory=LiveSession)
     run_record_id: int | None = None
+    graph_nodes: dict[str, NodeExecutionState] = field(default_factory=dict)
+    node_sessions: dict[str, LiveSession] = field(default_factory=dict)
+    node_sessions_aggregated: bool = False
 
 
 @dataclass

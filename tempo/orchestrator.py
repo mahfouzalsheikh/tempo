@@ -14,14 +14,24 @@ from typing import Any
 import structlog
 
 from .activity import activity_from_event, append_activity
+from .agent_runtime import providers
 from .codex import CodexAppServer
-from .config import ServiceConfig
-from .domain import Issue, RetryEntry, RunningEntry, Totals, normalize_state, utcnow
+from .config import ServiceConfig, WorkflowEdgeConfig, WorkflowNodeConfig
+from .domain import (
+    Issue,
+    LiveSession,
+    NodeExecutionState,
+    RetryEntry,
+    RunningEntry,
+    Totals,
+    normalize_state,
+    utcnow,
+)
 from .errors import CodexError
 from .persistence import PersistenceStore
 from .trackers.base import Tracker
 from .trackers.github import build_tracker
-from .workflow import WorkflowStore, render_prompt
+from .workflow import WorkflowStore, render_node_prompt, render_prompt
 from .workspace import WorkspaceManager
 
 log = structlog.get_logger(__name__)
@@ -108,10 +118,18 @@ class Orchestrator:
         self.worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
         self._operator_outcomes: dict[str, str] = {}
         self._feedback: dict[str, str] = {}
+        self._workflow_config_updated_at: datetime | None = None
 
     async def start(self) -> None:
         _, config = await self.store.initialize()
         await self._apply_config(config)
+        if self.persistence:
+            managed_sections, updated_at = await self.persistence.workflow_configuration()
+            if managed_sections:
+                config = await self.store.replace_platform_sections(managed_sections)
+                self.persistence.config = config
+                await self.persistence.initialize()
+                self._workflow_config_updated_at = updated_at
         await self._startup_cleanup()
         self._loop_task = asyncio.create_task(self._run_loop(), name="tempo-orchestrator")
         await log.ainfo(
@@ -197,6 +215,7 @@ class Orchestrator:
                 await asyncio.wait_for(self._refresh.wait(), timeout=delay)
 
     async def tick(self) -> None:
+        await self._reload_database_workflow_if_changed()
         changed = await self.store.reload_if_changed()
         definition, config = self.store.current()
         if changed:
@@ -247,6 +266,24 @@ class Orchestrator:
                 ):
                     continue
                 self._dispatch_locked(issue, None, run_record_id=run_id)
+
+    async def _reload_database_workflow_if_changed(self) -> bool:
+        if not self.persistence:
+            return False
+        sections, updated_at = await self.persistence.workflow_configuration()
+        if not sections or updated_at == self._workflow_config_updated_at:
+            return False
+        config = await self.store.replace_platform_sections(sections)
+        self.persistence.config = config
+        await self.persistence.initialize()
+        self._workflow_config_updated_at = updated_at
+        self._publish_live_state()
+        await log.ainfo(
+            "database_workflow_reloaded",
+            project_id=self.persistence.project_id,
+            updated_at=updated_at,
+        )
+        return True
 
     async def refresh(self) -> None:
         self._refresh.set()
@@ -445,161 +482,42 @@ class Orchestrator:
         entry = self.running[issue.id]
         if self.persistence:
             entry.run_record_id = await self.persistence.start_run(entry, workspace.path)
-        resume_context = (
-            await self.persistence.resume_context(entry.run_record_id)
-            if self.persistence and entry.run_record_id
-            else None
-        )
-        if resume_context:
-            usage_baseline = resume_context["usage_baseline"]
-            entry.session.thread_input_tokens = int(usage_baseline.get("input_tokens", 0))
-            entry.session.thread_output_tokens = int(usage_baseline.get("output_tokens", 0))
-            entry.session.thread_total_tokens = int(usage_baseline.get("total_tokens", 0))
+
+        async def on_approval(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+            return await self._wait_for_approval(issue.id, kind, payload)
+
         heartbeat_task = asyncio.create_task(
             self._heartbeat_worker(entry),
             name=f"tempo-heartbeat-{issue.identifier}",
         )
 
-        async def on_event(event: dict[str, Any]) -> None:
-            await self._codex_event(issue.id, event)
-
-        async def on_approval(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
-            return await self._wait_for_approval(issue.id, kind, payload)
-
-        client = CodexAppServer(
-            config,
-            workspace_manager,
-            tracker,
-            on_event,
-            approval_callback=on_approval,
-        )
-        session = None
         try:
             tracker.revoke_publication(issue.id)
             if not config.validation.enabled:
                 tracker.authorize_publication(issue.id)
             await workspace_manager.before_run(workspace.path)
-            if resume_context and resume_context.get("pull_request_url"):
-                pull_request_url = str(resume_context["pull_request_url"])
-                try:
-                    pull_request_number = int(
-                        resume_context.get("pull_request_number")
-                        or pull_request_url.rstrip("/").rsplit("/", 1)[-1]
-                    )
-                except ValueError as exc:
-                    raise CodexError(
-                        "cannot recover review because the pull request number is unavailable",
-                        category="review_recovery_context",
-                    ) from exc
-                entry.session.agent_role = "review"
-                entry.session.pull_request_created = True
-                entry.session.pull_request_url = pull_request_url
-                entry.session.pull_request_number = pull_request_number
-                await self._run_review_agent(
-                    issue,
-                    workspace.path,
-                    config,
-                    workspace_manager,
-                    tracker,
-                    pull_request_number,
-                    on_approval,
-                    resume_context=(
-                        resume_context if resume_context.get("agent_role") == "review" else None
-                    ),
-                )
-                return
-            self.running[issue.id].phase = "LaunchingAgentProcess"
-            self.running[issue.id].session.agent_role = "implementation"
-            self._publish_live_state()
-            implementation_resume = (
-                resume_context
-                if resume_context and resume_context.get("agent_role") == "implementation"
-                else None
-            )
-            session = await client.start_session(
+            await self._execute_workflow_graph(
+                issue,
+                attempt,
+                definition,
+                config,
                 workspace.path,
-                resume_thread_id=(
-                    str(implementation_resume["thread_id"]) if implementation_resume else None
-                ),
-                usage_baseline=(
-                    implementation_resume.get("usage_baseline") if implementation_resume else None
-                ),
+                workspace_manager,
+                tracker,
             )
-            current_issue = issue
-            for turn_number in range(1, config.agent.max_turns + 1):
-                entry = self.running.get(issue.id)
-                operator_feedback = self._feedback.pop(issue.id, None)
-                if entry:
-                    entry.phase = "StreamingTurn"
-                    entry.session.turn_count = turn_number
-                    self._publish_live_state()
-                if turn_number == 1 and implementation_resume:
-                    prompt = (
-                        RECOVERY_CONTINUATION_PROMPT
-                        if session.resumed
-                        else RECOVERY_FALLBACK_PROMPT
-                    )
-                    if config.validation.enabled:
-                        prompt = f"{prompt}\n\n{VALIDATION_POLICY_PROMPT}"
-                else:
-                    prompt = (
-                        (
-                            f"{render_prompt(definition, current_issue, attempt)}\n\n"
-                            f"{VALIDATION_POLICY_PROMPT}"
-                            if config.validation.enabled
-                            else render_prompt(definition, current_issue, attempt)
-                        )
-                        if turn_number == 1
-                        else (
-                            VALIDATION_CONTINUATION_PROMPT
-                            if config.validation.enabled
-                            and entry
-                            and entry.session.validation_status != "passed"
-                            else CONTINUATION_PROMPT
-                        )
-                    )
-                if operator_feedback:
-                    prompt = f"Operator feedback:\n{operator_feedback}\n\n{prompt}"
-                await client.run_turn(session, prompt, current_issue)
-                if operator_feedback and self.persistence and entry and entry.run_record_id:
-                    await self.persistence.set_control_state(entry.run_record_id, feedback="")
-                if (
-                    config.validation.enabled
-                    and entry
-                    and entry.session.validation_status != "passed"
-                    and turn_number == config.agent.max_turns
-                ):
-                    raise CodexError(
-                        "agent exhausted its turns without passing local project validation",
-                        category="validation_required",
-                    )
-                if entry and (
-                    entry.session.pull_request_created or entry.session.no_change_completed
-                ):
-                    break
-                refreshed = await tracker.fetch_issues_by_ids([issue.id])
-                if not refreshed:
-                    break
-                current_issue = refreshed[0]
-                if self.persistence:
-                    await self.persistence.sync_issue(current_issue)
-                if normalize_state(
-                    current_issue.state
-                ) not in config.active_states or not self._routable(current_issue, config):
-                    break
             entry = self.running.get(issue.id)
             if not entry:
                 raise CodexError("run was released", category="run_released")
-            if entry.session.pull_request_created:
+            self._aggregate_node_sessions(entry)
+            if not config.workflow.require_publication:
+                entry.phase = "WorkflowCompleted"
+            elif entry.session.pull_request_created:
                 if entry.session.pull_request_number is None:
                     raise CodexError(
                         "pull request response did not include a number",
                         category="publication_response",
                     )
                 if config.review.enabled:
-                    if session:
-                        await client.stop_session(session)
-                        session = None
                     await self._run_review_agent(
                         issue,
                         workspace.path,
@@ -634,9 +552,450 @@ class Orchestrator:
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
-            if session:
-                await client.stop_session(session)
             await workspace_manager.after_run(workspace.path)
+
+    async def _execute_workflow_graph(
+        self,
+        issue: Issue,
+        attempt: int | None,
+        definition: Any,
+        config: ServiceConfig,
+        workspace_path: Any,
+        workspace_manager: WorkspaceManager,
+        tracker: Tracker,
+    ) -> None:
+        entry = self.running[issue.id]
+        for node in config.workflow.nodes:
+            profile = config.agents.get(node.agent or "")
+            model = config.model_providers.get(profile.model) if profile else None
+            entry.graph_nodes[node.id] = NodeExecutionState(
+                node_id=node.id,
+                name=node.name or node.id.replace("-", " ").replace("_", " ").title(),
+                node_type=node.type,
+                agent=node.agent,
+                role=profile.role if profile else None,
+                runtime=profile.runtime if profile else None,
+                model=(model.model or profile.model) if model and profile else None,
+            )
+        if self.persistence:
+            await self.persistence.initialize_run_nodes(entry)
+        for state in entry.graph_nodes.values():
+            if state.status in {"running", "waiting", "failed", "cancelled"}:
+                state.status = "pending"
+                state.attempt = 0
+
+        incoming: dict[str, list[WorkflowEdgeConfig]] = {
+            node.id: [] for node in config.workflow.nodes
+        }
+        outgoing: dict[str, list[WorkflowEdgeConfig]] = {
+            node.id: [] for node in config.workflow.nodes
+        }
+        by_id = {node.id: node for node in config.workflow.nodes}
+        for edge in config.workflow.edges:
+            incoming[edge.target].append(edge)
+            outgoing[edge.source].append(edge)
+
+        while True:
+            pending = [state for state in entry.graph_nodes.values() if state.status == "pending"]
+            if not pending:
+                break
+            ready: list[WorkflowNodeConfig] = []
+            progressed = False
+            for state in pending:
+                dependencies = incoming[state.node_id]
+                if not dependencies:
+                    ready.append(by_id[state.node_id])
+                    continue
+                source_states = [entry.graph_nodes[edge.source] for edge in dependencies]
+                if any(
+                    source.status in {"pending", "running", "waiting"}
+                    for source in source_states
+                ):
+                    continue
+                matches = [
+                    self._edge_matches(edge, entry.graph_nodes[edge.source], issue)
+                    for edge in dependencies
+                ]
+                join_policy = str(by_id[state.node_id].settings.get("join", "all")).lower()
+                should_run = any(matches) if join_policy == "any" else all(matches)
+                if should_run:
+                    ready.append(by_id[state.node_id])
+                else:
+                    state.status = "skipped"
+                    state.finished_at = utcnow()
+                    if self.persistence and entry.run_record_id:
+                        await self.persistence.finish_run_node(
+                            entry.run_record_id,
+                            state.node_id,
+                            status="skipped",
+                            output={"reason": "dependency conditions did not match"},
+                        )
+                    progressed = True
+            if not ready:
+                if progressed:
+                    continue
+                raise CodexError(
+                    "workflow graph cannot make progress", category="workflow_graph_deadlock"
+                )
+            for start in range(0, len(ready), config.workflow.max_parallel_nodes):
+                batch = ready[start : start + config.workflow.max_parallel_nodes]
+                tasks = [
+                    asyncio.create_task(
+                        self._execute_workflow_node(
+                            issue,
+                            attempt,
+                            definition,
+                            config,
+                            node,
+                            workspace_path,
+                            workspace_manager,
+                            tracker,
+                        ),
+                        name=f"tempo-{issue.identifier}-{node.id}",
+                    )
+                    for node in batch
+                ]
+                done, pending_tasks = await asyncio.wait(
+                    tasks,
+                    return_when=asyncio.FIRST_EXCEPTION,
+                )
+                error = next(
+                    (
+                        task.exception()
+                        for task in done
+                        if not task.cancelled() and task.exception() is not None
+                    ),
+                    None,
+                )
+                if error:
+                    for task in pending_tasks:
+                        task.cancel()
+                    await asyncio.gather(*pending_tasks, return_exceptions=True)
+                    raise error
+                await asyncio.gather(*pending_tasks)
+
+        unhandled = []
+        for state in entry.graph_nodes.values():
+            if state.status != "failed":
+                continue
+            matching_handlers = [
+                edge
+                for edge in outgoing[state.node_id]
+                if self._edge_matches(edge, state, issue)
+                and entry.graph_nodes[edge.target].status == "succeeded"
+            ]
+            if not matching_handlers:
+                unhandled.append(state)
+        if unhandled:
+            failed = unhandled[0]
+            raise CodexError(
+                f"workflow node {failed.node_id} failed: {failed.error or 'unknown error'}",
+                category="workflow_node_failed",
+            )
+
+    @staticmethod
+    def _edge_matches(
+        edge: WorkflowEdgeConfig,
+        source: NodeExecutionState,
+        issue: Issue,
+    ) -> bool:
+        condition = edge.condition.strip().lower()
+        if condition in {"always", "completed"}:
+            return source.status in {"succeeded", "failed", "skipped"}
+        if condition in {"succeeded", "failed", "skipped"}:
+            return source.status == condition
+        if condition.startswith("issue.label:"):
+            return condition.split(":", 1)[1].strip() in issue.labels
+        if condition.startswith("not issue.label:"):
+            return condition.split(":", 1)[1].strip() not in issue.labels
+        return False
+
+    async def _execute_workflow_node(
+        self,
+        issue: Issue,
+        attempt: int | None,
+        definition: Any,
+        config: ServiceConfig,
+        node: WorkflowNodeConfig,
+        workspace_path: Any,
+        workspace_manager: WorkspaceManager,
+        tracker: Tracker,
+    ) -> None:
+        entry = self.running[issue.id]
+        state = entry.graph_nodes[node.id]
+        profile = config.agents.get(node.agent or "")
+        model_candidates = providers.model_candidates(config, profile) if profile else ()
+        maximum_attempts = max(node.max_retries + 1, len(model_candidates), 1)
+        for node_attempt in range(state.attempt + 1, maximum_attempts + 1):
+            state.status = "running"
+            state.attempt = node_attempt
+            state.started_at = utcnow()
+            state.error = None
+            entry.phase = f"Node:{node.id}"
+            if self.persistence and entry.run_record_id:
+                await self.persistence.start_run_node(entry.run_record_id, node.id, node_attempt)
+            self._publish_live_state()
+            try:
+                if node.type == "join":
+                    output = {"joined": True}
+                elif node.type == "human_gate":
+                    state.status = "waiting"
+                    if self.persistence and entry.run_record_id:
+                        from tempo_web.models import RunNode
+
+                        await RunNode.objects.filter(
+                            run_id=entry.run_record_id, node_key=node.id
+                        ).aupdate(status=RunNode.Status.WAITING)
+                    decision = await self._wait_for_approval(
+                        issue.id,
+                        f"workflow_gate:{node.id}",
+                        {
+                            "params": {
+                                "reason": node.approval_message,
+                                "node": node.id,
+                            }
+                        },
+                    )
+                    if not decision.get("approved"):
+                        raise CodexError(
+                            decision.get("note") or "workflow gate rejected",
+                            category="workflow_gate_rejected",
+                        )
+                    output = {"approved": True, "note": decision.get("note", "")}
+                else:
+                    output = await self._execute_agent_node(
+                        issue,
+                        attempt,
+                        definition,
+                        config,
+                        node,
+                        workspace_path,
+                        workspace_manager,
+                        tracker,
+                    )
+                state.status = "succeeded"
+                state.output = output
+                state.finished_at = utcnow()
+                if self.persistence and entry.run_record_id:
+                    await self.persistence.finish_run_node(
+                        entry.run_record_id,
+                        node.id,
+                        status="succeeded",
+                        output=output,
+                    )
+                self._publish_live_state()
+                return
+            except asyncio.CancelledError:
+                state.status = "cancelled"
+                state.finished_at = utcnow()
+                if self.persistence and entry.run_record_id:
+                    await self.persistence.finish_run_node(
+                        entry.run_record_id,
+                        node.id,
+                        status="cancelled",
+                        error="node cancelled",
+                    )
+                raise
+            except Exception as exc:
+                state.error = str(exc)
+                state.finished_at = utcnow()
+                safety_limit = getattr(exc, "category", "") in {
+                    "token_budget_exceeded",
+                    "validation_attempt_limit",
+                }
+                if safety_limit:
+                    state.status = "failed"
+                    if self.persistence and entry.run_record_id:
+                        await self.persistence.finish_run_node(
+                            entry.run_record_id,
+                            node.id,
+                            status="failed",
+                            error=str(exc),
+                        )
+                    raise
+                if node_attempt < maximum_attempts:
+                    state.status = "pending"
+                    continue
+                state.status = "failed"
+                if self.persistence and entry.run_record_id:
+                    await self.persistence.finish_run_node(
+                        entry.run_record_id,
+                        node.id,
+                        status="failed",
+                        error=str(exc),
+                    )
+                self._publish_live_state()
+                return
+
+    async def _execute_agent_node(
+        self,
+        issue: Issue,
+        attempt: int | None,
+        definition: Any,
+        config: ServiceConfig,
+        node: WorkflowNodeConfig,
+        workspace_path: Any,
+        workspace_manager: WorkspaceManager,
+        tracker: Tracker,
+    ) -> dict[str, Any]:
+        entry = self.running[issue.id]
+        profile = config.agents[node.agent or ""]
+        live = LiveSession(active_node_id=node.id, active_agent_role=profile.role)
+        entry.node_sessions[node.id] = live
+        entry.session = live
+
+        async def on_event(event: dict[str, Any]) -> None:
+            event = {**event, "node_id": node.id, "agent_role": profile.role}
+            await self._codex_event(issue.id, event, live_session=live)
+
+        async def on_approval(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+            return await self._wait_for_approval(issue.id, kind, payload)
+
+        runtime = providers.create_runtime(
+            config,
+            profile,
+            workspace_manager,
+            tracker,
+            on_event,
+            on_approval,
+            model_index=max(entry.graph_nodes[node.id].attempt - 1, 0),
+        )
+        selected_model = getattr(runtime, "selected_model", None)
+        if selected_model:
+            entry.graph_nodes[node.id].model = selected_model
+            if self.persistence and entry.run_record_id:
+                await self.persistence.set_run_node_model(
+                    entry.run_record_id,
+                    node.id,
+                    selected_model,
+                )
+        entry.phase = f"Launching:{node.id}"
+        self._publish_live_state()
+        runtime_session = await runtime.start_session(workspace_path)
+        current_issue = issue
+        max_turns = profile.max_turns or config.agent.max_turns
+        try:
+            for turn_number in range(1, max_turns + 1):
+                live.turn_count = turn_number
+                entry.phase = f"Running:{node.id}"
+                operator_feedback = self._feedback.pop(issue.id, None)
+                if turn_number == 1:
+                    graph_context = {
+                        key: {
+                            "status": value.status,
+                            "output": value.output,
+                        }
+                        for key, value in entry.graph_nodes.items()
+                        if key != node.id and value.status != "pending"
+                    }
+                    current_state = entry.graph_nodes.get(node.id)
+                    node_context = {
+                        "id": node.id,
+                        "name": current_state.name if current_state else node.id,
+                        "type": node.type,
+                        "agent": node.agent,
+                        "role": profile.role,
+                    }
+                    prompt_parts = [render_prompt(definition, current_issue, attempt)]
+                    for template in (profile.prompt, node.prompt):
+                        if template.strip():
+                            prompt_parts.append(
+                                render_node_prompt(
+                                    template,
+                                    issue=current_issue,
+                                    attempt=attempt,
+                                    node=node_context,
+                                    graph=graph_context,
+                                )
+                            )
+                    prompt_parts.append(
+                        f"You are the {profile.role} specialist for node {node.id}."
+                    )
+                    if graph_context:
+                        prompt_parts.append(
+                            "Prior workflow results:\n"
+                            + json.dumps(graph_context, sort_keys=True, default=str)
+                        )
+                    if (
+                        profile.completion in {"validation", "publication"}
+                        and config.validation.enabled
+                    ):
+                        prompt_parts.append(VALIDATION_POLICY_PROMPT)
+                    prompt = "\n\n".join(part for part in prompt_parts if part)
+                else:
+                    prompt = (
+                        VALIDATION_CONTINUATION_PROMPT
+                        if profile.completion in {"validation", "publication"}
+                        and config.validation.enabled
+                        and live.validation_status != "passed"
+                        else CONTINUATION_PROMPT
+                    )
+                if operator_feedback:
+                    prompt = f"Operator feedback:\n{operator_feedback}\n\n{prompt}"
+                await runtime.run_turn(runtime_session, prompt, current_issue)
+                if operator_feedback and self.persistence and entry.run_record_id:
+                    await self.persistence.set_control_state(entry.run_record_id, feedback="")
+                if profile.completion == "turn":
+                    break
+                if profile.completion == "validation" and live.validation_status == "passed":
+                    break
+                if profile.completion == "publication" and (
+                    live.pull_request_created or live.no_change_completed
+                ):
+                    break
+                refreshed = await tracker.fetch_issues_by_ids([issue.id])
+                if refreshed:
+                    current_issue = refreshed[0]
+                    if self.persistence:
+                        await self.persistence.sync_issue(current_issue)
+            else:
+                raise CodexError(
+                    f"agent {node.agent} exhausted {max_turns} turns before {profile.completion}",
+                    category=f"{profile.completion}_required",
+                )
+            summary = next(
+                (
+                    str(event.get("text", ""))
+                    for event in reversed(live.recent_events)
+                    if event.get("kind") == "message" and event.get("text")
+                ),
+                "",
+            )
+            return {
+                "session_id": live.session_id,
+                "thread_id": live.thread_id,
+                "turns": live.turn_count,
+                "input_tokens": live.codex_input_tokens,
+                "output_tokens": live.codex_output_tokens,
+                "total_tokens": live.codex_total_tokens,
+                "validation_status": live.validation_status,
+                "pull_request_url": live.pull_request_url,
+                "no_change_completed": live.no_change_completed,
+                "summary": summary[:4000],
+            }
+        finally:
+            await runtime.stop_session(runtime_session)
+
+    @staticmethod
+    def _aggregate_node_sessions(entry: RunningEntry) -> None:
+        if entry.node_sessions_aggregated:
+            return
+        sessions = list(entry.node_sessions.values())
+        if not sessions:
+            return
+        publication = next(
+            (
+                session
+                for session in reversed(sessions)
+                if session.pull_request_created or session.no_change_completed
+            ),
+            sessions[-1],
+        )
+        publication.codex_input_tokens = sum(session.codex_input_tokens for session in sessions)
+        publication.codex_output_tokens = sum(session.codex_output_tokens for session in sessions)
+        publication.codex_total_tokens = sum(session.codex_total_tokens for session in sessions)
+        entry.session = publication
+        entry.node_sessions_aggregated = True
 
     async def _run_review_agent(
         self,
@@ -824,11 +1183,18 @@ class Orchestrator:
             await asyncio.sleep(0.5)
         return {"approved": False, "note": "Run ended before approval was decided."}
 
-    async def _codex_event(self, issue_id: str, event: dict[str, Any]) -> None:
+    async def _codex_event(
+        self,
+        issue_id: str,
+        event: dict[str, Any],
+        *,
+        live_session: LiveSession | None = None,
+    ) -> None:
         entry = self.running.get(issue_id)
         if not entry:
             return
-        session = entry.session
+        session = live_session or entry.session
+        entry.session = session
         session.last_codex_event = str(event.get("event"))
         session.last_codex_timestamp = utcnow()
         session.last_codex_message = event.get("payload", event)
@@ -853,25 +1219,17 @@ class Orchestrator:
         session.codex_total_tokens = max(
             session.codex_total_tokens, int(usage.get("total_tokens", 0))
         )
-        thread_usage = event.get("thread_usage") or usage
-        session.thread_input_tokens = max(
-            session.thread_input_tokens,
-            int(thread_usage.get("input_tokens", 0)),
-        )
-        session.thread_output_tokens = max(
-            session.thread_output_tokens,
-            int(thread_usage.get("output_tokens", 0)),
-        )
-        session.thread_total_tokens = max(
-            session.thread_total_tokens,
-            int(thread_usage.get("total_tokens", 0)),
-        )
         if "rate_limits" in event:
             self.rate_limits = event["rate_limits"]
         event_name = event.get("event")
         _, config = self.store.current()
         if event_name == "validation_started":
-            if session.validation_attempt_count >= config.validation.max_attempts_per_run:
+            total_validation_attempts = sum(
+                item.validation_attempt_count for item in entry.node_sessions.values()
+            )
+            if not entry.node_sessions:
+                total_validation_attempts = session.validation_attempt_count
+            if total_validation_attempts >= config.validation.max_attempts_per_run:
                 entry.phase = "SafetyLimitReached"
                 self._publish_live_state()
                 raise CodexError(
@@ -944,16 +1302,20 @@ class Orchestrator:
                 session.human_review_reason = session.review_summary
         self._publish_live_state()
         if self.persistence and "delta" not in str(event_name).lower():
-            await self.persistence.record_event(entry, event)
+            await self.persistence.record_event(entry, event, live_session=session)
             if entry.run_record_id:
                 await self.persistence.heartbeat(entry.run_record_id)
+                if session.active_node_id:
+                    await self.persistence.record_run_node_event(
+                        entry.run_record_id,
+                        session.active_node_id,
+                        session,
+                    )
                 if event_name in {
                     "validation_completed",
                     "validation_fingerprint_recorded",
                     "tool_call_completed",
                     "no_change_completed",
-                    "review_completed",
-                    "review_outcome",
                 }:
                     event_key = hashlib.sha256(
                         json.dumps(event, sort_keys=True, default=str).encode()
@@ -964,12 +1326,15 @@ class Orchestrator:
                         event,
                         idempotency_key=f"{entry.run_record_id}:{event_key}",
                     )
-        if session.codex_total_tokens > config.agent.max_tokens_per_run:
+        total_tokens = sum(item.codex_total_tokens for item in entry.node_sessions.values())
+        if not entry.node_sessions:
+            total_tokens = session.codex_total_tokens
+        if total_tokens > config.agent.max_tokens_per_run:
             entry.phase = "SafetyLimitReached"
             self._publish_live_state()
             raise CodexError(
                 (
-                    f"run exceeded token limit ({session.codex_total_tokens} > "
+                    f"run exceeded token limit ({total_tokens} > "
                     f"{config.agent.max_tokens_per_run})"
                 ),
                 category="token_budget_exceeded",
@@ -980,6 +1345,7 @@ class Orchestrator:
             entry = self.running.pop(issue_id, None)
             if not entry:
                 return
+            self._aggregate_node_sessions(entry)
             runtime = (utcnow() - entry.started_at).total_seconds()
             self.totals.runtime_seconds += runtime
             self.totals.input_tokens += entry.session.codex_input_tokens
@@ -1264,10 +1630,12 @@ class Orchestrator:
                 "validation_timeout_ms": config.validation.command_timeout_ms,
                 "approval_policy": config.codex.approval_policy,
                 "thread_sandbox": config.codex.thread_sandbox,
-                "review_enabled": config.review.enabled,
-                "auto_merge": config.review.auto_merge,
                 "project": (f"{config.project.organization}/{config.project.slug}"),
                 "environment": config.project.environment,
+                "workflow_graph": config.workflow.name,
+                "runtime_kinds": sorted(
+                    {provider.kind for provider in config.runtime_providers.values()}
+                ),
             },
             "running": [
                 {
@@ -1283,6 +1651,18 @@ class Orchestrator:
                     "started_at": entry.started_at.isoformat(),
                     "max_tokens": config.agent.max_tokens_per_run,
                     "max_validation_attempts": config.validation.max_attempts_per_run,
+                    "graph": [
+                        {
+                            **state.__dict__,
+                            "started_at": (
+                                state.started_at.isoformat() if state.started_at else None
+                            ),
+                            "finished_at": (
+                                state.finished_at.isoformat() if state.finished_at else None
+                            ),
+                        }
+                        for state in entry.graph_nodes.values()
+                    ],
                     "session": {
                         **entry.session.__dict__,
                         "last_codex_timestamp": (
@@ -1347,6 +1727,34 @@ class Orchestrator:
                 "max_retries": config.agent.max_retries,
                 "per_state": config.agent.max_concurrent_agents_by_state,
                 "max_retry_backoff_ms": config.agent.max_retry_backoff_ms,
+                "profiles": {
+                    name: {
+                        "role": profile.role,
+                        "runtime": profile.runtime,
+                        "model": profile.model,
+                        "completion": profile.completion,
+                    }
+                    for name, profile in config.agents.items()
+                },
+            },
+            "platform": {
+                "runtime_providers": {
+                    name: {"kind": provider.kind}
+                    for name, provider in config.runtime_providers.items()
+                },
+                "model_providers": {
+                    name: {"kind": provider.kind, "model": provider.model}
+                    for name, provider in config.model_providers.items()
+                },
+                "tool_providers": {
+                    name: {"kind": provider.kind, "tool_count": len(provider.tools)}
+                    for name, provider in config.tool_providers.items()
+                },
+                "workflow": {
+                    "name": config.workflow.name,
+                    "node_count": len(config.workflow.nodes),
+                    "edge_count": len(config.workflow.edges),
+                },
             },
             "validation": {
                 "enabled": config.validation.enabled,
@@ -1361,20 +1769,7 @@ class Orchestrator:
                 "max_attempts_per_run": config.validation.max_attempts_per_run,
                 "max_output_chars": config.validation.max_output_chars,
                 "publication_gate": "GitHub writes locked until validation passes",
-                "merge_policy": (
-                    f"independent review, then {config.review.merge_method} merge"
-                    if config.review.enabled and config.review.auto_merge
-                    else "human merge required"
-                ),
-            },
-            "review": {
-                "enabled": config.review.enabled,
-                "max_turns": config.review.max_turns,
-                "auto_merge": config.review.auto_merge,
-                "merge_method": config.review.merge_method,
-                "reviewers": config.review.reviewers,
-                "team_reviewers": config.review.team_reviewers,
-                "separate_github_identity": bool(config.tracker.provider.get("review_token")),
+                "merge_policy": "Tempo never merges branches or pull requests",
             },
             "hooks": {
                 "after_create": bool(config.hooks.after_create),
@@ -1392,6 +1787,42 @@ class Orchestrator:
                 "rate_limits": self.rate_limits,
             },
         }
+
+    def platform_snapshot(self) -> dict[str, Any]:
+        _, config = self.store.current()
+        return {
+            "key": f"{config.project.organization}/{config.project.slug}",
+            "name": config.project.name,
+            "workflow_path": str(self.store.path),
+            "runtime_providers": {
+                name: provider.model_dump(mode="json")
+                for name, provider in config.runtime_providers.items()
+            },
+            "model_providers": {
+                name: provider.model_dump(mode="json")
+                for name, provider in config.model_providers.items()
+            },
+            "tool_providers": {
+                name: provider.model_dump(mode="json")
+                for name, provider in config.tool_providers.items()
+            },
+            "agents": {
+                name: profile.model_dump(mode="json") for name, profile in config.agents.items()
+            },
+            "workflow": config.workflow.model_dump(mode="json", by_alias=True),
+            "last_reload_error": self.store.last_error,
+        }
+
+    async def update_platform_config(self, sections: dict[str, Any]) -> None:
+        config = await self.store.update_platform_sections(sections)
+        if not self.persistence:
+            raise RuntimeError("persistence_unavailable")
+        self._workflow_config_updated_at = await self.persistence.save_workflow_configuration(
+            self.store.managed_sections
+        )
+        self.persistence.config = config
+        await self.persistence.initialize()
+        self._refresh.set()
 
     def issue_snapshot(self, identifier: str) -> dict[str, Any] | None:
         snapshot = self.snapshot()

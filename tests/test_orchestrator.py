@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -67,6 +68,159 @@ async def test_dispatch_completes_with_explicit_no_change_disposition(tmp_path):
     assert run.phase == "NoChangesRequired"
     assert run.total_tokens == 15
     assert await AgentSession.objects.filter(run=run, total_tokens=15).acount() == 1
+    await orchestrator.stop()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_specialist_graph_persists_nodes_and_provider_catalog(tmp_path):
+    path = workflow(tmp_path)
+    text = path.read_text()
+    text = text.replace(
+        "validation:\n  enabled: false",
+        """agents:
+  planner:
+    role: planner
+    completion: turn
+  implementer:
+    role: implementer
+    completion: publication
+workflow:
+  name: plan-and-deliver
+  nodes:
+    - {id: plan, agent: planner}
+    - {id: deliver, agent: implementer}
+  edges:
+    - {from: plan, to: deliver}
+validation:
+  enabled: false""",
+    )
+    path.write_text(text)
+    orchestrator = Orchestrator(str(path))
+    await orchestrator.start()
+    for _ in range(150):
+        if orchestrator.completed:
+            break
+        await asyncio.sleep(0.02)
+    from tempo_web.models import (
+        AgentRuntimeDefinition,
+        RunNode,
+        WorkflowNodeDefinition,
+    )
+
+    nodes = [row async for row in RunNode.objects.order_by("id")]
+    assert [(node.node_key, node.status) for node in nodes] == [
+        ("plan", RunNode.Status.SUCCEEDED),
+        ("deliver", RunNode.Status.SUCCEEDED),
+    ]
+    assert [node.total_tokens for node in nodes] == [15, 15]
+    assert await WorkflowNodeDefinition.objects.acount() == 2
+    assert await AgentRuntimeDefinition.objects.filter(name="codex", kind="codex").acount() == 1
+    assert orchestrator.snapshot()["totals"]["total_tokens"] == 30
+    await orchestrator.stop()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_external_jsonl_runtime_executes_without_scheduler_changes(tmp_path):
+    bridge = Path(__file__).parent / "fixtures" / "fake_external_runtime.py"
+    path = tmp_path / "external.md"
+    path.write_text(
+        f"""---
+project:
+  organization: acme
+  slug: external
+tracker:
+  kind: memory
+  provider:
+    issues:
+      - {{id: "external-1", identifier: E-1, title: External, state: Todo}}
+  active_states: [Todo]
+  terminal_states: [Done]
+workspace:
+  root: {tmp_path / "external-workspaces"}
+agent:
+  max_turns: 1
+validation:
+  enabled: false
+runtime_providers:
+  agents-sdk:
+    kind: openai-agents
+    command: python {bridge}
+agents:
+  researcher:
+    role: researcher
+    runtime: agents-sdk
+    completion: turn
+workflow:
+  require_publication: false
+  nodes:
+    - {{id: research, agent: researcher}}
+---
+Research {{{{ issue.identifier }}}}.
+"""
+    )
+    orchestrator = Orchestrator(str(path))
+    await orchestrator.start()
+    for _ in range(100):
+        if orchestrator.completed:
+            break
+        await asyncio.sleep(0.02)
+    from tempo_web.models import AgentRun, RunNode
+
+    run = await AgentRun.objects.aget(issue__identifier="E-1")
+    node = await RunNode.objects.aget(run=run)
+    assert run.status == AgentRun.Status.SUCCEEDED
+    assert run.phase == "WorkflowCompleted"
+    assert node.runtime == "agents-sdk"
+    assert node.output["summary"] == "External specialist finished its assignment."
+    await orchestrator.stop()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_database_workflow_configuration_is_seeded_and_reloaded_live(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    _, file_config = await orchestrator.store.initialize()
+    await orchestrator._apply_config(file_config)
+    assert orchestrator.persistence is not None
+
+    sections, updated_at = await orchestrator.persistence.workflow_configuration()
+    assert set(sections) == {
+        "runtime_providers",
+        "model_providers",
+        "tool_providers",
+        "agents",
+        "workflow",
+    }
+    orchestrator._workflow_config_updated_at = updated_at
+
+    from tempo_web.models import WorkflowConfiguration, WorkflowNodeDefinition
+
+    row = await WorkflowConfiguration.objects.aget()
+    changed = deepcopy(row.configuration)
+    changed["agents"]["reviewer"] = {
+        "role": "reviewer",
+        "runtime": "codex",
+        "model": "default",
+        "tool_providers": ["tempo"],
+        "completion": "turn",
+    }
+    changed["workflow"] = {
+        "name": "live-review",
+        "require_publication": False,
+        "nodes": [{"id": "review", "agent": "reviewer"}],
+        "edges": [],
+    }
+    row.configuration = changed
+    row.revision += 1
+    await row.asave(update_fields=["configuration", "revision", "updated_at"])
+
+    assert await orchestrator._reload_database_workflow_if_changed() is True
+    _, effective = orchestrator.store.current()
+    assert effective.workflow.name == "live-review"
+    assert effective.workflow.nodes[0].agent == "reviewer"
+    assert await WorkflowNodeDefinition.objects.filter(key="review").aexists()
     await orchestrator.stop()
 
 

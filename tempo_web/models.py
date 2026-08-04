@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from pathlib import Path
+
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -135,6 +139,155 @@ class CredentialReference(models.Model):
         return f"{self.project}/{self.name}"
 
 
+class AgentRuntimeDefinition(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="agent_runtimes")
+    name = models.SlugField(max_length=100)
+    kind = models.CharField(max_length=100)
+    configuration = models.JSONField(default=dict, blank=True)
+    active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["project", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "name"], name="tempo_unique_project_agent_runtime"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project}/{self.name}"
+
+
+class ModelProviderDefinition(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="model_providers")
+    name = models.SlugField(max_length=100)
+    kind = models.CharField(max_length=100)
+    model = models.CharField(max_length=255, blank=True)
+    configuration = models.JSONField(default=dict, blank=True)
+    active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["project", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "name"], name="tempo_unique_project_model_provider"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project}/{self.name}"
+
+
+class ToolProviderDefinition(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="tool_providers")
+    name = models.SlugField(max_length=100)
+    kind = models.CharField(max_length=100)
+    tools = models.JSONField(default=list, blank=True)
+    configuration = models.JSONField(default=dict, blank=True)
+    active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["project", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "name"], name="tempo_unique_project_tool_provider"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project}/{self.name}"
+
+
+class AgentProfile(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="agent_profiles")
+    name = models.SlugField(max_length=100)
+    role = models.CharField(max_length=100)
+    runtime = models.ForeignKey(
+        AgentRuntimeDefinition, on_delete=models.PROTECT, related_name="agent_profiles"
+    )
+    model_provider = models.ForeignKey(
+        ModelProviderDefinition, on_delete=models.PROTECT, related_name="agent_profiles"
+    )
+    tool_providers = models.ManyToManyField(ToolProviderDefinition, related_name="agent_profiles")
+    prompt = models.TextField(blank=True)
+    max_turns = models.PositiveIntegerField(null=True, blank=True)
+    completion = models.CharField(max_length=32, default="publication")
+    configuration = models.JSONField(default=dict, blank=True)
+    active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["project", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "name"], name="tempo_unique_project_agent_profile"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project}/{self.name}"
+
+
+class WorkflowNodeDefinition(models.Model):
+    workflow_version = models.ForeignKey(
+        WorkflowVersion, on_delete=models.CASCADE, related_name="nodes"
+    )
+    key = models.SlugField(max_length=100)
+    name = models.CharField(max_length=255)
+    node_type = models.CharField(max_length=32)
+    agent_profile = models.ForeignKey(
+        AgentProfile,
+        on_delete=models.PROTECT,
+        related_name="workflow_nodes",
+        null=True,
+        blank=True,
+    )
+    prompt = models.TextField(blank=True)
+    max_retries = models.PositiveIntegerField(default=0)
+    configuration = models.JSONField(default=dict, blank=True)
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["workflow_version", "position", "key"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workflow_version", "key"], name="tempo_unique_workflow_node"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.workflow_version}/{self.key}"
+
+
+class WorkflowEdgeDefinition(models.Model):
+    workflow_version = models.ForeignKey(
+        WorkflowVersion, on_delete=models.CASCADE, related_name="edges"
+    )
+    source = models.ForeignKey(
+        WorkflowNodeDefinition, on_delete=models.CASCADE, related_name="outgoing_edges"
+    )
+    target = models.ForeignKey(
+        WorkflowNodeDefinition, on_delete=models.CASCADE, related_name="incoming_edges"
+    )
+    condition = models.CharField(max_length=255, default="succeeded")
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["workflow_version", "position"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workflow_version", "source", "target"],
+                name="tempo_unique_workflow_edge",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.source.key} → {self.target.key}"
+
+
 class TrackedIssue(models.Model):
     project = models.ForeignKey(
         Project,
@@ -268,6 +421,59 @@ class AgentSession(models.Model):
         return self.session_id or f"Session for run {self.run_id}"
 
 
+class RunNode(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RUNNING = "running", "Running"
+        WAITING = "waiting", "Waiting"
+        SUCCEEDED = "succeeded", "Succeeded"
+        FAILED = "failed", "Failed"
+        SKIPPED = "skipped", "Skipped"
+        CANCELLED = "cancelled", "Cancelled"
+
+    run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="node_runs")
+    node_definition = models.ForeignKey(
+        WorkflowNodeDefinition,
+        on_delete=models.PROTECT,
+        related_name="runs",
+        null=True,
+        blank=True,
+    )
+    node_key = models.SlugField(max_length=100)
+    name = models.CharField(max_length=255)
+    node_type = models.CharField(max_length=32)
+    agent_name = models.CharField(max_length=100, blank=True)
+    role = models.CharField(max_length=100, blank=True)
+    runtime = models.CharField(max_length=100, blank=True)
+    model = models.CharField(max_length=255, blank=True)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+    attempt = models.PositiveIntegerField(default=0)
+    dependencies = models.JSONField(default=list, blank=True)
+    input = models.JSONField(default=dict, blank=True)
+    output = models.JSONField(default=dict, blank=True)
+    checkpoint = models.JSONField(default=dict, blank=True)
+    session_id = models.CharField(max_length=255, blank=True)
+    thread_id = models.CharField(max_length=255, blank=True)
+    turn_count = models.PositiveIntegerField(default=0)
+    input_tokens = models.PositiveBigIntegerField(default=0)
+    output_tokens = models.PositiveBigIntegerField(default=0)
+    total_tokens = models.PositiveBigIntegerField(default=0)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["run", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["run", "node_key"], name="tempo_unique_run_node")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.run_id}/{self.node_key}"
+
+
 class RunCheckpoint(models.Model):
     run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="checkpoints")
     sequence = models.PositiveIntegerField()
@@ -334,6 +540,94 @@ class OperatorAction(models.Model):
 
     def __str__(self) -> str:
         return f"{self.action} run {self.run_id}"
+
+
+class PlatformConfigurationChange(models.Model):
+    class Status(models.TextChoices):
+        APPLIED = "applied", "Applied"
+        REJECTED = "rejected", "Rejected"
+
+    project = models.ForeignKey(
+        Project, on_delete=models.PROTECT, related_name="platform_configuration_changes"
+    )
+    workflow_version = models.ForeignKey(
+        WorkflowVersion,
+        on_delete=models.PROTECT,
+        related_name="configuration_changes",
+        null=True,
+        blank=True,
+    )
+    sections = models.JSONField(default=dict)
+    requested_by = models.ForeignKey(
+        "auth.User",
+        on_delete=models.PROTECT,
+        related_name="tempo_platform_configuration_changes",
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=20, choices=Status.choices)
+    message = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-requested_at"]
+
+    def __str__(self) -> str:
+        return f"{self.project} · {self.get_status_display()}"
+
+
+class WorkflowConfiguration(models.Model):
+    """Live database authority for workflow, agent, model, runtime, and tool policy."""
+
+    project = models.OneToOneField(
+        Project, on_delete=models.CASCADE, related_name="workflow_configuration"
+    )
+    name = models.CharField(max_length=255, default="Default workflow")
+    configuration = models.JSONField(
+        default=dict,
+        help_text=(
+            "JSON object containing runtime_providers, model_providers, tool_providers, "
+            "agents, and workflow. Changes are validated and loaded without a restart."
+        ),
+    )
+    active = models.BooleanField(default=True)
+    revision = models.PositiveIntegerField(default=1, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["project"]
+        verbose_name = "workflow configuration"
+        verbose_name_plural = "workflow configurations"
+
+    def clean(self) -> None:
+        super().clean()
+        from tempo.config import build_config
+        from tempo.workflow import PLATFORM_SECTION_NAMES
+
+        if not isinstance(self.configuration, dict):
+            raise ValidationError({"configuration": "Configuration must be a JSON object."})
+        unknown = set(self.configuration) - PLATFORM_SECTION_NAMES
+        missing = PLATFORM_SECTION_NAMES - set(self.configuration)
+        if unknown or missing:
+            messages = []
+            if missing:
+                messages.append(f"Missing sections: {', '.join(sorted(missing))}.")
+            if unknown:
+                messages.append(f"Unsupported sections: {', '.join(sorted(unknown))}.")
+            raise ValidationError({"configuration": " ".join(messages)})
+        if not self.project_id:
+            return
+        latest = self.project.workflows.order_by("-version").first()
+        if not latest:
+            return
+        raw = deepcopy(latest.config)
+        raw.update(deepcopy(self.configuration))
+        try:
+            build_config(raw, Path(latest.path or "WORKFLOW.md"))
+        except Exception as exc:
+            raise ValidationError({"configuration": str(exc)}) from exc
+
+    def __str__(self) -> str:
+        return f"{self.project} · {self.name}"
 
 
 class ApprovalRequest(models.Model):

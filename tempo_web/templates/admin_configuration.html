@@ -6,31 +6,50 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Configuration · Tempo</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23b9f65f'/><path d='M8 9h16v4h-6v11h-4V13H8z' fill='%2311150d'/></svg>">
-  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260729-2">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260802-1">
 </head>
-<body>
+<body data-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}">
+  <a class="skip-link" href="#main-content">Skip to configuration</a>
   <div class="app-shell">
     {% include "_sidebar.html" %}
-    <main class="workspace operator-workspace">
-      <header class="compact">
-        <div>
-          <p class="eyebrow">OPERATOR CONSOLE</p>
-          <h1>Configuration</h1>
-          <p class="subtitle">Effective workflow policy. Credentials and hook bodies are never displayed.</p>
-        </div>
-        <div class="actions"><span id="status" class="status"><i></i> Connecting</span></div>
-      </header>
-      <div class="config-grid">
-        <section class="panel validation-panel"><div class="panel-title"><h2>Projects & environments</h2></div><div id="config-projects" class="project-grid"></div></section>
-        <section class="panel"><div class="panel-title"><h2>Tracker</h2></div><dl id="config-tracker"></dl></section>
-        <section class="panel"><div class="panel-title"><h2>Agents</h2></div><dl id="config-agents"></dl></section>
-        <section class="panel validation-panel"><div class="panel-title"><h2>Validation & publication</h2></div><dl id="config-validation"></dl></section>
-        <section class="panel"><div class="panel-title"><h2>Lifecycle hooks</h2></div><dl id="config-hooks"></dl></section>
-        <section class="panel"><div class="panel-title"><h2>Workflow</h2></div><dl id="config-workflow"></dl></section>
+    <main id="main-content" class="workspace operator-workspace">
+    <header class="workspace-header">
+      <div>
+        <p class="breadcrumb">TEMPO <span>/</span> CONFIGURATION</p>
+        <h1>Configuration</h1>
+        <p class="subtitle">Effective database-backed workflow policy. Credentials and hook bodies are never displayed.</p>
       </div>
+      <div class="header-actions">
+        <span id="status" class="status"><i></i> Connecting</span>
+        {% if request.user.is_authenticated %}<button id="edit-platform" class="button primary" type="button">Edit platform</button>{% endif %}
+      </div>
+    </header>
+    <div class="config-grid">
+      <section class="panel validation-panel"><div class="panel-heading"><div><p class="section-kicker">SCOPE</p><h2>Projects & environments</h2></div></div><div id="config-projects" class="project-grid"></div></section>
+      <section class="panel"><div class="panel-heading"><div><p class="section-kicker">SOURCE</p><h2>Tracker</h2></div></div><dl id="config-tracker" class="operator-definition-list"></dl></section>
+      <section class="panel"><div class="panel-heading"><div><p class="section-kicker">LIMITS</p><h2>Agents</h2></div></div><dl id="config-agents" class="operator-definition-list"></dl></section>
+      <section class="panel validation-panel"><div class="panel-heading"><div><p class="section-kicker">EXECUTION</p><h2>Workflow graph</h2></div><span id="graph-summary" class="panel-count"></span></div><div id="config-graph" class="graph-view"></div></section>
+      <section class="panel validation-panel"><div class="panel-heading"><div><p class="section-kicker">SPECIALISTS</p><h2>Agent team</h2></div></div><div id="config-team" class="provider-grid"></div></section>
+      <section class="panel validation-panel"><div class="panel-heading"><div><p class="section-kicker">INTEGRATIONS</p><h2>Runtime, model & tool providers</h2></div></div><div id="config-providers" class="provider-grid"></div></section>
+      <section class="panel validation-panel"><div class="panel-heading"><div><p class="section-kicker">QUALITY</p><h2>Validation & publication</h2></div></div><dl id="config-validation" class="operator-definition-list"></dl></section>
+      <section class="panel"><div class="panel-heading"><div><p class="section-kicker">AUTOMATION</p><h2>Lifecycle hooks</h2></div></div><dl id="config-hooks" class="operator-definition-list"></dl></section>
+      <section class="panel"><div class="panel-heading"><div><p class="section-kicker">SOURCE FILE</p><h2>Workflow</h2></div></div><dl id="config-workflow" class="operator-definition-list"></dl></section>
+    </div>
     </main>
   </div>
+  <dialog id="platform-dialog" class="action-dialog platform-dialog">
+    <form method="dialog" id="platform-form">
+      <div class="dialog-heading"><div><p class="section-kicker">PLATFORM CONFIGURATION</p><h2>Workflow graph and providers</h2></div><button class="icon-button" type="button" data-platform-close aria-label="Close">×</button></div>
+      <p class="dialog-description">Edit the authoritative database configuration below. Tempo validates references and graph acyclicity, records a new revision, and reloads it without restart. The same record is editable in the Django administration panel.</p>
+      <label for="platform-project">Project</label>
+      <select id="platform-project"></select>
+      <label for="platform-json">Configuration sections (JSON)</label>
+      <textarea id="platform-json" rows="24" spellcheck="false"></textarea>
+      <p id="platform-error" class="form-error" hidden></p>
+      <div class="dialog-actions"><button class="button ghost" type="button" data-platform-close>Cancel</button><button id="platform-save" class="button primary" type="submit">Validate & save</button></div>
+    </form>
+  </dialog>
   {% csrf_token %}
-  <script src="{% static 'admin.js' %}?v=20260729-1"></script>
+  <script src="{% static 'admin.js' %}?v=20260802-1"></script>
 </body>
 </html>

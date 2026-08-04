@@ -67,12 +67,12 @@ function projectCard(project) {
         <span class="project-mark">${esc(initials || "P")}</span>
         <span><strong>${esc(name)}</strong><small>${esc(key)} · ${esc(project.environment || "default")}</small></span>
       </div>
-      <span class="health-pill"><i></i> healthy</span>
+      <span class="health-pill configured"><i></i> configured</span>
     </div>
     <div class="project-stats">
       <div><b>${number(project.running)}</b><span>running</span></div>
       <div><b>${number(project.retries)}</b><span>queued</span></div>
-      <div><b>${number(project.completed)}</b><span>complete</span></div>
+      <div><b>${number(project.completed)}</b><span>completed</span></div>
     </div>
   </article>`;
 }
@@ -89,6 +89,9 @@ function runControls(row) {
 
 function runCard(row) {
   const session = row.session || {};
+  const graph = (row.graph || []).map(node => `<div class="run-node ${esc(node.status)}" title="${esc(node.error || node.role || node.node_type)}">
+    <span></span><strong>${esc(node.name || node.node_id)}</strong><small>${esc(node.role || node.node_type)} · ${esc(node.status)}</small>
+  </div>`).join("");
   const commands = (session.validation_commands || []).map(command => `
     <details class="command ${Number(command.exit_code) === 0 ? "passed" : "failed"}">
       <summary><span>${esc(command.name)}</span><code>exit ${esc(command.exit_code)}</code></summary>
@@ -118,6 +121,8 @@ function runCard(row) {
     </summary>
     <div class="run-detail">
       <section>
+        <div class="detail-heading"><h3>Workflow graph</h3><span class="panel-count">${number((row.graph || []).length)} nodes</span></div>
+        <div class="run-graph">${graph || emptyState("Legacy workflow", "This run has no explicit graph state.", "⌁")}</div>
         <div class="detail-heading"><h3>Agent timeline</h3><span class="live-caption"><i></i> live</span></div>
         <div class="activity-feed">${events || emptyState("Waiting for activity", "The first agent event will appear here.", "↯")}</div>
         <h3>Validation evidence</h3>
@@ -236,7 +241,7 @@ function render(data) {
     ? running.map(runCard).join("")
     : emptyState("No active runs", "Accepted work will appear here when a worker claims it.", "↯");
   for (const node of document.querySelectorAll("[data-run-card]")) {
-    if (openRuns.has(node.dataset.runCard) || running.length === 1) node.open = true;
+    if (openRuns.has(node.dataset.runCard)) node.open = true;
   }
   byId("retries").innerHTML = retries.length
     ? retries.map(queueRow).join("")
@@ -294,6 +299,7 @@ async function update() {
     const status = byId("status");
     status.className = "status live";
     status.innerHTML = "<i></i> Live";
+    status.title = `Last updated ${new Date().toLocaleTimeString()}`;
   } catch (error) {
     const status = byId("status");
     status.className = "status error";
@@ -485,15 +491,23 @@ byId("action-form").addEventListener("submit", async event => {
 });
 
 byId("refresh").addEventListener("click", async () => {
-  if (authenticated) {
-    try {
-      await request("/api/v1/refresh", {method: "POST", body: "{}"});
-      toast("Poll scheduled");
-    } catch (error) {
-      toast(error.message, "error");
+  const button = byId("refresh");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    if (authenticated) {
+      try {
+        await request("/api/v1/refresh", {method: "POST", body: "{}"});
+        toast("Poll scheduled");
+      } catch (error) {
+        toast(error.message, "error");
+      }
     }
+    await update();
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
   }
-  await update();
 });
 
 let pendingState = null;
@@ -513,6 +527,7 @@ stream.onopen = () => {
   const status = byId("status");
   status.className = "status live";
   status.innerHTML = "<i></i> Streaming";
+  status.title = "Receiving live control-plane updates";
 };
 stream.onmessage = event => {
   try {

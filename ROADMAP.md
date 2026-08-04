@@ -97,7 +97,7 @@ Remaining work:
 **Definition of done:** One Tempo deployment can operate a real portfolio without duplicating
 services or sharing credentials, limits, or authorization boundaries across projects.
 
-### 4. Typed workflow graphs and agent teams — Foundation implemented
+### 4. Typed workflow graphs and agent teams — Implemented
 
 The built-in issue workflow now runs separate implementer and reviewer Codex threads. The reviewer
 has a typed `approve`/`human_review` disposition, must revalidate before approval, and hands control
@@ -105,21 +105,19 @@ to a merge-policy step. GitHub merge restrictions, required checks, permissions,
 reviewer uncertainty become a visible human-review outcome with reviewer assignment and issue/PR
 notifications.
 
-Remaining work:
-
-- Generalize the built-in sequence into versioned nodes and edges.
-- Add arbitrary conditionals, fan-out and join, dependency gates, and reusable human gates.
-- Add configurable planner, tester, security, and domain-specialist roles.
-- Persist each agent session as a first-class child execution rather than a combined run session.
+Implemented capabilities now include versioned nodes and edges, conditionals, bounded parallel
+fan-out, all/any joins, reusable human gates, configurable specialist profiles, and durable
+per-node execution state. Workflow, agent, runtime, model, and tool policy is editable as validated
+JSON through Django Admin or the operator configuration API.
 
 **Definition of done:** A workflow can express "plan -> parallel implementation and research ->
 review -> validation -> publication," with typed state visible at every node.
 
-### 5. Provider-neutral agent runtime — Planned
+### 5. Provider-neutral agent runtime — Implemented
 
-Introduce `AgentRuntime`, `ModelProvider`, and `ToolProvider` interfaces. Keep Codex app-server as
-the premier coding backend while supporting the OpenAI Agents SDK and external runtimes. Add model
-routing and fallback by task, cost, and capability.
+`AgentRuntime`, `ModelProvider`, and `ToolProvider` interfaces keep Codex app-server as the premier
+coding backend while supporting OpenAI Agents SDK and external JSONL runtime bridges. Declarative
+model routing and fallback can select by role, capability, and cost ceiling.
 
 **Definition of done:** A workflow selects runtimes and models declaratively. Adding a provider
 does not require changes to the scheduler or workflow engine.

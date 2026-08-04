@@ -230,6 +230,8 @@ Core API routes:
 | `POST` | `/api/v1/auth/login` | No | Exchange Django credentials for a JWT and cookie |
 | `POST` | `/api/v1/auth/logout` | No | Clear the JWT cookie |
 | `GET` | `/api/v1/auth/me` | Yes | Return the current operator |
+| `GET` | `/api/v1/platform` | Yes | Inspect workflow graphs, agent teams, and providers |
+| `POST` | `/api/v1/platform/<org>/<project>` | Yes | Validate and revise live workflow configuration |
 
 Run actions are `pause`, `resume`, `cancel`, `retry`, `requeue`, `unblock`, `reprioritize`, and
 `feedback`. API clients can use `Authorization: Bearer <token>`. Browser mutations use an
@@ -266,7 +268,17 @@ Current limitations are deliberate:
 - Scheduling uses polling, not webhooks.
 - Workers run inside the control-plane process; leases support recovery but not an independently
   scalable worker service.
-- The implementation/review sequence is built in rather than a general workflow graph.
+- Workflow graphs support agent, human-gate, and join nodes with conditional edges and bounded
+  parallel execution; richer event-trigger and reusable subworkflow semantics remain future work.
 - SQLite is suitable for local development and tests; Compose uses PostgreSQL for durable
   multi-process-safe claims.
 - The application has no project-scoped RBAC or SSO.
+
+## Database-backed workflow configuration
+
+On first startup, each project's `WORKFLOW.md` seeds an authoritative `Workflow configuration`
+record in PostgreSQL. Authenticated operators can edit its workflow graph, specialist agents,
+runtime providers, model routes, and tool providers in Django Admin or `/ops/configuration/`.
+Tempo validates references and graph acyclicity before activation, versions the effective workflow,
+and reloads saved database changes without a container restart. File-backed tracker, workspace,
+polling, review, and prompt policy continues to reload from `WORKFLOW.md`.

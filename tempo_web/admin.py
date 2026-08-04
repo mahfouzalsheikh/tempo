@@ -1,20 +1,32 @@
+from asgiref.sync import async_to_sync
 from django.contrib import admin
 
+from tempo.runtime import get_orchestrator
+
 from .models import (
+    AgentProfile,
     AgentRun,
+    AgentRuntimeDefinition,
     AgentSession,
     ApprovalRequest,
     CredentialReference,
     Environment,
+    ModelProviderDefinition,
     OperatorAction,
     Organization,
+    PlatformConfigurationChange,
     Project,
     Repository,
     RunCheckpoint,
+    RunNode,
+    ToolProviderDefinition,
     TrackedIssue,
     ValidationAttempt,
     ValidationCommand,
     WorkerLease,
+    WorkflowConfiguration,
+    WorkflowEdgeDefinition,
+    WorkflowNodeDefinition,
     WorkflowVersion,
 )
 
@@ -22,7 +34,6 @@ admin.site.register(Organization)
 admin.site.register(Project)
 admin.site.register(Repository)
 admin.site.register(Environment)
-admin.site.register(WorkflowVersion)
 admin.site.register(CredentialReference)
 
 
@@ -35,6 +46,15 @@ class ReadOnlyRuntimeAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+admin.site.register(WorkflowVersion, ReadOnlyRuntimeAdmin)
+admin.site.register(AgentRuntimeDefinition, ReadOnlyRuntimeAdmin)
+admin.site.register(ModelProviderDefinition, ReadOnlyRuntimeAdmin)
+admin.site.register(ToolProviderDefinition, ReadOnlyRuntimeAdmin)
+admin.site.register(AgentProfile, ReadOnlyRuntimeAdmin)
+admin.site.register(WorkflowNodeDefinition, ReadOnlyRuntimeAdmin)
+admin.site.register(WorkflowEdgeDefinition, ReadOnlyRuntimeAdmin)
 
 
 class AgentRunInline(admin.TabularInline):
@@ -208,6 +228,42 @@ admin.site.register(RunCheckpoint, ReadOnlyRuntimeAdmin)
 admin.site.register(WorkerLease, ReadOnlyRuntimeAdmin)
 admin.site.register(OperatorAction, ReadOnlyRuntimeAdmin)
 admin.site.register(ApprovalRequest, ReadOnlyRuntimeAdmin)
+admin.site.register(RunNode, ReadOnlyRuntimeAdmin)
+admin.site.register(PlatformConfigurationChange, ReadOnlyRuntimeAdmin)
+
+
+@admin.register(WorkflowConfiguration)
+class WorkflowConfigurationAdmin(admin.ModelAdmin):
+    list_display = ("project", "name", "active", "revision", "updated_at")
+    list_filter = ("active", "project__organization")
+    search_fields = ("project__name", "project__slug", "name")
+    readonly_fields = ("revision", "created_at", "updated_at")
+    fieldsets = (
+        (None, {"fields": ("project", "name", "active")}),
+        (
+            "Live workflow definition",
+            {
+                "fields": ("configuration",),
+                "description": (
+                    "Edit the workflow graph, specialist agents, runtimes, models, and tools. "
+                    "Tempo validates references and reloads saved changes on the next poll."
+                ),
+            },
+        ),
+        ("History", {"fields": ("revision", "created_at", "updated_at")}),
+    )
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def save_model(self, request, obj, form, change):
+        if change:
+            previous = WorkflowConfiguration.objects.get(pk=obj.pk)
+            obj.revision = previous.revision + 1
+        super().save_model(request, obj, form, change)
+        runtime = get_orchestrator()
+        if runtime:
+            async_to_sync(runtime.refresh)()
 
 
 admin.site.site_header = "Tempo administration"

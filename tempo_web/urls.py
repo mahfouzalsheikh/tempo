@@ -21,6 +21,12 @@ urlpatterns = [
     path("api/v1/auth/login", views.auth_login, name="auth_login"),
     path("api/v1/auth/logout", views.auth_logout, name="auth_logout"),
     path("api/v1/auth/me", views.auth_me, name="auth_me"),
+    path("api/v1/platform", views.platform_configuration, name="platform_configuration"),
+    path(
+        "api/v1/platform/<slug:organization>/<slug:project>",
+        views.update_platform_configuration,
+        name="update_platform_configuration",
+    ),
     path(
         "api/v1/approvals/<int:approval_id>/decision",
         views.approval_decision,

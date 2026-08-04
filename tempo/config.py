@@ -130,6 +130,7 @@ class CodexConfig(BaseModel):
     turn_timeout_ms: int = Field(default=3_600_000, gt=0)
     read_timeout_ms: int = Field(default=5_000, gt=0)
     stall_timeout_ms: int = Field(default=300_000, ge=0)
+    model: str | None = None
 
     @field_validator("command")
     @classmethod
@@ -156,6 +157,193 @@ class ProjectConfig(BaseModel):
         return normalized
 
 
+class RuntimeProviderConfig(BaseModel):
+    """Declarative agent-runtime endpoint. Runtime implementations are registry-backed."""
+
+    kind: str = "codex"
+    command: str | None = None
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("kind")
+    @classmethod
+    def kind_nonblank(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class ModelRouteConfig(BaseModel):
+    model: str
+    fallbacks: list[str] = Field(default_factory=list)
+    roles: list[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
+    max_cost_per_million_tokens: float | None = Field(default=None, gt=0)
+
+    @field_validator("model")
+    @classmethod
+    def model_nonblank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class ModelProviderConfig(BaseModel):
+    """Model-provider and routing metadata consumed by an AgentRuntime."""
+
+    kind: str = "openai"
+    model: str | None = None
+    fallbacks: list[str] = Field(default_factory=list)
+    routes: list[ModelRouteConfig] = Field(default_factory=list)
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("kind")
+    @classmethod
+    def kind_nonblank(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class ToolProviderConfig(BaseModel):
+    """A named tool bundle. Empty ``tools`` means every native Tempo tool."""
+
+    kind: str = "tempo"
+    allow_all: bool = True
+    tools: list[str] = Field(default_factory=list)
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("kind")
+    @classmethod
+    def kind_nonblank(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def tools_normalized(cls, value: list[str] | None) -> list[str]:
+        return list(dict.fromkeys(str(item).strip() for item in (value or []) if str(item).strip()))
+
+
+class AgentProfileConfig(BaseModel):
+    """A specialist role and its runtime/model/tool policy."""
+
+    role: str = "implementer"
+    runtime: str = "codex"
+    model: str = "default"
+    tool_providers: list[str] = Field(default_factory=lambda: ["tempo"])
+    prompt: str = ""
+    max_turns: int | None = Field(default=None, gt=0)
+    completion: Literal["turn", "validation", "publication"] = "publication"
+    capabilities: list[str] = Field(default_factory=list)
+    max_model_cost_per_million_tokens: float | None = Field(default=None, gt=0)
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("role", "runtime", "model")
+    @classmethod
+    def reference_nonblank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class WorkflowNodeConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    type: Literal["agent", "human_gate", "join"] = "agent"
+    name: str | None = None
+    agent: str | None = None
+    prompt: str = ""
+    max_retries: int = Field(default=0, ge=0, le=20)
+    approval_message: str = "Approve this workflow gate to continue."
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("id")
+    @classmethod
+    def id_nonblank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def agent_required(self) -> WorkflowNodeConfig:
+        if self.type == "agent" and not self.agent:
+            raise ValueError("agent nodes must reference an agent profile")
+        if self.type != "agent" and self.agent:
+            raise ValueError("only agent nodes may reference an agent profile")
+        return self
+
+
+class WorkflowEdgeConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    source: str = Field(alias="from")
+    target: str = Field(alias="to")
+    condition: str = "succeeded"
+
+    @field_validator("source", "target", "condition")
+    @classmethod
+    def value_nonblank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class WorkflowGraphConfig(BaseModel):
+    name: str = "issue-to-pull-request"
+    max_parallel_nodes: int = Field(default=1, gt=0, le=50)
+    require_publication: bool = True
+    nodes: list[WorkflowNodeConfig] = Field(
+        default_factory=lambda: [
+            WorkflowNodeConfig(id="implementation", agent="implementer")
+        ]
+    )
+    edges: list[WorkflowEdgeConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def valid_dag(self) -> WorkflowGraphConfig:
+        node_ids = [node.id for node in self.nodes]
+        if not node_ids:
+            raise ValueError("workflow graph must contain at least one node")
+        if len(node_ids) != len(set(node_ids)):
+            raise ValueError("workflow graph node ids must be unique")
+        known = set(node_ids)
+        adjacency: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
+        for edge in self.edges:
+            if edge.source not in known or edge.target not in known:
+                raise ValueError(
+                    f"workflow edge {edge.source}->{edge.target} references an unknown node"
+                )
+            if edge.source == edge.target:
+                raise ValueError("workflow graph nodes cannot depend on themselves")
+            adjacency[edge.source].append(edge.target)
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(node_id: str) -> None:
+            if node_id in visiting:
+                raise ValueError("workflow graph must be acyclic")
+            if node_id in visited:
+                return
+            visiting.add(node_id)
+            for target in adjacency[node_id]:
+                visit(target)
+            visiting.remove(node_id)
+            visited.add(node_id)
+
+        for node_id in node_ids:
+            visit(node_id)
+        return self
+
+
 class ServiceConfig(BaseModel):
     project: ProjectConfig = Field(default_factory=ProjectConfig)
     tracker: TrackerConfig
@@ -166,6 +354,19 @@ class ServiceConfig(BaseModel):
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     codex: CodexConfig = Field(default_factory=CodexConfig)
+    runtime_providers: dict[str, RuntimeProviderConfig] = Field(
+        default_factory=lambda: {"codex": RuntimeProviderConfig()}
+    )
+    model_providers: dict[str, ModelProviderConfig] = Field(
+        default_factory=lambda: {"default": ModelProviderConfig()}
+    )
+    tool_providers: dict[str, ToolProviderConfig] = Field(
+        default_factory=lambda: {"tempo": ToolProviderConfig()}
+    )
+    agents: dict[str, AgentProfileConfig] = Field(
+        default_factory=lambda: {"implementer": AgentProfileConfig()}
+    )
+    workflow: WorkflowGraphConfig = Field(default_factory=WorkflowGraphConfig)
 
     @model_validator(mode="after")
     def disjoint_states(self) -> ServiceConfig:
@@ -177,6 +378,29 @@ class ServiceConfig(BaseModel):
             repo = str(self.tracker.provider.get("repo", "")).strip()
             if len(repo.split("/")) != 2 or any(not part for part in repo.split("/")):
                 raise ValueError("tracker.provider.repo must be owner/repo for GitHub")
+        if not self.runtime_providers:
+            raise ValueError("at least one runtime provider is required")
+        if not self.model_providers:
+            raise ValueError("at least one model provider is required")
+        for name, profile in self.agents.items():
+            if not name.strip():
+                raise ValueError("agent profile names must not be blank")
+            if profile.runtime not in self.runtime_providers:
+                raise ValueError(
+                    f"agent {name} references unknown runtime provider {profile.runtime}"
+                )
+            if profile.model not in self.model_providers:
+                raise ValueError(f"agent {name} references unknown model provider {profile.model}")
+            missing_tools = set(profile.tool_providers) - set(self.tool_providers)
+            if missing_tools:
+                raise ValueError(
+                    f"agent {name} references unknown tool providers: {sorted(missing_tools)}"
+                )
+        for node in self.workflow.nodes:
+            if node.type == "agent" and node.agent not in self.agents:
+                raise ValueError(
+                    f"workflow node {node.id} references unknown agent profile {node.agent}"
+                )
         return self
 
     @property

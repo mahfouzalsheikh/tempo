@@ -6,42 +6,39 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Operations · Tempo</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23b9f65f'/><path d='M8 9h16v4h-6v11h-4V13H8z' fill='%2311150d'/></svg>">
-  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260729-2">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260802-1">
 </head>
-<body>
+<body data-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}">
+  <a class="skip-link" href="#main-content">Skip to operations</a>
   <div class="app-shell">
     {% include "_sidebar.html" %}
-    <main class="workspace operator-workspace">
-      <header class="compact">
-        <div>
-          <p class="eyebrow">OPERATOR CONSOLE</p>
-          <h1>Runtime</h1>
-          <p class="subtitle">Scheduler health, capacity, retries, and service-level policy.</p>
-        </div>
-        <div class="actions"><span id="status" class="status"><i></i> Connecting</span><button id="refresh" class="button secondary">Poll now</button></div>
-      </header>
-      <section class="metrics">
-        <article><span>Running</span><strong id="admin-running">—</strong></article>
-        <article><span>Claimed</span><strong id="admin-claimed">—</strong></article>
-        <article><span>Retries</span><strong id="admin-retries">—</strong></article>
-        <article><span>Completed</span><strong id="admin-completed">—</strong></article>
-        <article><span>Safety stops</span><strong id="admin-safety-blocked">—</strong></article>
-      </section>
-      <section class="panel">
-        <div class="panel-title"><h2>Project portfolio</h2><span id="admin-project-count"></span></div>
-        <div id="admin-projects" class="project-grid"></div>
-      </section>
-      <section class="panel">
-        <div class="panel-title"><h2>Runtime policy</h2></div>
-        <dl id="admin-runtime"></dl>
-      </section>
-      <section class="panel">
-        <div class="panel-title"><h2>Rate limits</h2></div>
-        <pre id="admin-rate-limits" class="codeblock">No rate-limit telemetry received.</pre>
-      </section>
+    <main id="main-content" class="workspace operator-workspace">
+    <header class="workspace-header">
+      <div>
+        <p class="breadcrumb">TEMPO <span>/</span> OPERATIONS</p>
+        <h1>Runtime</h1>
+        <p class="subtitle">Scheduler health, capacity, retries, and service-level policy.</p>
+      </div>
+      <div class="header-actions"><span id="status" class="status"><i></i> Connecting</span><button id="refresh" class="button secondary" type="button"><span aria-hidden="true">↻</span> Poll now</button></div>
+    </header>
+    <section class="metric-grid operator-metrics" aria-label="Runtime metrics">
+      <article class="metric-card featured"><div class="metric-label"><span class="metric-icon running-icon">↯</span>Running</div><strong id="admin-running">—</strong><small>Active agent sessions</small></article>
+      <article class="metric-card"><div class="metric-label"><span class="metric-icon token-icon">◌</span>Claimed</div><strong id="admin-claimed">—</strong><small>Durably claimed work</small></article>
+      <article class="metric-card"><div class="metric-label"><span class="metric-icon queue-icon">↻</span>Retries</div><strong id="admin-retries">—</strong><small>Waiting for retry</small></article>
+      <article class="metric-card"><div class="metric-label"><span class="metric-icon success-icon">✓</span>Completed</div><strong id="admin-completed">—</strong><small>Successful runs</small></article>
+      <article class="metric-card"><div class="metric-label"><span class="metric-icon stop-icon">!</span>Safety stops</div><strong id="admin-safety-blocked">—</strong><small>Policy-blocked runs</small></article>
+    </section>
+    <section class="panel operator-panel">
+      <div class="panel-heading"><div><p class="section-kicker">PORTFOLIO</p><h2>Project portfolio</h2></div><span id="admin-project-count" class="panel-count"></span></div>
+      <div id="admin-projects" class="project-grid"></div>
+    </section>
+    <div class="operator-grid">
+      <section class="panel"><div class="panel-heading"><div><p class="section-kicker">POLICY</p><h2>Runtime policy</h2></div></div><dl id="admin-runtime" class="operator-definition-list"></dl></section>
+      <section class="panel"><div class="panel-heading"><div><p class="section-kicker">CAPACITY</p><h2>Rate limits</h2></div></div><pre id="admin-rate-limits" class="codeblock operator-codeblock">No rate-limit telemetry received.</pre></section>
+    </div>
     </main>
   </div>
   {% csrf_token %}
-  <script src="{% static 'admin.js' %}?v=20260729-1"></script>
+  <script src="{% static 'admin.js' %}?v=20260802-1"></script>
 </body>
 </html>

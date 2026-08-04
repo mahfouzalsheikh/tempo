@@ -2,10 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from tempo.config import build_config
+from tempo.agent_runtime import ConfiguredModelProvider
+from tempo.config import AgentProfileConfig, ModelProviderConfig, build_config
 from tempo.domain import Issue
 from tempo.errors import ConfigError, WorkflowError
-from tempo.workflow import load_workflow, render_prompt
+from tempo.workflow import WorkflowStore, load_workflow, render_prompt
 
 
 def write_workflow(tmp_path: Path, text: str) -> Path:
@@ -125,3 +126,115 @@ prompt
     assert config.review.merge_method == "rebase"
     assert config.review.reviewers == ["octocat", "maintainer"]
     assert config.review.team_reviewers == ["platform"]
+
+
+def test_typed_graph_validates_references_parallel_fanout_and_cycles(tmp_path):
+    path = write_workflow(
+        tmp_path,
+        """---
+tracker:
+  kind: memory
+  active_states: [Todo]
+  terminal_states: [Done]
+agents:
+  planner:
+    role: planner
+    completion: turn
+  implementer:
+    role: implementer
+workflow:
+  name: specialist-team
+  max_parallel_nodes: 2
+  nodes:
+    - {id: plan, type: agent, agent: planner}
+    - {id: api, type: agent, agent: implementer}
+    - {id: web, type: agent, agent: implementer}
+    - {id: review, type: join, settings: {join: all}}
+  edges:
+    - {from: plan, to: api}
+    - {from: plan, to: web}
+    - {from: api, to: review}
+    - {from: web, to: review}
+---
+Work on {{ issue.identifier }}.
+""",
+    )
+    definition = load_workflow(path)
+    config = build_config(definition.config, path)
+    assert config.workflow.name == "specialist-team"
+    assert config.workflow.max_parallel_nodes == 2
+    assert [edge.target for edge in config.workflow.edges[:2]] == ["api", "web"]
+
+    definition.config["workflow"]["edges"].append({"from": "review", "to": "plan"})
+    with pytest.raises(ConfigError, match="acyclic"):
+        build_config(definition.config, path)
+
+
+def test_model_routes_select_by_role_capability_cost_and_fallback():
+    provider = ConfiguredModelProvider()
+    config = ModelProviderConfig.model_validate(
+        {
+            "kind": "openai",
+            "model": "default-model",
+            "fallbacks": ["last-resort"],
+            "routes": [
+                {
+                    "model": "review-model",
+                    "fallbacks": ["review-fallback"],
+                    "roles": ["reviewer"],
+                    "capabilities": ["code-review"],
+                    "max_cost_per_million_tokens": 4.0,
+                }
+            ],
+        }
+    )
+    profile = AgentProfileConfig(
+        role="reviewer",
+        capabilities=["code-review"],
+        max_model_cost_per_million_tokens=5.0,
+    )
+    first = provider.resolve(config, profile)
+    second = provider.resolve(config, profile, candidate_index=1)
+    assert first.model == "review-model"
+    assert first.candidates == (
+        "review-model",
+        "review-fallback",
+        "default-model",
+        "last-resort",
+    )
+    assert second.model == "review-fallback"
+
+
+@pytest.mark.asyncio
+async def test_platform_sections_are_validated_and_layered_over_file_config(tmp_path):
+    path = write_workflow(
+        tmp_path,
+        """---
+tracker:
+  kind: memory
+  active_states: [Todo]
+  terminal_states: [Done]
+---
+Keep this prompt for {{ issue.identifier }}.
+""",
+    )
+    store = WorkflowStore(path)
+    await store.initialize()
+    original = path.read_text()
+    await store.update_platform_sections(
+        {
+            "agents": {
+                "reviewer": {
+                    "role": "reviewer",
+                    "completion": "turn",
+                }
+            },
+            "workflow": {
+                "nodes": [{"id": "review", "agent": "reviewer"}],
+            },
+        }
+    )
+    definition, config = store.current()
+    assert config.workflow.nodes[0].agent == "reviewer"
+    assert "Keep this prompt" in definition.prompt_template
+    assert path.read_text() == original
