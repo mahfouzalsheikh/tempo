@@ -464,6 +464,32 @@ async def test_token_limit_blocks_after_retry_budget_is_exhausted(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_provider_usage_limit_blocks_immediately_without_consuming_retries(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    await orchestrator.store.initialize()
+    issue = Issue(id="quota", identifier="A-QUOTA", title="Wait", state="Todo")
+
+    async def provider_limit():
+        raise CodexError(
+            "Your workspace is out of credits.",
+            category="provider_usage_limit",
+        )
+
+    task = asyncio.create_task(provider_limit())
+    await asyncio.gather(task, return_exceptions=True)
+    entry = RunningEntry(issue=issue, task=task, attempt=None)
+    orchestrator.running[issue.id] = entry
+    orchestrator.claimed.add(issue.id)
+
+    await orchestrator._worker_finished(issue.id, task)
+
+    assert entry.phase == "SafetyLimitReached"
+    assert issue.id in orchestrator.safety_blocked
+    assert issue.id not in orchestrator.claimed
+    assert orchestrator.retries == {}
+
+
+@pytest.mark.asyncio
 async def test_review_agent_uses_separate_session_and_applies_merge_policy(tmp_path, monkeypatch):
     orchestrator = Orchestrator(str(workflow(tmp_path)))
     await orchestrator.store.initialize()

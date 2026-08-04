@@ -60,6 +60,26 @@ for line in sys.stdin:
         )
     elif method == "turn/start":
         send({"id": message["id"], "result": {"turn": {"id": "turn-test"}}})
+        if "--usage-limit" in sys.argv:
+            send(
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "turn": {
+                            "id": "turn-test",
+                            "status": "failed",
+                            "error": {
+                                "message": (
+                                    "Your workspace is out of credits. Ask your workspace owner "
+                                    "to refill in order to continue."
+                                ),
+                                "codexErrorInfo": "usageLimitExceeded",
+                            },
+                        }
+                    },
+                }
+            )
+            continue
         budget_resume = "--budget-resume" in sys.argv
         send(
             {

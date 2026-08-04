@@ -263,8 +263,24 @@ class CodexAppServer:
             event = self._normalize_usage_for_attempt(session, self._event_from_message(message))
             await self.on_event(event)
             if method == "turn/completed":
-                status = message.get("params", {}).get("turn", {}).get("status", "completed")
+                turn = message.get("params", {}).get("turn", {})
+                status = turn.get("status", "completed")
                 if status in {"failed", "interrupted", "cancelled"}:
+                    error = turn.get("error") or {}
+                    error_message = str(error.get("message") or "").strip()
+                    error_code = "".join(
+                        character
+                        for character in str(error.get("codexErrorInfo") or "").lower()
+                        if character.isalnum()
+                    )
+                    if error_code == "usagelimitexceeded" or (
+                        "workspace" in error_message.lower()
+                        and "out of credits" in error_message.lower()
+                    ):
+                        raise CodexError(
+                            error_message or "Codex provider usage limit exceeded",
+                            category="provider_usage_limit",
+                        )
                     raise CodexError(f"turn ended with status {status}", category="turn_failed")
                 return message
             if method in {"turn/failed", "turn/cancelled"}:

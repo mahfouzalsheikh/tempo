@@ -6,6 +6,7 @@ import pytest
 from tempo.codex import CodexAppServer
 from tempo.config import HooksConfig, ServiceConfig
 from tempo.domain import Issue
+from tempo.errors import CodexError
 from tempo.trackers.memory import MemoryTracker
 from tempo.workspace import WorkspaceManager
 
@@ -90,6 +91,42 @@ async def test_codex_resumes_thread_with_fresh_attempt_usage(tmp_path):
     assert any(event["event"] == "thread_resumed" for event in events)
     assert any(event.get("usage", {}).get("total_tokens") == 15 for event in events)
     assert any(event.get("thread_usage", {}).get("total_tokens") == 165 for event in events)
+
+
+@pytest.mark.asyncio
+async def test_codex_reports_provider_usage_limit_without_losing_message(tmp_path):
+    manager = WorkspaceManager(tmp_path / "root", HooksConfig())
+    workspace = await manager.create("A-QUOTA")
+
+    async def on_event(_event):
+        pass
+
+    script = Path(__file__).parent / "fixtures" / "fake_app_server.py"
+    client = CodexAppServer(
+        ServiceConfig.model_validate(
+            {
+                "tracker": {
+                    "kind": "memory",
+                    "active_states": ["Todo"],
+                    "terminal_states": ["Done"],
+                },
+                "workspace": {"root": tmp_path / "root"},
+                "validation": {"enabled": False},
+                "codex": {"command": f"python {script} --usage-limit"},
+            }
+        ),
+        manager,
+        MemoryTracker(),
+        on_event,
+    )
+    session = await client.start_session(workspace.path)
+    issue = Issue(id="quota", identifier="A-QUOTA", title="Wait", state="Todo")
+
+    with pytest.raises(CodexError, match="workspace is out of credits") as exc_info:
+        await client.run_turn(session, "Continue", issue)
+    await client.stop_session(session)
+
+    assert exc_info.value.category == "provider_usage_limit"
 
 
 def test_resumed_attempt_local_usage_advances_durable_thread_baseline():

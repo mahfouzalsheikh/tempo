@@ -619,6 +619,12 @@ exceeded. Stall detection cancels a worker when its last Codex event or start ti
 `stall_timeout_ms`. It is suspended while project validation is running because validation commands
 and cleanup have their own explicit timeouts and long, quiet builds are valid activity.
 
+A provider account or workspace quota failure is different from a per-run token-budget rollover.
+Tempo records the provider's actionable message and immediately moves the run to
+`SafetyLimitReached` without consuming generic retries. After the account owner restores credits or
+the provider limit resets, the operator can select **Unblock**; the existing node thread and
+workspace are then resumed instead of starting the issue from scratch.
+
 Any resumed node whose cumulative provider thread has already crossed the per-attempt token limit
 is compacted before its next turn, including cancellation, crash, and operator-requeue recovery.
 
