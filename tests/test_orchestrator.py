@@ -127,7 +127,7 @@ async def test_unblock_resumes_interrupted_node_with_fresh_token_budget(tmp_path
     source = path.read_text()
     source = source.replace(
         "max_turns: 1",
-        "max_turns: 1\n  max_tokens_per_run: 14",
+        "max_turns: 1\n  max_tokens_per_run: 14\n  max_retries: 0",
     ).replace(
         "fake_app_server.py",
         "fake_app_server.py --budget-resume",
@@ -389,7 +389,7 @@ async def test_existing_pull_request_discovery_advances_implementation(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_safety_limit_failure_is_blocked_instead_of_retried(tmp_path):
+async def test_token_limit_automatically_rolls_over_to_a_continuation(tmp_path):
     orchestrator = Orchestrator(str(workflow(tmp_path)))
     await orchestrator.store.initialize()
     issue = Issue(id="blocked", identifier="A-BLOCK", title="Stop", state="Todo")
@@ -400,6 +400,35 @@ async def test_safety_limit_failure_is_blocked_instead_of_retried(tmp_path):
     task = asyncio.create_task(exceed_budget())
     await asyncio.gather(task, return_exceptions=True)
     entry = RunningEntry(issue=issue, task=task, attempt=None)
+    entry.phase = "SafetyLimitReached"
+    orchestrator.running[issue.id] = entry
+    orchestrator.claimed.add(issue.id)
+
+    await orchestrator._worker_finished(issue.id, task)
+
+    assert issue.id not in orchestrator.safety_blocked
+    assert issue.id in orchestrator.claimed
+    assert orchestrator.retries[issue.id].attempt == 1
+    assert orchestrator.retries[issue.id].error == "budget reached"
+
+
+@pytest.mark.asyncio
+async def test_token_limit_blocks_after_retry_budget_is_exhausted(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    await orchestrator.store.initialize()
+    _, config = orchestrator.store.current()
+    issue = Issue(id="blocked", identifier="A-BLOCK", title="Stop", state="Todo")
+
+    async def exceed_budget():
+        raise CodexError("budget reached", category="token_budget_exceeded")
+
+    task = asyncio.create_task(exceed_budget())
+    await asyncio.gather(task, return_exceptions=True)
+    entry = RunningEntry(
+        issue=issue,
+        task=task,
+        attempt=config.agent.max_retries,
+    )
     entry.phase = "SafetyLimitReached"
     orchestrator.running[issue.id] = entry
     orchestrator.claimed.add(issue.id)

@@ -609,12 +609,13 @@ The exponent is capped for arithmetic safety. A continuation after exhausting a 
 Codex turns uses a 1-second delay. If no execution slot is available when a retry is due, Tempo
 reschedules it and increments the attempt.
 
-Token budget excess and validation-attempt excess go directly to a safety stop. Unblocking starts
-a new durable run attempt and a fresh attempt-level token budget, while reopening the interrupted
-node's provider thread. If the prior attempt exhausted its token budget, Tempo first asks Codex to
-compact that thread's history. Compaction usage advances the cumulative thread baseline but is not
-charged to the new work-attempt budget. Other failures retry until `max_retries` is exceeded. Stall
-detection cancels a worker when its last Codex event or start time is older than
+A token-budget excess automatically schedules a one-second continuation while retry capacity
+remains. The next attempt receives a fresh attempt-level token budget, reopens the interrupted
+node's provider thread, and compacts its history before continuing. Compaction usage advances the
+cumulative thread baseline but is not charged to the new work-attempt budget. The run becomes a
+safety stop only after `max_retries` budget epochs are exhausted. Validation-attempt excess still
+stops immediately for operator review. Other failures use normal backoff until `max_retries` is
+exceeded. Stall detection cancels a worker when its last Codex event or start time is older than
 `stall_timeout_ms`.
 
 ### Durable recovery

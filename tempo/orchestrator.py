@@ -1474,12 +1474,10 @@ class Orchestrator:
             else:
                 category = getattr(error, "category", "")
                 next_attempt = (entry.attempt or 0) + 1
-                safety_limit = category in {
-                    "token_budget_exceeded",
-                    "validation_attempt_limit",
-                }
+                validation_limit = category == "validation_attempt_limit"
+                token_rollover = category == "token_budget_exceeded"
                 retry_exhausted = next_attempt > config.agent.max_retries
-                if safety_limit or retry_exhausted:
+                if validation_limit or retry_exhausted:
                     entry.phase = "SafetyLimitReached"
                 if self.persistence:
                     await self.persistence.finish_run(
@@ -1487,7 +1485,7 @@ class Orchestrator:
                         status="failed",
                         error=str(error),
                     )
-                if safety_limit or retry_exhausted:
+                if validation_limit or retry_exhausted:
                     self.claimed.discard(issue_id)
                     self.safety_blocked.add(issue_id)
                 else:
@@ -1497,6 +1495,7 @@ class Orchestrator:
                         next_attempt,
                         str(error),
                         config,
+                        continuation=token_rollover,
                         run_record_id=entry.run_record_id,
                     )
                 await log.aerror(
