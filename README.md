@@ -79,6 +79,11 @@ Compose persists PostgreSQL data, workspaces, and SQLite fallback data in named 
 Codex state remains in the host's `~/.codex`. `docker compose down` preserves all of them;
 `docker compose down -v` intentionally deletes the named volumes but does not delete host Codex
 state.
+
+The Tempo service relaxes Docker's outer seccomp profile so Codex can create its inner Linux
+`workspace-write` sandbox with `bwrap`. Codex commands remain restricted to the issue workspace;
+the validation and Docker-in-Docker services keep their separate isolation boundaries.
+
 After source changes, rebuild and health-check all services with:
 
 ```bash

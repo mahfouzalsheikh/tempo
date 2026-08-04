@@ -795,6 +795,11 @@ The Tempo service bind-mounts the host's `~/.codex` read/write at `/home/tempo/.
 uses the same ChatGPT authentication and state as the host CLI. The validation service does not
 receive this mount.
 
+The Tempo container uses `seccomp=unconfined` for its outer Docker boundary because Docker's
+default seccomp profile blocks the namespace operation required by Codex's Linux `bwrap` sandbox.
+Codex itself remains in `workspace-write` mode, so agent commands retain the inner filesystem and
+network restrictions instead of switching to unrestricted execution.
+
 `tempo` waits for PostgreSQL, validation, and Docker health checks. It mounts `WORKFLOW.md`
 read-only and exposes the application on container port 8000. The validation service exposes only
 its Compose network port 8787.

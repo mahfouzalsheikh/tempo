@@ -4,6 +4,10 @@ services:
       context: .
     init: true
     restart: unless-stopped
+    # Codex keeps its workspace-write bwrap sandbox. Docker's default seccomp profile blocks the
+    # namespace operation that creates that inner sandbox, so relax only the outer seccomp layer.
+    security_opt:
+      - seccomp=unconfined
     ports:
       - "${TEMPO_PORT:-8030}:8000"
     environment:
