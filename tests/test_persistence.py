@@ -105,3 +105,23 @@ async def test_persists_run_session_and_validation_history(tmp_path: Path):
     assert interrupted_run.status == AgentRun.Status.RETRY_SCHEDULED
     assert interrupted_run.phase == "Recovering"
     assert interrupted_validation.status == ValidationAttempt.Status.INVALIDATED
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_restarting_existing_run_clears_previous_error(tmp_path: Path):
+    issue = Issue(id="restart", identifier="GH-RESTART", title="Continue", state="open")
+    entry = RunningEntry(issue=issue, task=None, attempt=1)
+    store = PersistenceStore("github")
+    entry.run_record_id = await store.start_run(entry, tmp_path)
+    await AgentRun.objects.filter(pk=entry.run_record_id).aupdate(
+        status=AgentRun.Status.FAILED,
+        phase="SafetyLimitReached",
+        error="previous token-limit failure",
+    )
+
+    await store.start_run(entry, tmp_path)
+
+    restarted = await AgentRun.objects.aget(pk=entry.run_record_id)
+    assert restarted.status == AgentRun.Status.RUNNING
+    assert restarted.error == ""

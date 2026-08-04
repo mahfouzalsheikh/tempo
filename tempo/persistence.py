@@ -422,6 +422,7 @@ class PersistenceStore:
                 started_at=entry.started_at,
                 finished_at=None,
                 heartbeat_at=utcnow(),
+                error="",
             )
         else:
             run = await AgentRun.objects.acreate(
