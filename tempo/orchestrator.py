@@ -518,15 +518,30 @@ class Orchestrator:
                         category="publication_response",
                     )
                 if config.review.enabled:
-                    await self._run_review_agent(
-                        issue,
-                        workspace.path,
-                        config,
-                        workspace_manager,
-                        tracker,
-                        entry.session.pull_request_number,
-                        on_approval,
+                    recovered_review = (
+                        await self.persistence.completed_review_decision(entry.run_record_id)
+                        if self.persistence and entry.run_record_id
+                        else None
                     )
+                    if recovered_review:
+                        await self._apply_review_decision(
+                            issue,
+                            config,
+                            tracker,
+                            entry.session.pull_request_number,
+                            decision=recovered_review["decision"],
+                            summary=recovered_review["summary"],
+                        )
+                    else:
+                        await self._run_review_agent(
+                            issue,
+                            workspace.path,
+                            config,
+                            workspace_manager,
+                            tracker,
+                            entry.session.pull_request_number,
+                            on_approval,
+                        )
                 else:
                     entry.phase = "HumanReviewRequired"
                     entry.session.review_status = "human_review"
@@ -579,6 +594,7 @@ class Orchestrator:
             )
         if self.persistence:
             await self.persistence.initialize_run_nodes(entry)
+        self._restore_completed_node_sessions(entry)
         for state in entry.graph_nodes.values():
             if state.status in {"running", "waiting", "failed", "cancelled"}:
                 state.status = "pending"
@@ -1014,6 +1030,35 @@ class Orchestrator:
             await runtime.stop_session(runtime_session)
 
     @staticmethod
+    def _restore_completed_node_sessions(entry: RunningEntry) -> None:
+        """Rebuild publication state when a retry skips already-succeeded graph nodes."""
+        for node_id, state in entry.graph_nodes.items():
+            output = state.output
+            if state.status != "succeeded" or not output or node_id in entry.node_sessions:
+                continue
+            pull_request_url = str(output.get("pull_request_url") or "").strip() or None
+            pull_request_number = None
+            if pull_request_url:
+                with contextlib.suppress(ValueError):
+                    pull_request_number = int(pull_request_url.rstrip("/").rsplit("/", 1)[-1])
+            entry.node_sessions[node_id] = LiveSession(
+                session_id=str(output.get("session_id") or "") or None,
+                thread_id=str(output.get("thread_id") or "") or None,
+                turn_count=int(output.get("turns", 0)),
+                codex_input_tokens=int(output.get("input_tokens", 0)),
+                codex_output_tokens=int(output.get("output_tokens", 0)),
+                codex_total_tokens=int(output.get("total_tokens", 0)),
+                validation_status=str(output.get("validation_status") or "pending"),
+                pull_request_created=bool(pull_request_url),
+                pull_request_url=pull_request_url,
+                pull_request_number=pull_request_number,
+                no_change_completed=bool(output.get("no_change_completed", False)),
+                completion_summary=str(output.get("summary") or "") or None,
+                active_node_id=node_id,
+                active_agent_role=state.role,
+            )
+
+    @staticmethod
     def _aggregate_node_sessions(entry: RunningEntry) -> None:
         if entry.node_sessions_aggregated:
             return
@@ -1137,51 +1182,72 @@ class Orchestrator:
                     category="review_completion_required",
                 )
 
-            summary = review_session.review_summary or "Independent review completed."
-            if review_session.review_decision == "approve":
-                entry.phase = "ApplyingMergePolicy"
-                outcome = await tracker.complete_pull_request_review(
-                    issue,
-                    pull_request_number,
-                    summary=summary,
-                    auto_merge=config.review.auto_merge,
-                    merge_method=config.review.merge_method,
-                    reviewers=config.review.reviewers,
-                    team_reviewers=config.review.team_reviewers,
-                )
-            else:
-                outcome = await tracker.require_human_review(
-                    issue,
-                    pull_request_number,
-                    reason=summary,
-                    summary=summary,
-                    reviewers=config.review.reviewers,
-                    team_reviewers=config.review.team_reviewers,
-                )
-
-            status = str(outcome.get("status", "human_review"))
-            entry.session.review_summary = summary
-            entry.session.review_status = status
-            if status == "merged":
-                entry.phase = "Merged"
-                entry.session.merged = True
-                entry.session.human_review_reason = None
-            else:
-                reason = str(outcome.get("reason", summary))
-                entry.phase = "HumanReviewRequired"
-                entry.session.human_review_reason = reason
-            await self._codex_event(
-                issue.id,
-                {
-                    "event": "review_outcome",
-                    "status": status,
-                    "summary": summary,
-                    "reason": entry.session.human_review_reason,
-                },
+            await self._apply_review_decision(
+                issue,
+                config,
+                tracker,
+                pull_request_number,
+                decision=review_session.review_decision,
+                summary=review_session.review_summary or "Independent review completed.",
             )
         finally:
             if review_session:
                 await review_client.stop_session(review_session)
+
+    async def _apply_review_decision(
+        self,
+        issue: Issue,
+        config: ServiceConfig,
+        tracker: Tracker,
+        pull_request_number: int,
+        *,
+        decision: str,
+        summary: str,
+    ) -> None:
+        entry = self.running.get(issue.id)
+        if not entry:
+            raise CodexError("run was released before review policy", category="run_released")
+        if decision == "approve":
+            entry.phase = "ApplyingMergePolicy"
+            outcome = await tracker.complete_pull_request_review(
+                issue,
+                pull_request_number,
+                summary=summary,
+                auto_merge=config.review.auto_merge,
+                merge_method=config.review.merge_method,
+                reviewers=config.review.reviewers,
+                team_reviewers=config.review.team_reviewers,
+            )
+        else:
+            outcome = await tracker.require_human_review(
+                issue,
+                pull_request_number,
+                reason=summary,
+                summary=summary,
+                reviewers=config.review.reviewers,
+                team_reviewers=config.review.team_reviewers,
+            )
+
+        status = str(outcome.get("status", "human_review"))
+        entry.session.review_summary = summary
+        entry.session.review_status = status
+        if status == "merged":
+            entry.phase = "Merged"
+            entry.session.merged = True
+            entry.session.human_review_reason = None
+        else:
+            reason = str(outcome.get("reason", summary))
+            entry.phase = "HumanReviewRequired"
+            entry.session.human_review_reason = reason
+        await self._codex_event(
+            issue.id,
+            {
+                "event": "review_outcome",
+                "status": status,
+                "summary": summary,
+                "reason": entry.session.human_review_reason,
+            },
+        )
 
     async def _heartbeat_worker(self, entry: RunningEntry) -> None:
         while entry.issue.id in self.running:

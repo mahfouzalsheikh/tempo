@@ -632,7 +632,9 @@ At startup and during ticks:
 - Queued/retry runs are restored into the live retry map.
 - Completed issue IDs and `SafetyLimitReached` issue IDs repopulate their suppression sets.
 
-On recovery, succeeded and skipped `RunNode` rows remain terminal and are not repeated. An
+On recovery, succeeded and skipped `RunNode` rows remain terminal and are not repeated. Tempo
+rehydrates the live session from each succeeded node's output, including validation and publication
+state, so a retry can advance from an existing PR instead of treating the skipped node as empty. An
 interrupted node is reset to pending, then its stored thread ID and cumulative token baseline are
 passed to the configured runtime. Codex uses `thread/resume`; cumulative provider usage is reduced
 by the stored baseline so only post-unblock tokens count against the fresh limit. A node whose
@@ -643,7 +645,9 @@ instead of replaying the original issue prompt.
 
 `AgentSession` still supplies pull-request recovery context for the post-publication review path.
 If a PR URL is absent, Tempo searches GitHub tool checkpoints and reconstructs it from a successful
-PR response or numbered PR lookup.
+PR response or numbered PR lookup. A successful `tempo_review` decision is also a durable commit
+point: if a token stop or crash happens after the decision but before merge policy runs, the retry
+applies that recorded decision without repeating the independent review.
 
 ## Operator control and HTTP API
 

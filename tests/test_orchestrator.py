@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tempo.domain import Issue, RunningEntry, Totals
+from tempo.domain import Issue, NodeExecutionState, RunningEntry, Totals
 from tempo.errors import CodexError
 from tempo.orchestrator import Orchestrator
 from tempo.trackers.memory import MemoryTracker
@@ -503,3 +503,69 @@ async def test_review_agent_uses_separate_session_and_applies_merge_policy(tmp_p
     assert entry.phase == "Merged"
     assert entry.session.review_status == "merged"
     assert entry.session.merged is True
+
+
+def test_completed_publication_node_restores_session_for_retry(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    issue = Issue(id="recover", identifier="A-RECOVER", title="Recover it", state="Todo")
+    entry = RunningEntry(issue=issue, task=None, attempt=1)
+    entry.graph_nodes["implementation"] = NodeExecutionState(
+        node_id="implementation",
+        name="Implementation",
+        node_type="agent",
+        role="implementer",
+        status="succeeded",
+        output={
+            "session_id": "session-1",
+            "thread_id": "thread-1",
+            "turns": 2,
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "total_tokens": 120,
+            "validation_status": "passed",
+            "pull_request_url": "https://github.test/acme/repo/pull/17",
+            "no_change_completed": False,
+            "summary": "Publication completed.",
+        },
+    )
+
+    orchestrator._restore_completed_node_sessions(entry)
+    orchestrator._aggregate_node_sessions(entry)
+
+    assert entry.session.pull_request_created is True
+    assert entry.session.pull_request_number == 17
+    assert entry.session.pull_request_url == "https://github.test/acme/repo/pull/17"
+    assert entry.session.validation_status == "passed"
+    assert entry.session.codex_total_tokens == 120
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_completed_review_decision_is_recovered_from_checkpoint(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    await orchestrator.start()
+    for _ in range(100):
+        if orchestrator.completed:
+            break
+        await asyncio.sleep(0.02)
+
+    from tempo_web.models import AgentRun, RunCheckpoint
+
+    run = await AgentRun.objects.aget(issue__identifier="A-1")
+    await RunCheckpoint.objects.acreate(
+        run=run,
+        sequence=100,
+        kind="tool_call_completed",
+        idempotency_key="recorded-review-decision",
+        payload={
+            "tool": "tempo_review",
+            "success": True,
+            "arguments": {"decision": "approve", "summary": "Review passed."},
+        },
+    )
+
+    assert await orchestrator.persistence.completed_review_decision(run.pk) == {
+        "decision": "approve",
+        "summary": "Review passed.",
+    }
+    await orchestrator.stop()

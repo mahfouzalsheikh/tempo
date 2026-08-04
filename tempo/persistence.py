@@ -612,6 +612,24 @@ class PersistenceStore:
 
         await RunNode.objects.filter(run_id=run_id, node_key=node_id).aupdate(model=model)
 
+    async def completed_review_decision(self, run_id: int) -> dict[str, str] | None:
+        """Recover a review decision recorded before post-review policy was applied."""
+        from tempo_web.models import RunCheckpoint
+
+        checkpoints = RunCheckpoint.objects.filter(
+            run_id=run_id,
+            kind="tool_call_completed",
+            payload__tool="tempo_review",
+            payload__success=True,
+        ).order_by("-sequence")
+        async for checkpoint in checkpoints:
+            arguments = checkpoint.payload.get("arguments") or {}
+            decision = str(arguments.get("decision", "")).strip()
+            summary = str(arguments.get("summary", "")).strip()
+            if decision in {"approve", "human_review"} and summary:
+                return {"decision": decision, "summary": summary}
+        return None
+
     async def finish_run_node(
         self,
         run_id: int,
