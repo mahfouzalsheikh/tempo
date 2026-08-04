@@ -288,7 +288,20 @@ class CodexAppServer:
                 session.usage_baseline_total > 0 and raw_total >= session.usage_baseline_total
             )
         if not session.usage_is_cumulative:
-            return event
+            return {
+                **event,
+                "thread_usage": {
+                    "input_tokens": (
+                        session.usage_baseline_input
+                        + int(usage.get("input_tokens", 0))
+                    ),
+                    "output_tokens": (
+                        session.usage_baseline_output
+                        + int(usage.get("output_tokens", 0))
+                    ),
+                    "total_tokens": session.usage_baseline_total + raw_total,
+                },
+            }
         normalized = {
             "input_tokens": max(
                 0,

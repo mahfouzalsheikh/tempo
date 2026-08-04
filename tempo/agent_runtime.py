@@ -35,6 +35,14 @@ class ModelSelection:
     settings: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class RuntimeResumeContext:
+    """Durable provider session state used to continue an interrupted node."""
+
+    thread_id: str
+    usage_baseline: dict[str, int]
+
+
 class ModelProvider(ABC):
     @abstractmethod
     def resolve(
@@ -97,7 +105,12 @@ class AgentRuntime(ABC):
     """Provider-neutral lifecycle used by the workflow graph executor."""
 
     @abstractmethod
-    async def start_session(self, workspace: Path) -> Any:
+    async def start_session(
+        self,
+        workspace: Path,
+        *,
+        resume_context: RuntimeResumeContext | None = None,
+    ) -> Any:
         pass
 
     @abstractmethod
@@ -150,8 +163,17 @@ class CodexAgentRuntime(AgentRuntime):
             enabled_tools=enabled_tools,
         )
 
-    async def start_session(self, workspace: Path) -> Any:
-        return await self.client.start_session(workspace)
+    async def start_session(
+        self,
+        workspace: Path,
+        *,
+        resume_context: RuntimeResumeContext | None = None,
+    ) -> Any:
+        return await self.client.start_session(
+            workspace,
+            resume_thread_id=(resume_context.thread_id if resume_context else None),
+            usage_baseline=(resume_context.usage_baseline if resume_context else None),
+        )
 
     async def run_turn(self, session: Any, prompt: str, issue: Issue) -> dict[str, Any]:
         return await self.client.run_turn(session, prompt, issue)
@@ -165,6 +187,8 @@ class ExternalCommandSession:
     process: asyncio.subprocess.Process
     workspace: Path
     next_request_id: int = 2
+    resumed: bool = False
+    resume_failure: str | None = None
 
 
 class ExternalCommandRuntime(AgentRuntime):
@@ -196,7 +220,12 @@ class ExternalCommandRuntime(AgentRuntime):
         self.approval_callback = approval_callback
         self.timeout_ms = int(self.settings.get("turn_timeout_ms", 3_600_000))
 
-    async def start_session(self, workspace: Path) -> ExternalCommandSession:
+    async def start_session(
+        self,
+        workspace: Path,
+        *,
+        resume_context: RuntimeResumeContext | None = None,
+    ) -> ExternalCommandSession:
         self.workspace_manager.assert_contained(workspace)
         environment = os.environ.copy()
         for name in self.tracker.secret_environment_names() | {
@@ -216,7 +245,7 @@ class ExternalCommandRuntime(AgentRuntime):
         )
         session = ExternalCommandSession(process=process, workspace=workspace)
         asyncio.create_task(self._drain_stderr(process))
-        await self._request(
+        result = await self._request(
             session,
             1,
             "session/start",
@@ -227,8 +256,21 @@ class ExternalCommandRuntime(AgentRuntime):
                 "model_candidates": list(self.model.candidates),
                 "tools": sorted(self.enabled_tools) if self.enabled_tools is not None else None,
                 "settings": self.settings,
+                "resume": (
+                    {
+                        "thread_id": resume_context.thread_id,
+                        "usage_baseline": resume_context.usage_baseline,
+                    }
+                    if resume_context
+                    else None
+                ),
             },
         )
+        session.resumed = bool(result.get("resumed"))
+        if resume_context and not session.resumed:
+            session.resume_failure = str(
+                result.get("resume_failure") or "runtime did not confirm session continuation"
+            )
         return session
 
     async def run_turn(

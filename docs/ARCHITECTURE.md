@@ -319,7 +319,10 @@ erDiagram
     TRACKED_ISSUE ||--o{ AGENT_RUN : executes
     ENVIRONMENT o|--o{ AGENT_RUN : constrains
     WORKFLOW_VERSION o|--o{ AGENT_RUN : configures
+    WORKFLOW_VERSION ||--o{ WORKFLOW_NODE_DEFINITION : defines
     AGENT_RUN ||--|| AGENT_SESSION : stores
+    AGENT_RUN ||--o{ RUN_NODE : executes
+    WORKFLOW_NODE_DEFINITION o|--o{ RUN_NODE : instantiates
     AGENT_RUN ||--o{ RUN_CHECKPOINT : checkpoints
     AGENT_RUN ||--o{ WORKER_LEASE : leases
     AGENT_RUN ||--o{ OPERATOR_ACTION : audits
@@ -338,8 +341,12 @@ Important semantics:
 - `TrackedIssue` is unique by project, tracker kind, and external ID.
 - `AgentRun.idempotency_key` is based on project, tracker, and issue, preventing redispatch after a
   terminal run.
-- `AgentSession` is one-to-one with a run. When a review starts, that row is updated to represent
-  the current review thread; implementation and review are not separate child session rows.
+- `RunNode` stores each graph node's status, output, provider session/thread identifiers,
+  attempt-level usage, and cumulative thread usage. That per-node state is the source for graph
+  recovery.
+- `AgentSession` remains a one-to-one run summary for compatibility and run-level telemetry; it
+  represents the most recently active node or review thread rather than the complete session
+  history.
 - `RunCheckpoint` records selected non-delta events with a content-derived idempotency key.
 - `WorkerLease` records 30-second claims and their heartbeats/releases.
 - Validation attempts and individual commands retain status, exit code, output, timing, cleanup
@@ -393,10 +400,11 @@ sequenceDiagram
     O->>DB: claim run and acquire lease
     O->>WS: create or reuse workspace
     WS->>WS: after_create if new
-    O->>DB: mark running and load resume context
+    O->>DB: mark running and hydrate completed node states
     O->>WS: before_run
     O->>G: revoke publication
-    O->>C: start or resume app-server thread
+    O->>DB: load interrupted node thread and usage baseline
+    O->>C: start or resume the node's app-server thread
     loop Up to agent.max_turns
         O->>C: issue, policy, continuation, or recovery prompt
         C->>O: events and dynamic tool calls
@@ -596,9 +604,10 @@ The exponent is capped for arithmetic safety. A continuation after exhausting a 
 Codex turns uses a 1-second delay. If no execution slot is available when a retry is due, Tempo
 reschedules it and increments the attempt.
 
-Token budget excess and validation-attempt excess go directly to a safety stop. Other failures
-retry until `max_retries` is exceeded. Stall detection cancels a worker when its last Codex event
-or start time is older than `stall_timeout_ms`.
+Token budget excess and validation-attempt excess go directly to a safety stop. Unblocking starts
+a new durable run attempt and a fresh attempt-level token budget, while reopening the interrupted
+node's provider thread. Other failures retry until `max_retries` is exceeded. Stall detection
+cancels a worker when its last Codex event or start time is older than `stall_timeout_ms`.
 
 ### Durable recovery
 
@@ -611,9 +620,16 @@ At startup and during ticks:
 - Queued/retry runs are restored into the live retry map.
 - Completed issue IDs and `SafetyLimitReached` issue IDs repopulate their suppression sets.
 
-The stored `AgentSession` supplies the current thread ID, role, turn count, token baseline, last
-event, last message, and pull-request context. If a PR URL is absent, Tempo searches GitHub tool
-checkpoints and reconstructs it from a successful PR response or numbered PR lookup.
+On recovery, succeeded and skipped `RunNode` rows remain terminal and are not repeated. An
+interrupted node is reset to pending, then its stored thread ID and cumulative token baseline are
+passed to the configured runtime. Codex uses `thread/resume`; cumulative provider usage is reduced
+by the stored baseline so only post-unblock tokens count against the fresh limit. If the provider
+cannot resume, Tempo sends a recovery prompt that first inspects the retained workspace, Git
+history, tracker, and checkpoints instead of replaying the original issue prompt.
+
+`AgentSession` still supplies pull-request recovery context for the post-publication review path.
+If a PR URL is absent, Tempo searches GitHub tool checkpoints and reconstructs it from a successful
+PR response or numbered PR lookup.
 
 ## Operator control and HTTP API
 
@@ -630,7 +646,7 @@ snapshot, then a new full snapshot per notification, with a comment keepalive ev
 | `resume` | Requeues without incrementing the attempt |
 | `retry` | Requeues and increments the attempt |
 | `requeue` | Requeues without incrementing the attempt |
-| `unblock` | Clears safety/completion suppression and requeues |
+| `unblock` | Clears safety/completion suppression, increments the attempt, and requeues with node continuation state |
 | `reprioritize` | Requires a positive integer and updates durable priority |
 | `feedback` | Appends text that is prepended to the next Codex turn |
 
@@ -736,7 +752,7 @@ flowchart TB
     GitHub["GitHub API"]
     Workspaces[("tempo-workspaces volume")]
     DBFallback[("tempo-database volume")]
-    CodexHome[("tempo-codex-home volume")]
+    CodexHome[("Host ~/.codex bind mount")]
     PGData[("tempo-postgres volume")]
 
     Client -->|published port 8030 by default| Tempo
@@ -755,6 +771,10 @@ flowchart TB
 The `tempo` and `validation-runner` services use the same image. The image contains Python 3.12,
 Pipenv-installed locked dependencies, Git, SSH, Node, Codex CLI, and Docker CLI. The application
 runs as UID 10001; the Docker daemon is a separate privileged service.
+
+The Tempo service bind-mounts the host's `~/.codex` read/write at `/home/tempo/.codex`, so Codex
+uses the same ChatGPT authentication and state as the host CLI. The validation service does not
+receive this mount.
 
 `tempo` waits for PostgreSQL, validation, and Docker health checks. It mounts `WORKFLOW.md`
 read-only and exposes the application on container port 8000. The validation service exposes only
@@ -818,9 +838,10 @@ then explicitly passes selected variables to services.
 - GitHub discovery polls `open` or `closed` issue lists; there is no webhook receiver.
 - Worker tasks live in the control-plane process. Database leases provide safe recovery and basic
   multi-claimer protection, not an independently deployable worker pool.
-- The workflow is one built-in issue-to-implementation-to-review sequence, not an arbitrary graph.
-- One `AgentSession` row represents the current thread for a run, so implementation/review session
-  history is not independently modeled.
+- Workflow nodes and conditional edges are configurable, but execution still runs inside the
+  control-plane process rather than a distributed workflow engine.
+- `RunNode` preserves graph-agent thread state. The separate post-publication review still uses the
+  run-level `AgentSession`, so its full session history is not independently modeled.
 - `CredentialReference` exists as schema but has no secret-provider integration.
 - Project/environment records and limits are configured from files; there is no UI onboarding or
   project-scoped authorization.

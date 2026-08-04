@@ -7,13 +7,16 @@ import re
 import uuid
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from asgiref.sync import sync_to_async
 from django.db import transaction
 from django.db.models import Count, Q, Sum
 
 from .domain import Issue, RunningEntry, Totals, utcnow
+
+if TYPE_CHECKING:
+    from .agent_runtime import RuntimeResumeContext
 
 
 def _json_safe(value: Any) -> Any:
@@ -572,6 +575,31 @@ class PersistenceStore:
             started_at=utcnow(),
             finished_at=None,
             error="",
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+        )
+
+    async def run_node_resume_context(
+        self,
+        run_id: int,
+        node_id: str,
+    ) -> RuntimeResumeContext | None:
+        """Return the durable runtime thread state for an interrupted graph node."""
+        from tempo_web.models import RunNode
+
+        from .agent_runtime import RuntimeResumeContext
+
+        row = await RunNode.objects.filter(run_id=run_id, node_key=node_id).afirst()
+        if not row or not row.thread_id:
+            return None
+        return RuntimeResumeContext(
+            thread_id=row.thread_id,
+            usage_baseline={
+                "input_tokens": row.thread_input_tokens,
+                "output_tokens": row.thread_output_tokens,
+                "total_tokens": row.thread_total_tokens,
+            },
         )
 
     async def set_run_node_model(self, run_id: int, node_id: str, model: str) -> None:
@@ -613,6 +641,9 @@ class PersistenceStore:
             input_tokens=session.codex_input_tokens,
             output_tokens=session.codex_output_tokens,
             total_tokens=session.codex_total_tokens,
+            thread_input_tokens=session.thread_input_tokens,
+            thread_output_tokens=session.thread_output_tokens,
+            thread_total_tokens=session.thread_total_tokens,
         )
 
     async def enqueue_issue(self, issue: Issue, *, attempt: int | None = None) -> int | None:
@@ -924,6 +955,7 @@ class PersistenceStore:
         priority: int | None = None,
         feedback: str | None = None,
         available_at: Any = None,
+        attempt: int | None = None,
     ) -> None:
         from tempo_web.models import AgentRun
 
@@ -940,6 +972,8 @@ class PersistenceStore:
             updates["feedback"] = feedback
         if available_at is not None:
             updates["available_at"] = available_at
+        if attempt is not None:
+            updates["attempt"] = attempt
         if status and status != AgentRun.Status.RUNNING:
             updates.update(
                 {

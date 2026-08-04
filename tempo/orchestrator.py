@@ -841,6 +841,16 @@ class Orchestrator:
         entry = self.running[issue.id]
         profile = config.agents[node.agent or ""]
         live = LiveSession(active_node_id=node.id, active_agent_role=profile.role)
+        resume_context = (
+            await self.persistence.run_node_resume_context(entry.run_record_id, node.id)
+            if self.persistence and entry.run_record_id
+            else None
+        )
+        if resume_context:
+            baseline = resume_context.usage_baseline
+            live.thread_input_tokens = int(baseline.get("input_tokens", 0))
+            live.thread_output_tokens = int(baseline.get("output_tokens", 0))
+            live.thread_total_tokens = int(baseline.get("total_tokens", 0))
         entry.node_sessions[node.id] = live
         entry.session = live
 
@@ -871,7 +881,17 @@ class Orchestrator:
                 )
         entry.phase = f"Launching:{node.id}"
         self._publish_live_state()
-        runtime_session = await runtime.start_session(workspace_path)
+        runtime_session_kwargs = (
+            {"resume_context": resume_context} if resume_context else {}
+        )
+        runtime_session = await runtime.start_session(
+            workspace_path,
+            **runtime_session_kwargs,
+        )
+        if resume_context and not getattr(runtime_session, "resumed", False):
+            live.thread_input_tokens = 0
+            live.thread_output_tokens = 0
+            live.thread_total_tokens = 0
         current_issue = issue
         max_turns = profile.max_turns or config.agent.max_turns
         try:
@@ -879,7 +899,22 @@ class Orchestrator:
                 live.turn_count = turn_number
                 entry.phase = f"Running:{node.id}"
                 operator_feedback = self._feedback.pop(issue.id, None)
-                if turn_number == 1:
+                if turn_number == 1 and resume_context:
+                    prompt_parts = [
+                        (
+                            RECOVERY_CONTINUATION_PROMPT
+                            if getattr(runtime_session, "resumed", False)
+                            else RECOVERY_FALLBACK_PROMPT
+                        ),
+                        f"Continue the {profile.role} assignment for workflow node {node.id}.",
+                    ]
+                    if (
+                        profile.completion in {"validation", "publication"}
+                        and config.validation.enabled
+                    ):
+                        prompt_parts.append(VALIDATION_POLICY_PROMPT)
+                    prompt = "\n\n".join(prompt_parts)
+                elif turn_number == 1:
                     graph_context = {
                         key: {
                             "status": value.status,
@@ -1219,6 +1254,19 @@ class Orchestrator:
         session.codex_total_tokens = max(
             session.codex_total_tokens, int(usage.get("total_tokens", 0))
         )
+        thread_usage = event.get("thread_usage") or usage
+        session.thread_input_tokens = max(
+            session.thread_input_tokens,
+            int(thread_usage.get("input_tokens", 0)),
+        )
+        session.thread_output_tokens = max(
+            session.thread_output_tokens,
+            int(thread_usage.get("output_tokens", 0)),
+        )
+        session.thread_total_tokens = max(
+            session.thread_total_tokens,
+            int(thread_usage.get("total_tokens", 0)),
+        )
         if "rate_limits" in event:
             self.rate_limits = event["rate_limits"]
         event_name = event.get("event")
@@ -1550,7 +1598,7 @@ class Orchestrator:
         elif action in {"resume", "retry", "requeue", "unblock"}:
             if entry:
                 return False, "run_already_active"
-            attempt = context["attempt"] + (1 if action == "retry" else 0)
+            attempt = context["attempt"] + (1 if action in {"retry", "unblock"} else 0)
             self.safety_blocked.discard(issue_id)
             self.completed.discard(issue_id)
             due_at = utcnow()
@@ -1559,6 +1607,7 @@ class Orchestrator:
                 status=AgentRun.Status.RETRY_SCHEDULED,
                 phase="RequeuedByOperator",
                 available_at=due_at,
+                attempt=attempt,
             )
             self.retries[issue_id] = RetryEntry(
                 issue_id=issue_id,

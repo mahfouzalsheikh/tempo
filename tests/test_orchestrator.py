@@ -122,6 +122,67 @@ validation:
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_unblock_resumes_interrupted_node_with_fresh_token_budget(tmp_path):
+    path = workflow(tmp_path)
+    source = path.read_text()
+    source = source.replace(
+        "max_turns: 1",
+        "max_turns: 1\n  max_tokens_per_run: 14",
+    ).replace(
+        "fake_app_server.py",
+        "fake_app_server.py --budget-resume",
+    )
+    path.write_text(source)
+    orchestrator = Orchestrator(str(path))
+    await orchestrator.start()
+
+    for _ in range(150):
+        if "1" in orchestrator.safety_blocked and "1" not in orchestrator.running:
+            break
+        await asyncio.sleep(0.02)
+
+    from django.contrib.auth import get_user_model
+
+    from tempo_web.models import AgentRun, RunNode
+
+    run = await AgentRun.objects.aget(issue__identifier="A-1")
+    interrupted = await RunNode.objects.aget(run=run)
+    assert interrupted.status == RunNode.Status.FAILED
+    assert interrupted.thread_id == "thread-test"
+    assert interrupted.total_tokens == 15
+    assert interrupted.thread_total_tokens == 15
+
+    user = await get_user_model().objects.acreate_user(username="unblock-operator")
+    applied, message = await orchestrator.control_run(
+        run.pk,
+        "unblock",
+        {},
+        user_id=user.pk,
+        idempotency_key="unblock-token-budget",
+    )
+    assert applied is True
+    assert message == "run queued"
+
+    for _ in range(200):
+        if "1" in orchestrator.completed:
+            break
+        await asyncio.sleep(0.02)
+
+    run = await AgentRun.objects.aget(pk=run.pk)
+    resumed = await RunNode.objects.aget(run=run)
+    assert run.status == AgentRun.Status.SUCCEEDED
+    assert run.attempt == 1
+    assert resumed.status == RunNode.Status.SUCCEEDED
+    assert resumed.thread_id == "thread-test"
+    assert resumed.total_tokens == 10
+    assert resumed.thread_total_tokens == 25
+    assert resumed.output["no_change_completed"] is True
+    assert "1" not in orchestrator.safety_blocked
+    await orchestrator.stop()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_external_jsonl_runtime_executes_without_scheduler_changes(tmp_path):
     bridge = Path(__file__).parent / "fixtures" / "fake_external_runtime.py"
     path = tmp_path / "external.md"

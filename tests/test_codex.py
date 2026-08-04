@@ -89,6 +89,32 @@ async def test_codex_resumes_thread_with_fresh_attempt_usage(tmp_path):
     assert session.thread_id == "thread-existing"
     assert any(event["event"] == "thread_resumed" for event in events)
     assert any(event.get("usage", {}).get("total_tokens") == 15 for event in events)
+    assert any(event.get("thread_usage", {}).get("total_tokens") == 165 for event in events)
+
+
+def test_resumed_attempt_local_usage_advances_durable_thread_baseline():
+    session = SimpleNamespace(
+        resumed=True,
+        usage_baseline_input=100,
+        usage_baseline_output=50,
+        usage_baseline_total=150,
+        usage_is_cumulative=None,
+    )
+
+    event = CodexAppServer._normalize_usage_for_attempt(
+        session,
+        {
+            "event": "thread/tokenUsage/updated",
+            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+        },
+    )
+
+    assert event["usage"]["total_tokens"] == 15
+    assert event["thread_usage"] == {
+        "input_tokens": 110,
+        "output_tokens": 55,
+        "total_tokens": 165,
+    }
 
 
 @pytest.mark.asyncio

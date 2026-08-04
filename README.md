@@ -66,15 +66,19 @@ docker compose exec tempo python manage.py createsuperuser
 Alternatively, set `TEMPO_ADMIN_USERNAME`, `TEMPO_ADMIN_PASSWORD`, and optionally
 `TEMPO_ADMIN_EMAIL` before the first startup. Sign in at `/login/`.
 
-To authenticate Codex with an existing ChatGPT login instead of `OPENAI_API_KEY`:
+When `OPENAI_API_KEY` is empty, Compose uses the host's existing ChatGPT login by bind-mounting
+`~/.codex` read/write at `/home/tempo/.codex`. Confirm that the host is authenticated before
+startup:
 
 ```bash
-docker compose run --rm --entrypoint codex tempo login
+codex login status
 docker compose up
 ```
 
-Compose persists PostgreSQL data, workspaces, SQLite fallback data, and Codex state in named
-volumes. `docker compose down` preserves them; `docker compose down -v` intentionally deletes them.
+Compose persists PostgreSQL data, workspaces, and SQLite fallback data in named volumes, while
+Codex state remains in the host's `~/.codex`. `docker compose down` preserves all of them;
+`docker compose down -v` intentionally deletes the named volumes but does not delete host Codex
+state.
 After source changes, rebuild and health-check all services with:
 
 ```bash

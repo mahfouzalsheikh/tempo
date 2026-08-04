@@ -28,14 +28,21 @@ for line in sys.stdin:
         send({"id": message["id"], "result": {"thread": {"id": "thread-test"}}})
     elif method == "turn/start":
         send({"id": message["id"], "result": {"turn": {"id": "turn-test"}}})
+        budget_resume = "--budget-resume" in sys.argv
         send(
             {
                 "method": "thread/tokenUsage/updated",
                 "params": {
                     "tokenUsage": {
-                        "inputTokens": 110 if resumed else 10,
-                        "outputTokens": 55 if resumed else 5,
-                        "totalTokens": 165 if resumed else 15,
+                        "inputTokens": (
+                            17 if resumed and budget_resume else 110 if resumed else 10
+                        ),
+                        "outputTokens": (
+                            8 if resumed and budget_resume else 55 if resumed else 5
+                        ),
+                        "totalTokens": (
+                            25 if resumed and budget_resume else 165 if resumed else 15
+                        ),
                     }
                 },
             }

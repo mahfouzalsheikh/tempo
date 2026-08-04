@@ -27,7 +27,7 @@ services:
       - ./WORKFLOW.md:/app/WORKFLOW.md:ro
       - tempo-workspaces:/data/workspaces
       - tempo-database:/data/database
-      - tempo-codex-home:/home/tempo/.codex
+      - "${HOME}/.codex:/home/tempo/.codex"
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,5 +93,4 @@ services:
 volumes:
   tempo-workspaces:
   tempo-database:
-  tempo-codex-home:
   tempo-postgres:
