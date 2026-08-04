@@ -616,7 +616,8 @@ cumulative thread baseline but is not charged to the new work-attempt budget. Th
 safety stop only after `max_retries` budget epochs are exhausted. Validation-attempt excess still
 stops immediately for operator review. Other failures use normal backoff until `max_retries` is
 exceeded. Stall detection cancels a worker when its last Codex event or start time is older than
-`stall_timeout_ms`.
+`stall_timeout_ms`. It is suspended while project validation is running because validation commands
+and cleanup have their own explicit timeouts and long, quiet builds are valid activity.
 
 Any resumed node whose cumulative provider thread has already crossed the per-attempt token limit
 is compacted before its next turn, including cancellation, crash, and operator-requeue recovery.

@@ -318,6 +318,10 @@ class Orchestrator:
         assert self.tracker
         now = utcnow()
         for issue_id, entry in list(self.running.items()):
+            if entry.session.validation_status == "running":
+                # Validation commands and cleanup have their own explicit timeouts. A quiet Docker
+                # build is not evidence that the Codex app-server has stalled.
+                continue
             last = entry.session.last_codex_timestamp or entry.started_at
             if (
                 config.codex.stall_timeout_ms > 0

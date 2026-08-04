@@ -324,6 +324,28 @@ async def test_snapshot_combines_durable_and_active_runtime_totals(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_reconcile_does_not_stall_cancel_active_validation(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    await orchestrator.store.initialize()
+    _, config = orchestrator.store.current()
+    issue = Issue(id="validating", identifier="A-VALIDATE", title="Validate", state="Todo")
+    task = asyncio.create_task(asyncio.sleep(60))
+    entry = RunningEntry(issue=issue, task=task, attempt=None)
+    entry.started_at = entry.started_at.replace(year=2000)
+    entry.session.validation_status = "running"
+    orchestrator.running[issue.id] = entry
+    orchestrator.tracker = MemoryTracker([issue])
+
+    await orchestrator._reconcile(config)
+
+    assert task.cancelled() is False
+    assert issue.id in orchestrator.running
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
 async def test_runtime_safety_limits_stop_token_and_validation_loops(tmp_path):
     orchestrator = Orchestrator(str(workflow(tmp_path)))
     await orchestrator.store.initialize()
