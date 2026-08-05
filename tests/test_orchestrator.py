@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from tempo.domain import Issue, NodeExecutionState, RunningEntry, Totals
+from tempo.config import WorkflowEdgeConfig
+from tempo.domain import Issue, LiveSession, NodeExecutionState, RunningEntry, Totals
 from tempo.errors import CodexError
 from tempo.orchestrator import Orchestrator
 from tempo.trackers.memory import MemoryTracker
@@ -45,6 +46,63 @@ Work on {{{{ issue.identifier }}}}.
 """
     )
     return path
+
+
+def test_retry_resets_skipped_graph_nodes_but_preserves_successes(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    issue = Issue(id="retry", identifier="A-RETRY", title="Retry", state="Todo")
+    entry = RunningEntry(issue=issue, task=None, attempt=1)
+    entry.graph_nodes = {
+        "plan": NodeExecutionState("plan", "Plan", "agent", status="failed", attempt=2),
+        "implement": NodeExecutionState(
+            "implement", "Implement", "agent", status="skipped"
+        ),
+        "verified": NodeExecutionState(
+            "verified", "Verified", "agent", status="succeeded", attempt=1
+        ),
+    }
+
+    orchestrator._reset_incomplete_graph_nodes(entry)
+
+    assert entry.graph_nodes["plan"].status == "pending"
+    assert entry.graph_nodes["plan"].attempt == 0
+    assert entry.graph_nodes["plan"].error is None
+    assert entry.graph_nodes["plan"].output == {}
+    assert entry.graph_nodes["implement"].status == "pending"
+    assert entry.graph_nodes["verified"].status == "succeeded"
+    assert entry.graph_nodes["verified"].attempt == 1
+
+
+def test_label_edge_conditions_require_successful_source():
+    issue = Issue(
+        id="labels",
+        identifier="A-LABELS",
+        title="Labels",
+        state="Todo",
+        labels=["requires-approval"],
+    )
+    source = NodeExecutionState("verify", "Verify", "agent", status="skipped")
+    requires_approval = WorkflowEdgeConfig(
+        **{
+            "from": "verify",
+            "to": "approval",
+            "condition": "issue.label:requires-approval",
+        }
+    )
+    no_approval = WorkflowEdgeConfig(
+        **{
+            "from": "verify",
+            "to": "publish",
+            "condition": "not issue.label:requires-approval",
+        }
+    )
+
+    assert Orchestrator._edge_matches(requires_approval, source, issue) is False
+    source.status = "succeeded"
+    assert Orchestrator._edge_matches(requires_approval, source, issue) is True
+    assert Orchestrator._edge_matches(no_approval, source, issue) is False
+    issue.labels = []
+    assert Orchestrator._edge_matches(no_approval, source, issue) is True
 
 
 @pytest.mark.django_db(transaction=True)
@@ -412,6 +470,42 @@ async def test_existing_pull_request_discovery_advances_implementation(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_related_pull_request_read_does_not_replace_publication_target(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    await orchestrator.store.initialize()
+    issue = Issue(id="review-pr", identifier="A-REVIEW", title="Review", state="Todo")
+    session = LiveSession(
+        pull_request_created=True,
+        pull_request_url="https://github.example/acme/widgets/pull/12",
+        pull_request_number=12,
+    )
+    entry = RunningEntry(issue=issue, task=None, attempt=None, session=session)
+    entry.phase = "ReviewingPullRequest"
+    orchestrator.running[issue.id] = entry
+
+    await orchestrator._codex_event(
+        issue.id,
+        {
+            "event": "tool_call_completed",
+            "tool": "github_api",
+            "success": True,
+            "arguments": {
+                "method": "GET",
+                "path": "/repos/acme/widgets/pulls/8",
+            },
+            "output": (
+                '{"html_url":"https://github.example/acme/widgets/pull/8",'
+                '"number":8,"state":"open"}'
+            ),
+        },
+    )
+
+    assert entry.phase == "ReviewingPullRequest"
+    assert entry.session.pull_request_url == "https://github.example/acme/widgets/pull/12"
+    assert entry.session.pull_request_number == 12
+
+
+@pytest.mark.asyncio
 async def test_token_limit_automatically_rolls_over_to_a_continuation(tmp_path):
     orchestrator = Orchestrator(str(workflow(tmp_path)))
     await orchestrator.store.initialize()
@@ -585,6 +679,68 @@ def test_completed_publication_node_restores_session_for_retry(tmp_path):
     assert entry.session.pull_request_url == "https://github.test/acme/repo/pull/17"
     assert entry.session.validation_status == "passed"
     assert entry.session.codex_total_tokens == 120
+    assert entry.token_budget_baseline == 120
+
+
+def test_node_token_aggregation_does_not_double_count_publication_session(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    issue = Issue(id="aggregate", identifier="A-AGGREGATE", title="Aggregate", state="Todo")
+    entry = RunningEntry(issue=issue, task=None, attempt=1)
+    planning = LiveSession(
+        codex_input_tokens=80,
+        codex_output_tokens=20,
+        codex_total_tokens=100,
+    )
+    publication = LiveSession(
+        codex_input_tokens=160,
+        codex_output_tokens=40,
+        codex_total_tokens=200,
+        pull_request_created=True,
+        pull_request_url="https://github.test/acme/repo/pull/18",
+        pull_request_number=18,
+        active_node_id="publish",
+        active_agent_role="publisher",
+    )
+    entry.node_sessions = {"plan": planning, "publish": publication}
+
+    orchestrator._aggregate_node_sessions(entry)
+
+    assert entry.session is not publication
+    assert entry.session.codex_total_tokens == 300
+    assert entry.session.active_node_id is None
+    assert entry.session.active_agent_role is None
+    assert publication.active_node_id == "publish"
+    assert publication.codex_total_tokens == 200
+    assert sum(item.codex_total_tokens for item in entry.node_sessions.values()) == 300
+
+
+@pytest.mark.asyncio
+async def test_resumed_graph_limits_only_tokens_added_after_completed_nodes(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    await orchestrator.store.initialize()
+    issue = Issue(id="resumed", identifier="A-RESUMED", title="Resume", state="Todo")
+    completed = LiveSession(codex_total_tokens=900_000)
+    verifier = LiveSession(active_node_id="verify")
+    entry = RunningEntry(issue=issue, task=None, attempt=2)
+    entry.node_sessions = {"implement": completed, "verify": verifier}
+    entry.token_budget_baseline = completed.codex_total_tokens
+    orchestrator.running[issue.id] = entry
+
+    await orchestrator._codex_event(
+        issue.id,
+        {
+            "event": "turn_completed",
+            "usage": {
+                "input_tokens": 190_000,
+                "output_tokens": 10_000,
+                "total_tokens": 200_000,
+            },
+        },
+        live_session=verifier,
+    )
+
+    assert verifier.codex_total_tokens == 200_000
+    assert entry.phase != "SafetyLimitReached"
 
 
 @pytest.mark.django_db(transaction=True)

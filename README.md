@@ -66,8 +66,8 @@ docker compose exec tempo python manage.py createsuperuser
 Alternatively, set `TEMPO_ADMIN_USERNAME`, `TEMPO_ADMIN_PASSWORD`, and optionally
 `TEMPO_ADMIN_EMAIL` before the first startup. Sign in at `/login/`.
 
-When `OPENAI_API_KEY` is empty, Compose uses the host's existing ChatGPT login by bind-mounting
-`~/.codex` read/write at `/home/tempo/.codex`. Confirm that the host is authenticated before
+When `OPENAI_API_KEY` is empty, Compose seeds a container-owned Codex state volume from the host's
+existing `~/.codex/auth.json` and `config.toml`. Confirm that the host is authenticated before
 startup:
 
 ```bash
@@ -75,10 +75,15 @@ codex login status
 docker compose up
 ```
 
-Compose persists PostgreSQL data, workspaces, and SQLite fallback data in named volumes, while
-Codex state remains in the host's `~/.codex`. `docker compose down` preserves all of them;
-`docker compose down -v` intentionally deletes the named volumes but does not delete host Codex
-state.
+Compose persists PostgreSQL data, workspaces, SQLite fallback data, and mutable Codex state in
+named volumes. `docker compose down` preserves all of them; `docker compose down -v`
+intentionally deletes the named volumes but does not delete host Codex state.
+
+The checked-in workflow uses Codex App Server's `externalSandbox` turn policy because Docker is
+the execution boundary and nested `bwrap` namespaces are commonly blocked by container security
+profiles. Only run repositories you trust in this deployment: commands can access the Tempo
+container, although tracker credentials are removed from the agent command environment and GitHub
+writes remain mediated by Tempo's provider tool.
 
 The Tempo service relaxes Docker's outer seccomp profile so Codex can create its inner Linux
 `workspace-write` sandbox with `bwrap`. Codex commands remain restricted to the issue workspace;

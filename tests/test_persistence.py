@@ -7,6 +7,7 @@ from tempo.persistence import PersistenceStore
 from tempo_web.models import (
     AgentRun,
     AgentSession,
+    RunNode,
     TrackedIssue,
     ValidationAttempt,
     ValidationCommand,
@@ -125,3 +126,85 @@ async def test_restarting_existing_run_clears_previous_error(tmp_path: Path):
     restarted = await AgentRun.objects.aget(pk=entry.run_record_id)
     assert restarted.status == AgentRun.Status.RUNNING
     assert restarted.error == ""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_reset_incomplete_run_nodes_preserves_only_successes(tmp_path: Path):
+    issue = Issue(id="graph", identifier="GH-GRAPH", title="Retry graph", state="open")
+    entry = RunningEntry(issue=issue, task=None, attempt=1)
+    store = PersistenceStore("github")
+    entry.run_record_id = await store.start_run(entry, tmp_path)
+    succeeded = await RunNode.objects.acreate(
+        run_id=entry.run_record_id,
+        node_key="plan",
+        name="Plan",
+        node_type="agent",
+        status=RunNode.Status.SUCCEEDED,
+        attempt=1,
+        output={"summary": "done"},
+    )
+    skipped = await RunNode.objects.acreate(
+        run_id=entry.run_record_id,
+        node_key="publish",
+        name="Publish",
+        node_type="agent",
+        status=RunNode.Status.SKIPPED,
+        attempt=2,
+        error="old failure",
+        output={"reason": "dependency conditions did not match"},
+    )
+
+    await store.reset_incomplete_run_nodes(entry.run_record_id)
+
+    await succeeded.arefresh_from_db()
+    await skipped.arefresh_from_db()
+    assert succeeded.status == RunNode.Status.SUCCEEDED
+    assert succeeded.output == {"summary": "done"}
+    assert skipped.status == RunNode.Status.PENDING
+    assert skipped.attempt == 0
+    assert skipped.error == ""
+    assert skipped.output == {}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_clear_incomplete_run_node_context_preserves_completed_context(tmp_path: Path):
+    issue = Issue(id="context", identifier="GH-CONTEXT", title="Fresh context", state="open")
+    entry = RunningEntry(issue=issue, task=None, attempt=1)
+    store = PersistenceStore("github")
+    entry.run_record_id = await store.start_run(entry, tmp_path)
+    succeeded = await RunNode.objects.acreate(
+        run_id=entry.run_record_id,
+        node_key="plan",
+        name="Plan",
+        node_type="agent",
+        status=RunNode.Status.SUCCEEDED,
+        session_id="plan-session",
+        thread_id="plan-thread",
+        total_tokens=10,
+    )
+    failed = await RunNode.objects.acreate(
+        run_id=entry.run_record_id,
+        node_key="implement",
+        name="Implement",
+        node_type="agent",
+        status=RunNode.Status.FAILED,
+        session_id="failed-session",
+        thread_id="failed-thread",
+        turn_count=1,
+        total_tokens=900_000,
+        thread_total_tokens=1_200_000,
+    )
+
+    await store.clear_incomplete_run_node_context(entry.run_record_id)
+
+    await succeeded.arefresh_from_db()
+    await failed.arefresh_from_db()
+    assert succeeded.thread_id == "plan-thread"
+    assert succeeded.total_tokens == 10
+    assert failed.session_id == ""
+    assert failed.thread_id == ""
+    assert failed.turn_count == 0
+    assert failed.total_tokens == 0
+    assert failed.thread_total_tokens == 0

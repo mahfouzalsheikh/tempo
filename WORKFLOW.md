@@ -41,7 +41,10 @@ hooks:
 agent:
   max_concurrent_agents: 3
   max_turns: 6
-  max_tokens_per_run: 1000000
+  # This budget is cumulative across every agent node in one execution attempt.
+  # Lifetime usage remains visible, but a durable retry starts a fresh bounded
+  # budget for unfinished work.
+  max_tokens_per_run: 3000000
   max_retries: 2
   max_retry_backoff_ms: 300000
 validation:
@@ -61,13 +64,22 @@ review:
   prompt: |
     Independently review the issue, complete pull-request diff, and repository guidance. Check
     correctness, regressions, security, tests, and maintainability. Fix material findings when
-    safe, rerun the complete project validation sequence, and update the pull-request branch.
-    Approve only with concrete evidence. Request human review for sensitive changes, ambiguous
-    requirements, unresolved findings, or repository policies that require a person.
+    safe, then rerun the complete diff-relevant project validation sequence and update the
+    pull-request branch. For frontend-only changes, do not add unrelated backend checks or test
+    modules. For backend changes, install the locked Pipenv dependencies inside the isolated
+    validation sequence before Django checks and focused tests. Approve only with concrete
+    evidence. Request human review for sensitive changes, ambiguous requirements, unresolved
+    findings, or repository policies that require a person.
 codex:
   command: codex app-server
   approval_policy: never
   thread_sandbox: workspace-write
+  # Docker is the execution boundary. Nested Linux bwrap namespaces are not
+  # available under the container's default AppArmor profile, so tell App
+  # Server not to create a second sandbox layer for turn commands.
+  turn_sandbox_policy:
+    type: externalSandbox
+    networkAccess: restricted
   turn_timeout_ms: 3600000
   read_timeout_ms: 5000
   stall_timeout_ms: 120000
@@ -81,7 +93,7 @@ model_providers:
 tool_providers:
   engineering:
     kind: tempo
-    allow_all: true
+    tools: [github_api, project_validation, tempo_complete]
 agents:
   implementer:
     role: implementer

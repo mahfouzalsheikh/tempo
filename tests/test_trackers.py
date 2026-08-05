@@ -269,6 +269,57 @@ async def test_github_merge_block_creates_explicit_human_handoff_and_requests_re
 
 
 @pytest.mark.asyncio
+async def test_github_same_identity_review_is_recorded_without_self_approval():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        path = request.url.path
+        if path.endswith("/comments") and request.method == "GET":
+            return httpx.Response(200, json=[])
+        if path.endswith("/pulls/7/merge"):
+            return httpx.Response(200, json={"merged": True, "sha": "abc123"})
+        if path.endswith("/issues/1") and request.method == "GET":
+            return httpx.Response(200, json={"labels": [{"name": "tempo"}]})
+        return httpx.Response(201, json={})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tracker = GitHubTracker(
+        repo="openai/example",
+        token="same-token",
+        review_token="same-token",
+        client=client,
+        required_labels=["tempo"],
+    )
+    issue = (
+        await MemoryTracker(
+            [{"id": "1", "identifier": "A-1", "title": "One", "state": "open"}]
+        ).fetch_issues_by_ids(["1"])
+    )[0]
+
+    outcome = await tracker.complete_pull_request_review(
+        issue,
+        7,
+        summary="Independent review and validation passed.",
+        auto_merge=True,
+        merge_method="squash",
+        reviewers=[],
+        team_reviewers=[],
+    )
+
+    assert outcome["status"] == "merged"
+    assert not any(
+        request.method == "POST" and request.url.path.endswith("/pulls/7/reviews")
+        for request in requests
+    )
+    assert any(
+        request.method == "POST" and request.url.path.endswith("/issues/7/comments")
+        for request in requests
+    )
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_github_mutations_are_scoped_to_configured_repository():
     client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200)))
     tracker = GitHubTracker(repo="openai/example", client=client)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import hashlib
 import json
 import os
@@ -599,10 +600,9 @@ class Orchestrator:
         if self.persistence:
             await self.persistence.initialize_run_nodes(entry)
         self._restore_completed_node_sessions(entry)
-        for state in entry.graph_nodes.values():
-            if state.status in {"running", "waiting", "failed", "cancelled"}:
-                state.status = "pending"
-                state.attempt = 0
+        self._reset_incomplete_graph_nodes(entry)
+        if self.persistence and entry.run_record_id:
+            await self.persistence.reset_incomplete_run_nodes(entry.run_record_id)
 
         incoming: dict[str, list[WorkflowEdgeConfig]] = {
             node.id: [] for node in config.workflow.nodes
@@ -714,6 +714,20 @@ class Orchestrator:
             )
 
     @staticmethod
+    def _reset_incomplete_graph_nodes(entry: RunningEntry) -> None:
+        for state in entry.graph_nodes.values():
+            # Skips are derived from the state of upstream nodes. Re-evaluate them on
+            # every run attempt so a recovered prerequisite cannot leave the rest of
+            # the graph permanently skipped.
+            if state.status in {"running", "waiting", "failed", "skipped", "cancelled"}:
+                state.status = "pending"
+                state.attempt = 0
+                state.started_at = None
+                state.finished_at = None
+                state.error = None
+                state.output = {}
+
+    @staticmethod
     def _edge_matches(
         edge: WorkflowEdgeConfig,
         source: NodeExecutionState,
@@ -725,9 +739,15 @@ class Orchestrator:
         if condition in {"succeeded", "failed", "skipped"}:
             return source.status == condition
         if condition.startswith("issue.label:"):
-            return condition.split(":", 1)[1].strip() in issue.labels
+            return (
+                source.status == "succeeded"
+                and condition.split(":", 1)[1].strip() in issue.labels
+            )
         if condition.startswith("not issue.label:"):
-            return condition.split(":", 1)[1].strip() not in issue.labels
+            return (
+                source.status == "succeeded"
+                and condition.split(":", 1)[1].strip() not in issue.labels
+            )
         return False
 
     async def _execute_workflow_node(
@@ -1061,6 +1081,9 @@ class Orchestrator:
                 active_node_id=node_id,
                 active_agent_role=state.role,
             )
+        entry.token_budget_baseline = sum(
+            session.codex_total_tokens for session in entry.node_sessions.values()
+        )
 
     @staticmethod
     def _aggregate_node_sessions(entry: RunningEntry) -> None:
@@ -1077,10 +1100,16 @@ class Orchestrator:
             ),
             sessions[-1],
         )
-        publication.codex_input_tokens = sum(session.codex_input_tokens for session in sessions)
-        publication.codex_output_tokens = sum(session.codex_output_tokens for session in sessions)
-        publication.codex_total_tokens = sum(session.codex_total_tokens for session in sessions)
-        entry.session = publication
+        # The aggregate session continues into independent review. Keep it detached
+        # from the per-node sessions or the publisher's tokens are replaced with the
+        # graph total and then counted a second time by the safety budget.
+        aggregate = copy.deepcopy(publication)
+        aggregate.codex_input_tokens = sum(session.codex_input_tokens for session in sessions)
+        aggregate.codex_output_tokens = sum(session.codex_output_tokens for session in sessions)
+        aggregate.codex_total_tokens = sum(session.codex_total_tokens for session in sessions)
+        aggregate.active_node_id = None
+        aggregate.active_agent_role = None
+        entry.session = aggregate
         entry.node_sessions_aggregated = True
 
     async def _run_review_agent(
@@ -1405,7 +1434,9 @@ class Orchestrator:
             entry.phase = "ValidationRequired"
         elif event_name == "tool_call_completed" and event.get("tool") == "github_api":
             pull_request = PersistenceStore._pull_request_from_checkpoint(event)
-            if pull_request:
+            # Reviewers may inspect historical or related pull requests. Once this
+            # run has a publication target, those reads must not replace it.
+            if pull_request and not session.pull_request_created:
                 entry.phase = "PullRequestCreated"
                 session.pull_request_created = True
                 session.pull_request_url, session.pull_request_number = pull_request
@@ -1446,16 +1477,22 @@ class Orchestrator:
                         event,
                         idempotency_key=f"{entry.run_record_id}:{event_key}",
                     )
-        total_tokens = sum(item.codex_total_tokens for item in entry.node_sessions.values())
-        if not entry.node_sessions:
+        if entry.node_sessions_aggregated:
             total_tokens = session.codex_total_tokens
-        if total_tokens > config.agent.max_tokens_per_run:
+        else:
+            total_tokens = sum(
+                item.codex_total_tokens for item in entry.node_sessions.values()
+            )
+            if not entry.node_sessions:
+                total_tokens = session.codex_total_tokens
+        attempt_tokens = max(0, total_tokens - entry.token_budget_baseline)
+        if attempt_tokens > config.agent.max_tokens_per_run:
             entry.phase = "SafetyLimitReached"
             self._publish_live_state()
             raise CodexError(
                 (
-                    f"run exceeded token limit ({total_tokens} > "
-                    f"{config.agent.max_tokens_per_run})"
+                    f"run exceeded token limit for this attempt ({attempt_tokens} > "
+                    f"{config.agent.max_tokens_per_run}; lifetime total {total_tokens})"
                 ),
                 category="token_budget_exceeded",
             )
@@ -1672,6 +1709,9 @@ class Orchestrator:
             if entry:
                 return False, "run_already_active"
             attempt = context["attempt"] + (1 if action in {"retry", "unblock"} else 0)
+            fresh_context = bool(payload.get("fresh_context", False))
+            if fresh_context:
+                await self.persistence.clear_incomplete_run_node_context(run_id)
             self.safety_blocked.discard(issue_id)
             self.completed.discard(issue_id)
             due_at = utcnow()
@@ -1692,7 +1732,7 @@ class Orchestrator:
             )
             self.claimed.add(issue_id)
             self._refresh.set()
-            message = "run queued"
+            message = "run queued with fresh agent context" if fresh_context else "run queued"
         elif action == "reprioritize":
             priority = payload.get("priority")
             if not isinstance(priority, int) or isinstance(priority, bool) or priority < 1:

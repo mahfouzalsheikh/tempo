@@ -170,6 +170,23 @@ Work on {{ issue.identifier }}.
         build_config(definition.config, path)
 
 
+def test_checked_in_workflow_uses_docker_as_the_codex_sandbox_boundary(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("TEMPO_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("GITHUB_REVIEW_TOKEN", "test-review-token")
+    path = Path(__file__).parents[1] / "WORKFLOW.md"
+    config = build_config(load_workflow(path).config, path)
+
+    assert config.codex.thread_sandbox == "workspace-write"
+    assert config.codex.turn_sandbox_policy == {
+        "type": "externalSandbox",
+        "networkAccess": "restricted",
+    }
+    assert config.agent.max_tokens_per_run == 3_000_000
+
+
 def test_model_routes_select_by_role_capability_cost_and_fallback():
     provider = ConfiguredModelProvider()
     config = ModelProviderConfig.model_validate(

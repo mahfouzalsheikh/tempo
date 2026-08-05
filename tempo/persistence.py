@@ -578,6 +578,39 @@ class PersistenceStore:
             error="",
         )
 
+    async def reset_incomplete_run_nodes(self, run_id: int) -> None:
+        """Clear derived terminal state before reevaluating a retried graph."""
+        from tempo_web.models import RunNode
+
+        await RunNode.objects.filter(run_id=run_id).exclude(
+            status=RunNode.Status.SUCCEEDED
+        ).aupdate(
+            status=RunNode.Status.PENDING,
+            attempt=0,
+            started_at=None,
+            finished_at=None,
+            error="",
+            output={},
+        )
+
+    async def clear_incomplete_run_node_context(self, run_id: int) -> None:
+        """Discard failed-node runtime context while preserving completed graph work."""
+        from tempo_web.models import RunNode
+
+        await RunNode.objects.filter(run_id=run_id).exclude(
+            status=RunNode.Status.SUCCEEDED
+        ).aupdate(
+            session_id="",
+            thread_id="",
+            turn_count=0,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            thread_input_tokens=0,
+            thread_output_tokens=0,
+            thread_total_tokens=0,
+        )
+
     async def run_node_resume_context(
         self,
         run_id: int,

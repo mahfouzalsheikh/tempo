@@ -4,10 +4,6 @@ services:
       context: .
     init: true
     restart: unless-stopped
-    # Codex keeps its workspace-write bwrap sandbox. Docker's default seccomp profile blocks the
-    # namespace operation that creates that inner sandbox, so relax only the outer seccomp layer.
-    security_opt:
-      - seccomp=unconfined
     ports:
       - "${TEMPO_PORT:-8030}:8000"
     environment:
@@ -15,7 +11,7 @@ services:
       TEMPO_JWT_ACCESS_TTL_SECONDS: "${TEMPO_JWT_ACCESS_TTL_SECONDS:-28800}"
       TEMPO_JWT_COOKIE_SECURE: "${TEMPO_JWT_COOKIE_SECURE:-false}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
-      GITHUB_REVIEW_TOKEN: "${GITHUB_REVIEW_TOKEN:-}"
+      GITHUB_REVIEW_TOKEN: "${GITHUB_REVIEW_TOKEN:-${GITHUB_TOKEN:-}}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       TEMPO_LOG_LEVEL: "${TEMPO_LOG_LEVEL:-INFO}"
       TEMPO_TIME_ZONE: "${TEMPO_TIME_ZONE:-UTC}"
@@ -31,7 +27,11 @@ services:
       - ./WORKFLOW.md:/app/WORKFLOW.md:ro
       - tempo-workspaces:/data/workspaces
       - tempo-database:/data/database
-      - "${HOME}/.codex:/home/tempo/.codex"
+      # Import credentials as root during container startup, then run Tempo as its
+      # unprivileged user with state stored in a container-owned volume. A direct
+      # bind mount is not writable when the host and container UIDs differ.
+      - "${HOME}/.codex:/run/tempo-host-codex:ro"
+      - tempo-codex:/home/tempo/.codex
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,6 +59,7 @@ services:
     build:
       context: .
     entrypoint: ["python", "-m", "tempo.validation_server"]
+    user: "10001:10001"
     restart: unless-stopped
     environment:
       TEMPO_WORKSPACE_ROOT: /data/workspaces
@@ -97,4 +98,5 @@ services:
 volumes:
   tempo-workspaces:
   tempo-database:
+  tempo-codex:
   tempo-postgres:

@@ -142,7 +142,7 @@ async function updateAdmin() {
     definitionList("config-agents", {
       "Max concurrent": agents.max_concurrent,
       "Max turns": agents.max_turns,
-      "Token limit per run": agents.max_tokens_per_run,
+      "Token limit per attempt": agents.max_tokens_per_run,
       "Max retries": agents.max_retries,
       "Per-state limits": agents.per_state,
       "Max retry backoff": agents.max_retry_backoff_ms ? `${agents.max_retry_backoff_ms} ms` : "—",

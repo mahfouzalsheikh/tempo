@@ -344,7 +344,10 @@ class GitHubTracker(Tracker):
                 merge=current,
             )
 
-        if self.review_token:
+        distinct_review_identity = bool(
+            self.review_token and self.review_token != self.token
+        )
+        if distinct_review_identity:
             try:
                 reviews = await self._request(
                     "GET",
@@ -374,6 +377,10 @@ class GitHubTracker(Tracker):
                     team_reviewers=team_reviewers,
                 )
         else:
+            # GitHub rejects APPROVE reviews authored by the pull-request author.
+            # When the configured fallback is the publication token, preserve the
+            # independent Tempo decision as a durable comment and let the merge API
+            # enforce branch protection and required-review policy.
             await self._post_comment_once(
                 f"/repos/{self.repo}/issues/{pull_request_number}/comments",
                 marker,

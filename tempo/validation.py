@@ -43,9 +43,11 @@ class ProjectValidator:
         return {
             "name": "project_validation",
             "description": (
-                "Run the repository's own locally discovered build, launch, and test commands. "
-                "Supply the complete validation sequence in one call. Tempo executes every command "
-                "and unlocks pull-request creation only when all commands exit successfully."
+                "Run the repository's complete, already-discovered build and test sequence. "
+                "Use normal workspace shell and file tools for discovery, inspection, editing, "
+                "and focused development checks; those activities are not validation attempts. "
+                "Supply all final, non-mutating validation commands in one call. Tempo executes "
+                "every command and unlocks pull-request creation only when they all succeed."
             ),
             "inputSchema": {
                 "type": "object",

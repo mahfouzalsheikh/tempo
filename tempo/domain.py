@@ -138,6 +138,10 @@ class RunningEntry:
     graph_nodes: dict[str, NodeExecutionState] = field(default_factory=dict)
     node_sessions: dict[str, LiveSession] = field(default_factory=dict)
     node_sessions_aggregated: bool = False
+    # Lifetime node usage remains persisted for telemetry. Safety limits apply to
+    # usage added after this durable attempt began, so an operator resume cannot
+    # inherit an already-exhausted budget from completed nodes.
+    token_budget_baseline: int = 0
 
 
 @dataclass
