@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import signal
@@ -15,6 +16,82 @@ from .config import ValidationConfig
 from .workspace import WorkspaceManager
 
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+def _fallback_workspace_paths(workspace: Path) -> list[bytes]:
+    return sorted(
+        str(path.relative_to(workspace)).encode()
+        for path in workspace.rglob("*")
+        if path.is_file() and ".git" not in path.relative_to(workspace).parts
+    )
+
+
+async def workspace_fingerprint(workspace: Path) -> str:
+    """Hash tracked and untracked workspace content independently of Git metadata."""
+    process = await asyncio.create_subprocess_exec(
+        "git",
+        "ls-files",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        cwd=workspace,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    output, _ = await process.communicate()
+    if process.returncode == 0:
+        paths = sorted(path for path in output.split(b"\0") if path)
+    else:
+        paths = await asyncio.to_thread(_fallback_workspace_paths, workspace)
+    digest = hashlib.sha256()
+    for raw_path in paths:
+        digest.update(raw_path)
+        path = workspace / os.fsdecode(raw_path)
+        try:
+            if path.is_symlink():
+                digest.update(os.readlink(path).encode())
+            else:
+                digest.update(await asyncio.to_thread(path.read_bytes))
+        except OSError:
+            digest.update(b"<missing>")
+    return digest.hexdigest()
+
+
+async def workspace_publication_pending(
+    workspace: Path,
+    *,
+    branch_ref_updated: bool = False,
+) -> bool:
+    """Return whether validated workspace content still needs publication."""
+    status = await asyncio.create_subprocess_exec(
+        "git",
+        "status",
+        "--porcelain",
+        cwd=workspace,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    status_output, _ = await status.communicate()
+    if status.returncode != 0 or status_output.strip():
+        return True
+    if branch_ref_updated:
+        return False
+    revisions: list[bytes] = []
+    for revision in ("HEAD", "@{upstream}"):
+        process = await asyncio.create_subprocess_exec(
+            "git",
+            "rev-parse",
+            revision,
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        output, _ = await process.communicate()
+        if process.returncode != 0:
+            return True
+        revisions.append(output.strip())
+    return revisions[0] != revisions[1]
 
 
 class ProjectValidator:

@@ -42,6 +42,7 @@ class RuntimeResumeContext:
     thread_id: str
     usage_baseline: dict[str, int]
     compact_before_resume: bool = False
+    workspace_published: bool = False
 
 
 class ModelProvider(ABC):
@@ -416,17 +417,7 @@ class ProviderRegistry:
         if not model_factory:
             raise ConfigError(f"unsupported model provider kind: {model_config.kind}")
         model = model_factory().resolve(model_config, profile, candidate_index=model_index)
-        enabled_tools: set[str] | None = set()
-        for provider_name in profile.tool_providers:
-            tool_config = config.tool_providers[provider_name]
-            tool_factory = self.tool_factories.get(tool_config.kind)
-            if not tool_factory:
-                raise ConfigError(f"unsupported tool provider kind: {tool_config.kind}")
-            resolved = tool_factory().resolve(tool_config)
-            if resolved is None:
-                enabled_tools = None
-                break
-            enabled_tools.update(resolved)
+        enabled_tools = self.enabled_tools(config, profile)
         return runtime_factory(
             config,
             runtime_config,
@@ -437,6 +428,24 @@ class ProviderRegistry:
             on_event,
             approval_callback,
         )
+
+    def enabled_tools(
+        self,
+        config: ServiceConfig,
+        profile: AgentProfileConfig,
+    ) -> set[str] | None:
+        """Resolve the tools visible to an agent profile."""
+        enabled_tools: set[str] | None = set()
+        for provider_name in profile.tool_providers:
+            tool_config = config.tool_providers[provider_name]
+            tool_factory = self.tool_factories.get(tool_config.kind)
+            if not tool_factory:
+                raise ConfigError(f"unsupported tool provider kind: {tool_config.kind}")
+            resolved = tool_factory().resolve(tool_config)
+            if resolved is None:
+                return None
+            enabled_tools.update(resolved)
+        return enabled_tools
 
     def model_candidates(
         self,

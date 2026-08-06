@@ -7,6 +7,7 @@ from tempo.persistence import PersistenceStore
 from tempo_web.models import (
     AgentRun,
     AgentSession,
+    RunCheckpoint,
     RunNode,
     TrackedIssue,
     ValidationAttempt,
@@ -208,3 +209,113 @@ async def test_clear_incomplete_run_node_context_preserves_completed_context(tmp
     assert failed.turn_count == 0
     assert failed.total_tokens == 0
     assert failed.thread_total_tokens == 0
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_validation_recovery_context_invalidates_nodes_but_preserves_threads(tmp_path: Path):
+    issue = Issue(id="validation", identifier="GH-VALIDATION", title="Recover", state="open")
+    entry = RunningEntry(issue=issue, task=None, attempt=2)
+    store = PersistenceStore("github")
+    entry.run_record_id = await store.start_run(entry, tmp_path)
+    fingerprint = "f" * 64
+    validation = await ValidationAttempt.objects.acreate(
+        run_id=entry.run_record_id,
+        status=ValidationAttempt.Status.PASSED,
+        summary="Passed",
+        started_at=utcnow(),
+        finished_at=utcnow(),
+        workspace_fingerprint=fingerprint,
+    )
+    await RunCheckpoint.objects.acreate(
+        run_id=entry.run_record_id,
+        sequence=1,
+        kind="validation_fingerprint_recorded",
+        idempotency_key="validation-fingerprint",
+        payload={
+            "event": "validation_fingerprint_recorded",
+            "node_id": "verify",
+            "fingerprint": fingerprint,
+        },
+    )
+    verify = await RunNode.objects.acreate(
+        run_id=entry.run_record_id,
+        node_key="verify",
+        name="Verify",
+        node_type="agent",
+        status=RunNode.Status.SUCCEEDED,
+        thread_id="verify-thread",
+        thread_total_tokens=500,
+        output={"validation_status": "passed"},
+    )
+
+    assert await store.successful_validation_context(entry.run_record_id) == {
+        "fingerprint": fingerprint,
+        "node_id": "verify",
+    }
+    await store.invalidate_validation_recovery(
+        entry.run_record_id,
+        fingerprint=fingerprint,
+        node_ids={"verify"},
+    )
+
+    await validation.arefresh_from_db()
+    await verify.arefresh_from_db()
+    assert validation.status == ValidationAttempt.Status.INVALIDATED
+    assert verify.status == RunNode.Status.PENDING
+    assert verify.output == {}
+    assert verify.thread_id == "verify-thread"
+    assert verify.thread_total_tokens == 500
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_node_resume_recovers_ref_update_after_latest_validation(tmp_path: Path):
+    issue = Issue(id="publish", identifier="GH-PUBLISH", title="Resume publish", state="open")
+    entry = RunningEntry(issue=issue, task=None, attempt=2)
+    store = PersistenceStore("github")
+    entry.run_record_id = await store.start_run(entry, tmp_path)
+    await RunNode.objects.acreate(
+        run_id=entry.run_record_id,
+        node_key="publish",
+        name="Publish",
+        node_type="agent",
+        status=RunNode.Status.FAILED,
+        thread_id="publisher-thread",
+    )
+    for sequence, kind, payload in (
+        (
+            1,
+            "tool_call_completed",
+            {
+                "node_id": "publish",
+                "tool": "github_api",
+                "success": True,
+                "arguments": {"method": "PATCH", "path": "/repos/acme/app/git/refs/heads/x"},
+            },
+        ),
+        (2, "validation_fingerprint_recorded", {"fingerprint": "f" * 64}),
+        (
+            3,
+            "tool_call_completed",
+            {
+                "node_id": "publish",
+                "tool": "github_api",
+                "success": True,
+                "arguments": {"method": "PATCH", "path": "/repos/acme/app/git/refs/heads/x"},
+            },
+        ),
+    ):
+        await RunCheckpoint.objects.acreate(
+            run_id=entry.run_record_id,
+            sequence=sequence,
+            kind=kind,
+            idempotency_key=f"checkpoint-{sequence}",
+            payload=payload,
+        )
+
+    context = await store.run_node_resume_context(entry.run_record_id, "publish")
+
+    assert context is not None
+    assert context.thread_id == "publisher-thread"
+    assert context.workspace_published is True

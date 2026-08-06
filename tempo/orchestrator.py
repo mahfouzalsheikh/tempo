@@ -32,6 +32,7 @@ from .errors import CodexError
 from .persistence import PersistenceStore
 from .trackers.base import Tracker
 from .trackers.github import build_tracker
+from .validation import workspace_fingerprint, workspace_publication_pending
 from .workflow import WorkflowStore, render_node_prompt, render_prompt
 from .workspace import WorkspaceManager
 
@@ -73,8 +74,11 @@ Tempo independent review policy:
   findings require a person, and state the exact reason.
 """.strip()
 REVIEW_CONTINUATION_PROMPT = (
-    "Continue the independent pull-request review. Resolve remaining findings, validate the final "
-    "workspace, then call tempo_review with approve or human_review and concrete evidence."
+    "Continue the existing independent pull-request review from its latest findings and checks. "
+    "Do not repeat repository guidance, diff inspection, environment setup, or tests already "
+    "completed in this review thread. Resolve only remaining findings, validate the final "
+    "unchanged workspace, then call tempo_review with approve or human_review and concrete "
+    "evidence."
 )
 RECOVERY_CONTINUATION_PROMPT = (
     "Tempo resumed this durable thread after an operator unblock or worker recovery. "
@@ -87,6 +91,25 @@ RECOVERY_FALLBACK_PROMPT = (
     "starting the issue over. Inspect the existing workspace, git history, tracker, open pull "
     "requests, and validation checkpoints first. Preserve completed work and perform only the "
     "remaining steps."
+)
+REVALIDATION_RECOVERY_PROMPT = (
+    "Tempo routed this workflow back through validation because the current workspace does not "
+    "have an active matching validation pass. Ignore validation success remembered by the prior "
+    "thread: inspect the current workspace and call project_validation with the complete "
+    "diff-relevant sequence. Do not publish from this validation node."
+)
+PUBLICATION_RECOVERY_PROMPT = (
+    "Tempo reached this publication node only after restoring or rerunning the durable validation "
+    "gate for the current workspace. The publisher is intentionally not required to have "
+    "project_validation; do not wait for that tool or repeat validation. Inspect the current "
+    "branch and pull-request state, then perform only the remaining push and pull-request handoff. "
+    "Do not merge."
+)
+PUBLICATION_UPDATE_PROMPT = (
+    "Fresh validation has passed, but the current workspace still has unpublished content. "
+    "Do not seek or repeat project_validation. Commit any intended validated changes, publish the "
+    "exact current branch through the available GitHub tooling, and create or update the existing "
+    "pull request. Do not merge."
 )
 
 
@@ -599,6 +622,12 @@ class Orchestrator:
             )
         if self.persistence:
             await self.persistence.initialize_run_nodes(entry)
+        await self._restore_validation_gate(
+            entry,
+            config,
+            workspace_path,
+            tracker,
+        )
         self._restore_completed_node_sessions(entry)
         self._reset_incomplete_graph_nodes(entry)
         if self.persistence and entry.run_record_id:
@@ -712,6 +741,59 @@ class Orchestrator:
                 f"workflow node {failed.node_id} failed: {failed.error or 'unknown error'}",
                 category="workflow_node_failed",
             )
+
+    async def _restore_validation_gate(
+        self,
+        entry: RunningEntry,
+        config: ServiceConfig,
+        workspace_path: Any,
+        tracker: Tracker,
+    ) -> None:
+        """Restore a valid publication gate or route stale work back through validation."""
+        if not config.validation.enabled or not self.persistence or not entry.run_record_id:
+            return
+        context = await self.persistence.successful_validation_context(entry.run_record_id)
+        if not context:
+            return
+        fingerprint = context["fingerprint"]
+        current_fingerprint = await workspace_fingerprint(workspace_path)
+        if current_fingerprint == fingerprint:
+            tracker.authorize_publication(entry.issue.id)
+            return
+
+        validation_node_id = context.get("node_id", "")
+        if not validation_node_id or validation_node_id not in entry.graph_nodes:
+            return
+        affected = {validation_node_id}
+        while True:
+            downstream = {
+                edge.target
+                for edge in config.workflow.edges
+                if edge.source in affected
+            }
+            expanded = affected | downstream
+            if expanded == affected:
+                break
+            affected = expanded
+        reset_nodes = {
+            node_id
+            for node_id in affected
+            if node_id == validation_node_id
+            or entry.graph_nodes[node_id].status == "succeeded"
+        }
+        for node_id in reset_nodes:
+            state = entry.graph_nodes[node_id]
+            state.status = "pending"
+            state.attempt = 0
+            state.started_at = None
+            state.finished_at = None
+            state.error = None
+            state.output = {}
+        await self.persistence.invalidate_validation_recovery(
+            entry.run_record_id,
+            fingerprint=fingerprint,
+            node_ids=reset_nodes,
+        )
 
     @staticmethod
     def _reset_incomplete_graph_nodes(entry: RunningEntry) -> None:
@@ -880,6 +962,8 @@ class Orchestrator:
     ) -> dict[str, Any]:
         entry = self.running[issue.id]
         profile = config.agents[node.agent or ""]
+        enabled_tools = providers.enabled_tools(config, profile)
+        has_validation_tool = enabled_tools is None or "project_validation" in enabled_tools
         live = LiveSession(active_node_id=node.id, active_agent_role=profile.role)
         resume_context = (
             await self.persistence.run_node_resume_context(entry.run_record_id, node.id)
@@ -891,6 +975,7 @@ class Orchestrator:
             live.thread_input_tokens = int(baseline.get("input_tokens", 0))
             live.thread_output_tokens = int(baseline.get("output_tokens", 0))
             live.thread_total_tokens = int(baseline.get("total_tokens", 0))
+            live.workspace_published = resume_context.workspace_published
         entry.node_sessions[node.id] = live
         entry.session = live
 
@@ -934,6 +1019,7 @@ class Orchestrator:
             live.thread_total_tokens = 0
         current_issue = issue
         max_turns = profile.max_turns or config.agent.max_turns
+        publication_update_required = False
         try:
             for turn_number in range(1, max_turns + 1):
                 live.turn_count = turn_number
@@ -941,17 +1027,13 @@ class Orchestrator:
                 operator_feedback = self._feedback.pop(issue.id, None)
                 if turn_number == 1 and resume_context:
                     prompt_parts = [
-                        (
-                            RECOVERY_CONTINUATION_PROMPT
-                            if getattr(runtime_session, "resumed", False)
-                            else RECOVERY_FALLBACK_PROMPT
+                        self._recovery_prompt(
+                            profile.completion,
+                            resumed=bool(getattr(runtime_session, "resumed", False)),
                         ),
                         f"Continue the {profile.role} assignment for workflow node {node.id}.",
                     ]
-                    if (
-                        profile.completion in {"validation", "publication"}
-                        and config.validation.enabled
-                    ):
+                    if config.validation.enabled and has_validation_tool:
                         prompt_parts.append(VALIDATION_POLICY_PROMPT)
                     prompt = "\n\n".join(prompt_parts)
                 elif turn_number == 1:
@@ -991,20 +1073,20 @@ class Orchestrator:
                             "Prior workflow results:\n"
                             + json.dumps(graph_context, sort_keys=True, default=str)
                         )
-                    if (
-                        profile.completion in {"validation", "publication"}
-                        and config.validation.enabled
-                    ):
+                    if config.validation.enabled and has_validation_tool:
                         prompt_parts.append(VALIDATION_POLICY_PROMPT)
                     prompt = "\n\n".join(part for part in prompt_parts if part)
                 else:
-                    prompt = (
-                        VALIDATION_CONTINUATION_PROMPT
-                        if profile.completion in {"validation", "publication"}
-                        and config.validation.enabled
-                        and live.validation_status != "passed"
-                        else CONTINUATION_PROMPT
-                    )
+                    if publication_update_required:
+                        prompt = PUBLICATION_UPDATE_PROMPT
+                    else:
+                        prompt = (
+                            VALIDATION_CONTINUATION_PROMPT
+                            if config.validation.enabled
+                            and has_validation_tool
+                            and live.validation_status != "passed"
+                            else CONTINUATION_PROMPT
+                        )
                 if operator_feedback:
                     prompt = f"Operator feedback:\n{operator_feedback}\n\n{prompt}"
                 await runtime.run_turn(runtime_session, prompt, current_issue)
@@ -1014,6 +1096,15 @@ class Orchestrator:
                     break
                 if profile.completion == "validation" and live.validation_status == "passed":
                     break
+                if profile.completion == "publication" and live.pull_request_created:
+                    publication_update_required = await workspace_publication_pending(
+                        workspace_path,
+                        branch_ref_updated=live.workspace_published,
+                    )
+                    if publication_update_required:
+                        live.pull_request_created = False
+                        live.pull_request_url = None
+                        live.pull_request_number = None
                 if profile.completion == "publication" and (
                     live.pull_request_created or live.no_change_completed
                 ):
@@ -1052,6 +1143,14 @@ class Orchestrator:
             }
         finally:
             await runtime.stop_session(runtime_session)
+
+    @staticmethod
+    def _recovery_prompt(completion: str, *, resumed: bool) -> str:
+        if completion == "validation":
+            return REVALIDATION_RECOVERY_PROMPT
+        if completion == "publication":
+            return PUBLICATION_RECOVERY_PROMPT
+        return RECOVERY_CONTINUATION_PROMPT if resumed else RECOVERY_FALLBACK_PROMPT
 
     @staticmethod
     def _restore_completed_node_sessions(entry: RunningEntry) -> None:
@@ -1186,6 +1285,7 @@ class Orchestrator:
                     raise CodexError("run was released during review", category="run_released")
                 entry.phase = "ReviewingPullRequest"
                 entry.session.turn_count = implementation_turns + review_turn
+                operator_feedback = self._feedback.pop(issue.id, None)
                 if review_turn == 1 and resume_context:
                     prompt = (
                         REVIEW_CONTINUATION_PROMPT
@@ -1205,8 +1305,12 @@ class Orchestrator:
                         if review_turn == 1
                         else REVIEW_CONTINUATION_PROMPT
                     )
+                if operator_feedback:
+                    prompt = f"Operator feedback:\n{operator_feedback}\n\n{prompt}"
                 self._publish_live_state()
                 await review_client.run_turn(review_session, prompt, issue)
+                if operator_feedback and self.persistence and entry.run_record_id:
+                    await self.persistence.set_control_state(entry.run_record_id, feedback="")
                 if review_session.review_decision:
                     break
             if not review_session.review_decision:
@@ -1433,6 +1537,15 @@ class Orchestrator:
             session.validation_finished_at = None
             entry.phase = "ValidationRequired"
         elif event_name == "tool_call_completed" and event.get("tool") == "github_api":
+            arguments = event.get("arguments") or {}
+            method = str(arguments.get("method", "GET")).upper()
+            path = str(arguments.get("path", ""))
+            if (
+                event.get("success")
+                and method not in {"GET", "HEAD"}
+                and "/git/refs" in path
+            ):
+                session.workspace_published = True
             pull_request = PersistenceStore._pull_request_from_checkpoint(event)
             # Reviewers may inspect historical or related pull requests. Once this
             # run has a publication target, those reads must not replace it.
@@ -1709,7 +1822,12 @@ class Orchestrator:
             if entry:
                 return False, "run_already_active"
             attempt = context["attempt"] + (1 if action in {"retry", "unblock"} else 0)
-            fresh_context = bool(payload.get("fresh_context", False))
+            # Unblock is a continuation operation: retain the interrupted node's
+            # durable provider thread even if a stale client requests fresh context.
+            # A deliberate context reset remains available through retry/requeue.
+            fresh_context = action in {"retry", "requeue"} and bool(
+                payload.get("fresh_context", False)
+            )
             if fresh_context:
                 await self.persistence.clear_incomplete_run_node_context(run_id)
             self.safety_blocked.discard(issue_id)

@@ -593,6 +593,66 @@ class PersistenceStore:
             output={},
         )
 
+    async def successful_validation_context(self, run_id: int) -> dict[str, str] | None:
+        """Return the latest durable passed-validation fingerprint and workflow node."""
+        from tempo_web.models import RunCheckpoint, ValidationAttempt
+
+        validation = (
+            await ValidationAttempt.objects.filter(
+                run_id=run_id,
+                status=ValidationAttempt.Status.PASSED,
+            )
+            .exclude(workspace_fingerprint="")
+            .order_by("-finished_at", "-id")
+            .afirst()
+        )
+        if not validation:
+            return None
+        checkpoints = RunCheckpoint.objects.filter(
+            run_id=run_id,
+            kind="validation_fingerprint_recorded",
+        ).order_by("-sequence")
+        async for checkpoint in checkpoints:
+            payload = checkpoint.payload or {}
+            if payload.get("fingerprint") == validation.workspace_fingerprint:
+                return {
+                    "fingerprint": validation.workspace_fingerprint,
+                    "node_id": str(payload.get("node_id") or ""),
+                }
+        return {
+            "fingerprint": validation.workspace_fingerprint,
+            "node_id": "",
+        }
+
+    async def invalidate_validation_recovery(
+        self,
+        run_id: int,
+        *,
+        fingerprint: str,
+        node_ids: set[str],
+    ) -> None:
+        """Invalidate stale validation and requeue its node path without losing threads."""
+        from tempo_web.models import RunNode, ValidationAttempt
+
+        await ValidationAttempt.objects.filter(
+            run_id=run_id,
+            status=ValidationAttempt.Status.PASSED,
+            workspace_fingerprint=fingerprint,
+        ).aupdate(status=ValidationAttempt.Status.INVALIDATED)
+        if node_ids:
+            await RunNode.objects.filter(run_id=run_id, node_key__in=node_ids).aupdate(
+                status=RunNode.Status.PENDING,
+                attempt=0,
+                started_at=None,
+                finished_at=None,
+                error="",
+                output={},
+                checkpoint={
+                    "status": RunNode.Status.PENDING,
+                    "reason": "workspace changed after durable validation",
+                },
+            )
+
     async def clear_incomplete_run_node_context(self, run_id: int) -> None:
         """Discard failed-node runtime context while preserving completed graph work."""
         from tempo_web.models import RunNode
@@ -617,13 +677,42 @@ class PersistenceStore:
         node_id: str,
     ) -> RuntimeResumeContext | None:
         """Return the durable runtime thread state for an interrupted graph node."""
-        from tempo_web.models import RunNode
+        from tempo_web.models import RunCheckpoint, RunNode
 
         from .agent_runtime import RuntimeResumeContext
 
         row = await RunNode.objects.filter(run_id=run_id, node_key=node_id).afirst()
         if not row or not row.thread_id:
             return None
+        latest_validation = (
+            await RunCheckpoint.objects.filter(
+                run_id=run_id,
+                kind="validation_fingerprint_recorded",
+            )
+            .order_by("-sequence")
+            .afirst()
+        )
+        publication_events = RunCheckpoint.objects.filter(
+            run_id=run_id,
+            kind="tool_call_completed",
+        )
+        if latest_validation:
+            publication_events = publication_events.filter(
+                sequence__gt=latest_validation.sequence
+            )
+        workspace_published = False
+        async for checkpoint in publication_events.order_by("-sequence"):
+            payload = checkpoint.payload or {}
+            arguments = payload.get("arguments") or {}
+            if (
+                payload.get("node_id") == node_id
+                and payload.get("tool") == "github_api"
+                and payload.get("success")
+                and str(arguments.get("method", "GET")).upper() not in {"GET", "HEAD"}
+                and "/git/refs" in str(arguments.get("path", ""))
+            ):
+                workspace_published = True
+                break
         return RuntimeResumeContext(
             thread_id=row.thread_id,
             usage_baseline={
@@ -638,6 +727,7 @@ class PersistenceStore:
                     or row.thread_total_tokens >= self.config.agent.max_tokens_per_run
                 )
             ),
+            workspace_published=workspace_published,
         )
 
     async def set_run_node_model(self, run_id: int, node_id: str, model: str) -> None:

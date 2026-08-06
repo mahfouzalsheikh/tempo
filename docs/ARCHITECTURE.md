@@ -625,6 +625,11 @@ Tempo records the provider's actionable message and immediately moves the run to
 the provider limit resets, the operator can select **Unblock**; the existing node thread and
 workspace are then resumed instead of starting the issue from scratch.
 
+Operator feedback is delivered to either an implementation node or the independent review thread
+on its next turn, then cleared durably. A publisher also verifies that the validated workspace is
+clean and synchronized before treating an existing pull request as completion. Successful Git-ref
+updates are recovered from durable tool checkpoints if interruption occurs before PR discovery.
+
 Any resumed node whose cumulative provider thread has already crossed the per-attempt token limit
 is compacted before its next turn, including cancellation, crash, and operator-requeue recovery.
 
@@ -649,6 +654,12 @@ previous attempt reached that limit is compacted before the continuation turn so
 the new budget repeatedly loading oversized history. If the provider cannot resume, Tempo sends a
 recovery prompt that first inspects the retained workspace, Git history, tracker, and checkpoints
 instead of replaying the original issue prompt.
+
+Passed validation is restored as a publication gate only when its durable content fingerprint
+still matches the workspace. If the workspace changed after validation, Tempo invalidates the
+stale pass and routes the graph back through its validation node before retrying publication. Tool
+instructions are capability-aware, so a publisher without `project_validation` is never told to
+invoke it.
 
 `AgentSession` still supplies pull-request recovery context for the post-publication review path.
 If a PR URL is absent, Tempo searches GitHub tool checkpoints and reconstructs it from a successful
@@ -677,7 +688,8 @@ snapshot, then a new full snapshot per notification, with a comment keepalive ev
 
 Run action requests accept `Idempotency-Key`. If omitted, the server generates one. Reusing a key
 with a different run, action, or operator returns a conflict; an exact replay returns the stored
-result.
+result. `retry` and `requeue` may explicitly request `fresh_context`; `unblock` always preserves
+the interrupted node's durable provider thread so stale clients cannot accidentally restart work.
 
 ### Approvals
 

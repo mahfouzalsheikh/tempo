@@ -405,8 +405,7 @@ document.addEventListener("click", event => {
         danger: true,
       });
     } else {
-      const payload = action === "unblock" ? {fresh_context: true} : {};
-      postRunAction(runId, action, payload).catch(() => {});
+      postRunAction(runId, action, {}).catch(() => {});
     }
     return;
   }

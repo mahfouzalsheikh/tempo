@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from tempo.config import WorkflowEdgeConfig
+from tempo.agent_runtime import providers
+from tempo.config import ServiceConfig, WorkflowEdgeConfig
 from tempo.domain import Issue, LiveSession, NodeExecutionState, RunningEntry, Totals
 from tempo.errors import CodexError
 from tempo.orchestrator import Orchestrator
@@ -103,6 +104,193 @@ def test_label_edge_conditions_require_successful_source():
     assert Orchestrator._edge_matches(no_approval, source, issue) is False
     issue.labels = []
     assert Orchestrator._edge_matches(no_approval, source, issue) is True
+
+
+def recovery_workflow_config(tmp_path: Path) -> ServiceConfig:
+    return ServiceConfig.model_validate(
+        {
+            "tracker": {
+                "kind": "memory",
+                "active_states": ["Todo"],
+                "terminal_states": ["Done"],
+            },
+            "workspace": {"root": str(tmp_path)},
+            "validation": {"enabled": True},
+            "tool_providers": {
+                "delivery": {
+                    "kind": "tempo",
+                    "allow_all": False,
+                    "tools": ["github_api", "tempo_complete"],
+                },
+                "verification": {
+                    "kind": "tempo",
+                    "allow_all": False,
+                    "tools": ["project_validation"],
+                },
+            },
+            "agents": {
+                "verifier": {
+                    "completion": "validation",
+                    "tool_providers": ["verification"],
+                },
+                "publisher": {
+                    "completion": "publication",
+                    "tool_providers": ["delivery"],
+                },
+            },
+            "workflow": {
+                "nodes": [
+                    {"id": "verify", "agent": "verifier"},
+                    {"id": "approval", "type": "human_gate"},
+                    {"id": "publish", "agent": "publisher"},
+                ],
+                "edges": [
+                    {"from": "verify", "to": "approval"},
+                    {"from": "approval", "to": "publish"},
+                ],
+            },
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_matching_durable_validation_restores_publication_gate(tmp_path, monkeypatch):
+    class RecordingTracker(MemoryTracker):
+        def __init__(self):
+            super().__init__()
+            self.authorized = set()
+
+        def authorize_publication(self, issue_id):
+            self.authorized.add(issue_id)
+
+    class RecoveryStore:
+        async def successful_validation_context(self, _run_id):
+            return {"fingerprint": "validated", "node_id": "verify"}
+
+    async def matching_fingerprint(_workspace):
+        return "validated"
+
+    monkeypatch.setattr(
+        "tempo.orchestrator.workspace_fingerprint",
+        matching_fingerprint,
+    )
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    orchestrator.persistence = RecoveryStore()
+    issue = Issue(id="resume", identifier="A-RESUME", title="Resume", state="Todo")
+    entry = RunningEntry(issue=issue, task=None, attempt=2, run_record_id=7)
+    entry.graph_nodes = {
+        "verify": NodeExecutionState("verify", "Verify", "agent", status="succeeded"),
+        "approval": NodeExecutionState("approval", "Approval", "human_gate", status="succeeded"),
+        "publish": NodeExecutionState("publish", "Publish", "agent", status="failed"),
+    }
+    tracker = RecordingTracker()
+
+    await orchestrator._restore_validation_gate(
+        entry,
+        recovery_workflow_config(tmp_path),
+        tmp_path,
+        tracker,
+    )
+
+    assert tracker.authorized == {issue.id}
+    assert entry.graph_nodes["verify"].status == "succeeded"
+    assert entry.graph_nodes["approval"].status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_changed_workspace_routes_recovery_back_through_verifier(tmp_path, monkeypatch):
+    class RecoveryStore:
+        invalidated = None
+
+        async def successful_validation_context(self, _run_id):
+            return {"fingerprint": "validated", "node_id": "verify"}
+
+        async def invalidate_validation_recovery(self, run_id, *, fingerprint, node_ids):
+            self.invalidated = (run_id, fingerprint, node_ids)
+
+    async def changed_fingerprint(_workspace):
+        return "changed"
+
+    monkeypatch.setattr(
+        "tempo.orchestrator.workspace_fingerprint",
+        changed_fingerprint,
+    )
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    store = RecoveryStore()
+    orchestrator.persistence = store
+    issue = Issue(id="changed", identifier="A-CHANGED", title="Changed", state="Todo")
+    entry = RunningEntry(issue=issue, task=None, attempt=2, run_record_id=8)
+    entry.graph_nodes = {
+        "verify": NodeExecutionState(
+            "verify",
+            "Verify",
+            "agent",
+            status="succeeded",
+            attempt=1,
+            output={"validation_status": "passed"},
+        ),
+        "approval": NodeExecutionState(
+            "approval", "Approval", "human_gate", status="succeeded", attempt=1
+        ),
+        "publish": NodeExecutionState(
+            "publish", "Publish", "agent", status="failed", attempt=2
+        ),
+    }
+
+    await orchestrator._restore_validation_gate(
+        entry,
+        recovery_workflow_config(tmp_path),
+        tmp_path,
+        MemoryTracker(),
+    )
+
+    assert entry.graph_nodes["verify"].status == "pending"
+    assert entry.graph_nodes["verify"].output == {}
+    assert entry.graph_nodes["approval"].status == "pending"
+    assert entry.graph_nodes["publish"].status == "failed"
+    assert store.invalidated == (8, "validated", {"verify", "approval"})
+
+
+def test_validation_policy_is_only_sent_to_profiles_with_the_tool(tmp_path):
+    config = recovery_workflow_config(tmp_path)
+
+    assert providers.enabled_tools(config, config.agents["verifier"]) == {
+        "project_validation"
+    }
+    assert providers.enabled_tools(config, config.agents["publisher"]) == {
+        "github_api",
+        "tempo_complete",
+    }
+
+
+def test_resumed_verifier_is_told_that_revalidation_is_mandatory(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+
+    prompt = orchestrator._recovery_prompt("validation", resumed=True)
+
+    assert "does not have an active matching validation pass" in prompt
+    assert "Ignore validation success remembered by the prior thread" in prompt
+    assert "call project_validation" in prompt
+    assert "Do not publish" in prompt
+
+
+def test_resumed_publisher_is_told_not_to_wait_for_validation_tool(tmp_path):
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+
+    prompt = orchestrator._recovery_prompt("publication", resumed=True)
+
+    assert "restoring or rerunning the durable validation gate" in prompt
+    assert "not required to have project_validation" in prompt
+    assert "do not wait for that tool or repeat validation" in prompt
+    assert "remaining push and pull-request handoff" in prompt
+
+
+def test_review_continuation_does_not_repeat_completed_review_work():
+    from tempo.orchestrator import REVIEW_CONTINUATION_PROMPT
+
+    assert "Do not repeat repository guidance" in REVIEW_CONTINUATION_PROMPT
+    assert "environment setup" in REVIEW_CONTINUATION_PROMPT
+    assert "tests already completed" in REVIEW_CONTINUATION_PROMPT
 
 
 @pytest.mark.django_db(transaction=True)
@@ -603,6 +791,8 @@ async def test_review_agent_uses_separate_session_and_applies_merge_policy(tmp_p
     workspace = await manager.create(issue.identifier)
     tracker = MemoryTracker()
     roles = []
+    prompts = []
+    orchestrator._feedback[issue.id] = "Reuse the passing production-image validation command."
 
     class FakeReviewClient:
         def __init__(self, _config, _manager, _tracker, on_event, approval_callback=None):
@@ -612,7 +802,8 @@ async def test_review_agent_uses_separate_session_and_applies_merge_policy(tmp_p
             roles.append(role)
             return SimpleNamespace(review_decision=None, review_summary=None)
 
-        async def run_turn(self, session, _prompt, _issue):
+        async def run_turn(self, session, prompt, _issue):
+            prompts.append(prompt)
             session.review_decision = "approve"
             session.review_summary = "Reviewed the diff and validation evidence."
             await self.on_event(
@@ -642,6 +833,9 @@ async def test_review_agent_uses_separate_session_and_applies_merge_policy(tmp_p
     )
 
     assert roles == ["review"]
+    assert prompts[0].startswith(
+        "Operator feedback:\nReuse the passing production-image validation command."
+    )
     assert entry.phase == "Merged"
     assert entry.session.review_status == "merged"
     assert entry.session.merged is True

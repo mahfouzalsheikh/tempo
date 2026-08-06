@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import json
 import os
 from collections.abc import Awaitable, Callable
@@ -16,7 +15,7 @@ from .config import ServiceConfig
 from .domain import Issue
 from .errors import CodexError
 from .trackers.base import Tracker
-from .validation import ProjectValidator
+from .validation import ProjectValidator, workspace_fingerprint
 from .workspace import WorkspaceManager
 
 log = structlog.get_logger(__name__)
@@ -761,42 +760,7 @@ class CodexAppServer:
 
     @staticmethod
     async def _workspace_fingerprint(workspace: Path) -> str:
-        process = await asyncio.create_subprocess_exec(
-            "git",
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "-z",
-            cwd=workspace,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        output, _ = await process.communicate()
-        if process.returncode == 0:
-            paths = sorted(path for path in output.split(b"\0") if path)
-        else:
-            paths = await asyncio.to_thread(CodexAppServer._fallback_workspace_paths, workspace)
-        digest = hashlib.sha256()
-        for raw_path in paths:
-            digest.update(raw_path)
-            path = workspace / os.fsdecode(raw_path)
-            try:
-                if path.is_symlink():
-                    digest.update(os.readlink(path).encode())
-                else:
-                    digest.update(await asyncio.to_thread(path.read_bytes))
-            except OSError:
-                digest.update(b"<missing>")
-        return digest.hexdigest()
-
-    @staticmethod
-    def _fallback_workspace_paths(workspace: Path) -> list[bytes]:
-        return sorted(
-            str(path.relative_to(workspace)).encode()
-            for path in workspace.rglob("*")
-            if path.is_file() and ".git" not in path.relative_to(workspace).parts
-        )
+        return await workspace_fingerprint(workspace)
 
     async def stop_session(self, session: CodexSession) -> None:
         if session.process.returncode is None:

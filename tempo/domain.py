@@ -104,6 +104,7 @@ class LiveSession:
     merged: bool = False
     no_change_completed: bool = False
     completion_summary: str | None = None
+    workspace_published: bool = False
     validation_record_id: int | None = None
     active_node_id: str | None = None
     active_agent_role: str | None = None

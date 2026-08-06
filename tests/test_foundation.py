@@ -231,3 +231,92 @@ async def test_operator_can_cancel_a_paused_durable_run(tmp_path):
         ).acount()
         == 1
     )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_unblock_always_preserves_interrupted_node_context(tmp_path):
+    from django.contrib.auth import get_user_model
+
+    from tempo.orchestrator import Orchestrator
+    from tempo_web.models import RunNode
+
+    store = PersistenceStore(
+        "memory",
+        config=store_config("unblock", tmp_path),
+        workflow_path=tmp_path / "WORKFLOW.md",
+    )
+    await store.initialize()
+    issue = Issue(id="limited", identifier="C-2", title="Continue", state="open")
+    run_id = await store.enqueue_issue(issue)
+    assert run_id is not None
+    await store.set_control_state(
+        run_id,
+        status=AgentRun.Status.FAILED,
+        phase="SafetyLimitReached",
+        attempt=2,
+    )
+    node = await RunNode.objects.acreate(
+        run_id=run_id,
+        node_key="implement",
+        name="Implement",
+        node_type="agent",
+        status=RunNode.Status.FAILED,
+        session_id="session-durable",
+        thread_id="thread-durable",
+        turn_count=4,
+        total_tokens=100,
+        thread_total_tokens=250,
+    )
+    user = await get_user_model().objects.acreate_user(username="unblock-operator")
+    orchestrator = Orchestrator(str(tmp_path / "WORKFLOW.md"))
+    orchestrator.persistence = store
+    orchestrator.safety_blocked.add(issue.id)
+
+    applied, message = await orchestrator.control_run(
+        run_id,
+        "unblock",
+        # Cached dashboard clients from the regression may still submit this.
+        {"fresh_context": True},
+        user_id=user.pk,
+        idempotency_key="unblock-preserves-context",
+    )
+
+    await node.arefresh_from_db()
+    run = await AgentRun.objects.aget(pk=run_id)
+    assert applied is True
+    assert message == "run queued"
+    assert run.status == AgentRun.Status.RETRY_SCHEDULED
+    assert run.attempt == 3
+    assert node.session_id == "session-durable"
+    assert node.thread_id == "thread-durable"
+    assert node.turn_count == 4
+    assert node.total_tokens == 100
+    assert node.thread_total_tokens == 250
+    assert issue.id not in orchestrator.safety_blocked
+
+    # A later safety stop must preserve the same continuation point again.
+    await store.set_control_state(
+        run_id,
+        status=AgentRun.Status.FAILED,
+        phase="SafetyLimitReached",
+    )
+    orchestrator.retries.pop(issue.id)
+    orchestrator.claimed.discard(issue.id)
+    orchestrator.safety_blocked.add(issue.id)
+    applied, message = await orchestrator.control_run(
+        run_id,
+        "unblock",
+        {"fresh_context": True},
+        user_id=user.pk,
+        idempotency_key="unblock-preserves-context-again",
+    )
+
+    await node.arefresh_from_db()
+    run = await AgentRun.objects.aget(pk=run_id)
+    assert applied is True
+    assert message == "run queued"
+    assert run.attempt == 4
+    assert node.thread_id == "thread-durable"
+    assert node.turn_count == 4
+    assert node.thread_total_tokens == 250
