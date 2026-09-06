@@ -741,16 +741,32 @@ class PersistenceStore:
 
         checkpoints = RunCheckpoint.objects.filter(
             run_id=run_id,
-            kind="tool_call_completed",
-            payload__tool="tempo_review",
-            payload__success=True,
+        ).filter(
+            Q(kind__in=["review_completed", "review_invalidated"])
+            | Q(kind="tool_call_completed", payload__tool="tempo_review", payload__success=True)
         ).order_by("-sequence")
         async for checkpoint in checkpoints:
-            arguments = checkpoint.payload.get("arguments") or {}
+            if checkpoint.kind == "review_invalidated":
+                return None
+            arguments = (
+                checkpoint.payload if checkpoint.kind == "review_completed"
+                else checkpoint.payload.get("arguments") or {}
+            )
             decision = str(arguments.get("decision", "")).strip()
             summary = str(arguments.get("summary", "")).strip()
             if decision in {"approve", "human_review"} and summary:
-                return {"decision": decision, "summary": summary}
+                head_sha = checkpoint.payload.get("review_head_sha")
+                if decision == "approve" and not head_sha:
+                    return {
+                        "decision": "human_review",
+                        "summary": (
+                            "The saved approval has no commit identity. A fresh review is required."
+                        ),
+                    }
+                result = {"decision": decision, "summary": summary}
+                if head_sha:
+                    result["review_head_sha"] = str(head_sha)
+                return result
         return None
 
     async def finish_run_node(

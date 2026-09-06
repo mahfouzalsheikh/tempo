@@ -552,13 +552,19 @@ An `approve` decision requires:
 
 - The caller is the review role.
 - The summary is non-empty.
-- Validation is disabled, or the current workspace exactly matches the last successful validation
-  fingerprint.
+- The workspace is a clean Git checkout with a resolvable commit.
+- Validation is disabled, or both the current commit SHA and workspace fingerprint match the last
+  successful review validation. Review changes must be committed before validation. A new validation
+  attempt revokes the previous evidence, including when the new attempt fails.
 
 After approval, the control plane—not Codex—calls GitHub:
 
-- With `review_token`, it attempts a formal `APPROVE` review using the second identity.
-- Without it, it writes an idempotent review comment.
+- It checks that the remote PR head matches the recorded review SHA; missing or changed identity
+  creates a human handoff requiring fresh review.
+- With a distinct `review_token`, it attempts a formal `APPROVE` review bound to that commit.
+- Without it, it writes an idempotent review comment scoped to that commit.
+- Merge requests include the expected review SHA, so a later head change cannot be merged by that
+  request. Lost transport responses are reconciled by reading the merged PR and checking its head.
 - If automatic merge is disabled, it creates a human handoff despite the positive review.
 - If GitHub rejects review, merge, permissions, checks, protection rules, or conflicts, it creates
   a human handoff.
@@ -663,9 +669,13 @@ invoke it.
 
 `AgentSession` still supplies pull-request recovery context for the post-publication review path.
 If a PR URL is absent, Tempo searches GitHub tool checkpoints and reconstructs it from a successful
-PR response or numbered PR lookup. A successful `tempo_review` decision is also a durable commit
-point: if a token stop or crash happens after the decision but before merge policy runs, the retry
-applies that recorded decision without repeating the independent review.
+PR response or numbered PR lookup. A successful `tempo_review` decision records a host-generated
+`review_completed` checkpoint, including the reviewed commit and validation fingerprint, before
+acknowledging the tool call. If a token stop or crash happens before merge policy runs, the retry
+applies the recorded decision and rechecks the remote head. Historical approvals without a commit
+identity require human review instead of authorizing an automatic merge.
+Starting another review-validation attempt records a distinct `review_invalidated` checkpoint,
+so an interrupted or failed recheck cannot recover an earlier approval.
 
 ## Operator control and HTTP API
 

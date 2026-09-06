@@ -800,7 +800,9 @@ async def test_review_agent_uses_separate_session_and_applies_merge_policy(tmp_p
 
         async def start_session(self, _workspace, *, role="implementation"):
             roles.append(role)
-            return SimpleNamespace(review_decision=None, review_summary=None)
+            return SimpleNamespace(
+                review_decision=None, review_summary=None, review_head_sha="a" * 40,
+            )
 
         async def run_turn(self, session, prompt, _issue):
             prompts.append(prompt)
@@ -959,11 +961,40 @@ async def test_completed_review_decision_is_recovered_from_checkpoint(tmp_path):
             "tool": "tempo_review",
             "success": True,
             "arguments": {"decision": "approve", "summary": "Review passed."},
+            "review_head_sha": "a" * 40,
         },
     )
 
     assert await orchestrator.persistence.completed_review_decision(run.pk) == {
         "decision": "approve",
         "summary": "Review passed.",
+        "review_head_sha": "a" * 40,
     }
     await orchestrator.stop()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_review_decision_is_durable_before_tool_response(tmp_path):
+    from tempo.persistence import PersistenceStore
+    from tempo_web.models import RunCheckpoint
+
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    await orchestrator.store.initialize()
+    issue = Issue(id="review", identifier="A-REVIEW", title="Review", state="Todo")
+    entry = RunningEntry(issue=issue, task=None, attempt=1)
+    entry.session.agent_role = "review"
+    orchestrator.running[issue.id] = entry
+    orchestrator.persistence = PersistenceStore("memory")
+    entry.run_record_id = await orchestrator.persistence.start_run(entry, tmp_path)
+    await orchestrator._codex_event(issue.id, {
+        "event": "review_completed", "decision": "approve", "summary": "Reviewed candidate.",
+        "review_head_sha": "a" * 40, "validation_fingerprint": "f" * 64,
+    })
+
+    checkpoint = await RunCheckpoint.objects.aget(run_id=entry.run_record_id)
+    assert checkpoint.kind == "review_completed"
+    assert checkpoint.payload["validation_fingerprint"] == "f" * 64
+    assert await orchestrator.persistence.completed_review_decision(entry.run_record_id) == {
+        "decision": "approve", "summary": "Reviewed candidate.", "review_head_sha": "a" * 40,
+    }

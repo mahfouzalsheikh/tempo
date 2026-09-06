@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import json
 import os
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +16,7 @@ from .config import ServiceConfig
 from .domain import Issue
 from .errors import CodexError
 from .trackers.base import Tracker
-from .validation import ProjectValidator, workspace_fingerprint
+from .validation import ProjectValidator, clean_workspace_head, workspace_fingerprint
 from .workspace import WorkspaceManager
 
 log = structlog.get_logger(__name__)
@@ -33,9 +34,11 @@ class CodexSession:
     next_request_id: int = 3
     role: str = "implementation"
     validation_fingerprint: str | None = None
+    validation_head_sha: str | None = None
     completion_disposition: str | None = None
     review_decision: str | None = None
     review_summary: str | None = None
+    review_head_sha: str | None = None
     resumed: bool = False
     resume_failure: str | None = None
     usage_baseline_input: int = 0
@@ -522,6 +525,9 @@ class CodexAppServer:
             elif name == "tempo_review":
                 decision = str(arguments.get("decision", "")).strip().lower()
                 summary = str(arguments.get("summary", "")).strip()
+                head_sha = (
+                    await clean_workspace_head(session.workspace) if decision == "approve" else None
+                )
                 fingerprint_matches = not self.validation_enabled or (
                     session.validation_fingerprint is not None
                     and session.validation_fingerprint
@@ -545,23 +551,35 @@ class CodexAppServer:
                         "output": "A concrete review summary is required.",
                         "contentItems": [],
                     }
-                elif decision == "approve" and not fingerprint_matches:
+                elif decision == "approve" and (
+                    not fingerprint_matches
+                    or not head_sha
+                    or (
+                        self.validation_enabled
+                        and head_sha != session.validation_head_sha
+                    )
+                ):
                     result = {
                         "success": False,
                         "output": (
-                            "The reviewed workspace must pass unchanged local validation before "
-                            "Tempo can approve it."
+                            "Commit all review changes, then run project_validation on the clean "
+                            "commit before approving. The reviewed commit must still match that "
+                            "validation and the published pull-request head."
                         ),
                         "contentItems": [],
                     }
                 else:
                     session.review_decision = decision
                     session.review_summary = summary
+                    session.review_head_sha = head_sha
                     await self.on_event(
                         {
                             "event": "review_completed",
+                            "decision_id": uuid.uuid4().hex,
                             "decision": decision,
                             "summary": summary,
+                            "review_head_sha": head_sha,
+                            "validation_fingerprint": session.validation_fingerprint,
                         }
                     )
                     result = {
@@ -600,6 +618,10 @@ class CodexAppServer:
                     "arguments": arguments,
                     "success": bool(result.get("success")),
                     "output": str(result.get("output", ""))[:4000],
+                    **(
+                        {"review_head_sha": session.review_head_sha}
+                        if name == "tempo_review" and result.get("success") else {}
+                    ),
                 }
             )
             return
@@ -679,10 +701,28 @@ class CodexAppServer:
         arguments: dict[str, Any],
         issue: Issue,
     ) -> dict[str, Any]:
+        # A new attempt revokes prior evidence even if it fails or is interrupted.
+        session.validation_fingerprint = None
+        session.validation_head_sha = None
+        self.tracker.revoke_publication(issue.id)
+        is_review = getattr(session, "role", "implementation") == "review"
+        if is_review:
+            session.review_decision = None
+            session.review_summary = None
+            session.review_head_sha = None
+            await self.on_event({"event": "review_invalidated", "attempt_id": uuid.uuid4().hex})
+        head_before = await clean_workspace_head(session.workspace) if is_review else None
+        if is_review and not head_before:
+            return {
+                "success": False,
+                "output": "Commit all review changes before validating the clean review commit.",
+                "contentItems": [],
+            }
         fingerprint_before = await self._workspace_fingerprint(session.workspace)
         result = await self.validator.execute(arguments, session.workspace)
         fingerprint_after = await self._workspace_fingerprint(session.workspace)
-        if fingerprint_before != fingerprint_after:
+        head_after = await clean_workspace_head(session.workspace) if is_review else None
+        if fingerprint_before != fingerprint_after or (is_review and head_before != head_after):
             session.validation_fingerprint = None
             self.tracker.revoke_publication(issue.id)
             await self.on_event({"event": "validation_invalidated"})
@@ -697,10 +737,12 @@ class CodexAppServer:
             }
         if result.get("success"):
             session.validation_fingerprint = fingerprint_after
+            session.validation_head_sha = head_after
             await self.on_event(
                 {
                     "event": "validation_fingerprint_recorded",
                     "fingerprint": session.validation_fingerprint,
+                    "head_sha": head_after,
                 }
             )
             self.tracker.authorize_publication(issue.id)

@@ -319,14 +319,16 @@ class GitHubTracker(Tracker):
         pull_request_number: int,
         *,
         summary: str,
+        reviewed_head_sha: str | None,
         auto_merge: bool,
         merge_method: str,
         reviewers: list[str],
         team_reviewers: list[str],
     ) -> dict[str, Any]:
-        marker = f"<!-- tempo-review:{issue.id}:{pull_request_number} -->"
+        marker = f"<!-- tempo-review:{issue.id}:{pull_request_number}:{reviewed_head_sha} -->"
         review_body = (
-            f"{marker}\nTempo's independent review agent approved this pull request.\n\n{summary}"
+            f"{marker}\nTempo's independent review agent approved commit "
+            f"`{reviewed_head_sha}` for this pull request.\n\n{summary}"
         ).strip()
 
         try:
@@ -336,6 +338,19 @@ class GitHubTracker(Tracker):
             )
         except TrackerError:
             current = {}
+        current_head = (current.get("head") or {}).get("sha") if isinstance(current, dict) else None
+        if not reviewed_head_sha or current_head != reviewed_head_sha:
+            return await self.require_human_review(
+                issue,
+                pull_request_number,
+                reason=(
+                    "Tempo could not confirm that the pull-request head matches the reviewed "
+                    "commit. A fresh review of the published commit is required."
+                ),
+                summary=summary,
+                reviewers=reviewers,
+                team_reviewers=team_reviewers,
+            )
         if isinstance(current, dict) and current.get("merged"):
             return await self._finalize_merged_review(
                 issue,
@@ -358,6 +373,7 @@ class GitHubTracker(Tracker):
                     isinstance(review, dict)
                     and marker in str(review.get("body", ""))
                     and str(review.get("state", "")).upper() == "APPROVED"
+                    and review.get("commit_id") == reviewed_head_sha
                     for review in (reviews if isinstance(reviews, list) else [])
                 )
                 if not already_approved:
@@ -365,7 +381,10 @@ class GitHubTracker(Tracker):
                         "POST",
                         f"/repos/{self.repo}/pulls/{pull_request_number}/reviews",
                         review_identity=True,
-                        json={"event": "APPROVE", "body": review_body},
+                        json={
+                            "event": "APPROVE", "body": review_body,
+                            "commit_id": reviewed_head_sha,
+                        },
                     )
             except TrackerError as exc:
                 return await self.require_human_review(
@@ -401,9 +420,26 @@ class GitHubTracker(Tracker):
             merge = await self._request(
                 "PUT",
                 f"/repos/{self.repo}/pulls/{pull_request_number}/merge",
-                json={"merge_method": merge_method},
+                json={"merge_method": merge_method, "sha": reviewed_head_sha},
             )
         except TrackerError as exc:
+            # A transport error may hide a successful merge. Reconcile its identity
+            # before handing off; never repeat a merge against an unreviewed head.
+            if exc.category == "tracker_transport":
+                try:
+                    reconciled = await self._request(
+                        "GET", f"/repos/{self.repo}/pulls/{pull_request_number}",
+                    )
+                except TrackerError:
+                    reconciled = {}
+                if (
+                    isinstance(reconciled, dict)
+                    and reconciled.get("merged")
+                    and (reconciled.get("head") or {}).get("sha") == reviewed_head_sha
+                ):
+                    return await self._finalize_merged_review(
+                        issue, pull_request_number, summary=summary, merge=reconciled,
+                    )
             return await self.require_human_review(
                 issue,
                 pull_request_number,

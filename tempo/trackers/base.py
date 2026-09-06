@@ -37,16 +37,17 @@ class Tracker(ABC):
         pull_request_number: int,
         *,
         summary: str,
+        reviewed_head_sha: str | None,
         auto_merge: bool,
         merge_method: str,
         reviewers: list[str],
         team_reviewers: list[str],
     ) -> dict[str, Any]:
-        if auto_merge:
+        if auto_merge and reviewed_head_sha:
             return {"status": "merged", "summary": summary}
         return {
             "status": "human_review",
-            "reason": "Automatic merge is disabled by workflow policy.",
+            "reason": "Automatic merge requires policy authorization and a reviewed commit.",
         }
 
     async def require_human_review(

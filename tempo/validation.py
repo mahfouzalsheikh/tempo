@@ -94,6 +94,26 @@ async def workspace_publication_pending(
     return revisions[0] != revisions[1]
 
 
+async def clean_workspace_head(workspace: Path) -> str | None:
+    """Return the committed candidate only when the checkout is clean and stable."""
+    async def git(*arguments: str) -> bytes | None:
+        process = await asyncio.create_subprocess_exec(
+            "git", *arguments, cwd=workspace,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        output, _ = await process.communicate()
+        return output.strip() if process.returncode == 0 else None
+
+    before = await git("rev-parse", "--verify", "HEAD^{commit}")
+    if not before:
+        return None
+    status = await git("status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
+    if status != b"":
+        return None
+    after = await git("rev-parse", "--verify", "HEAD^{commit}")
+    return before.decode("ascii") if before == after else None
+
+
 class ProjectValidator:
     """Runs agent-discovered, repository-native validation commands locally."""
 

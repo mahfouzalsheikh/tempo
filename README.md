@@ -209,9 +209,15 @@ invalidates that authorization and requires another validation run.
 After the implementation agent creates a pull request:
 
 1. Tempo starts a separate review thread when review is enabled.
-2. The reviewer inspects and may fix the branch, then validates the final workspace.
+2. The reviewer inspects and may fix the branch, commits all changes, and validates the clean
+   commit. It publishes that commit and repeats validation if the final PR commit differs.
 3. The reviewer records `approve` or `human_review`.
 4. Tempo—not either agent—applies the configured merge policy.
+
+Approvals record the exact reviewed commit. Tempo checks that it matches the remote PR head and
+passes that SHA to GitHub's review and merge operations. A changed or unverifiable head requires
+fresh review. Saved approvals without a commit identity are handed off for human review after
+restart. A new review-validation attempt revokes any saved review decision.
 
 If review is disabled, automatic review and merge do not occur; Tempo creates a human-review
 handoff. If no code change is required, a validated implementation agent can finish with

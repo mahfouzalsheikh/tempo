@@ -319,3 +319,51 @@ async def test_node_resume_recovers_ref_update_after_latest_validation(tmp_path:
     assert context is not None
     assert context.thread_id == "publisher-thread"
     assert context.workspace_published is True
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["review_completed", "tool_call_completed"])
+@pytest.mark.parametrize("has_identity", [True, False])
+async def test_review_recovery_requires_host_recorded_commit_identity(tmp_path, kind, has_identity):
+    issue = Issue(id="review", identifier="GH-REVIEW", title="Review", state="open")
+    entry = RunningEntry(issue=issue, task=None, attempt=1)
+    store = PersistenceStore("github")
+    entry.run_record_id = await store.start_run(entry, tmp_path)
+    decision = {"decision": "approve", "summary": "Tests and review passed."}
+    payload = decision.copy() if kind == "review_completed" else {
+        "tool": "tempo_review", "success": True,
+        "arguments": {**decision, "review_head_sha": "agent-supplied-is-not-evidence"},
+    }
+    if has_identity:
+        payload["review_head_sha"] = "a" * 40
+    await store.checkpoint(entry.run_record_id, kind, payload, idempotency_key="review-decision")
+
+    recovered = await store.completed_review_decision(entry.run_record_id)
+    if has_identity:
+        assert recovered == {**decision, "review_head_sha": "a" * 40}
+    else:
+        assert recovered["decision"] == "human_review"
+        assert "fresh review" in recovered["summary"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_latest_human_review_overrides_earlier_approval(tmp_path):
+    issue = Issue(id="review", identifier="GH-REVIEW", title="Review", state="open")
+    entry = RunningEntry(issue=issue, task=None, attempt=1)
+    store = PersistenceStore("github")
+    entry.run_record_id = await store.start_run(entry, tmp_path)
+    await store.checkpoint(entry.run_record_id, "review_completed", {
+        "decision": "approve", "summary": "Passed.", "review_head_sha": "a" * 40,
+    }, idempotency_key="approve")
+    await store.checkpoint(entry.run_record_id, "review_completed", {
+        "decision": "human_review", "summary": "An unresolved finding needs attention.",
+    }, idempotency_key="human")
+    assert await store.completed_review_decision(entry.run_record_id) == {
+        "decision": "human_review", "summary": "An unresolved finding needs attention.",
+    }
+    await store.checkpoint(
+        entry.run_record_id, "review_invalidated", {}, idempotency_key="new-review-attempt",
+    )
+    assert await store.completed_review_decision(entry.run_record_id) is None

@@ -66,8 +66,8 @@ Tempo independent review policy:
 - You are a separate reviewer, not a continuation of the implementation agent.
 - Inspect the full issue and pull-request diff plus the repository's own instructions.
 - Check correctness, regressions, security, tests, and maintainability.
-- You may fix material findings and update the pull-request branch; validate the final workspace
-  again after every change.
+- You may fix material findings. Commit all changes before running project_validation, then
+  publish that exact commit to the pull-request branch. Validation requires a clean checkout.
 - Never call GitHub's merge API yourself. Tempo applies merge policy after your decision.
 - Finish with tempo_review. Use approve only after unchanged local validation passes.
 - Use human_review when ambiguity, sensitive risk, repository policy, permissions, or unresolved
@@ -76,9 +76,9 @@ Tempo independent review policy:
 REVIEW_CONTINUATION_PROMPT = (
     "Continue the existing independent pull-request review from its latest findings and checks. "
     "Do not repeat repository guidance, diff inspection, environment setup, or tests already "
-    "completed in this review thread. Resolve only remaining findings, validate the final "
-    "unchanged workspace, then call tempo_review with approve or human_review and concrete "
-    "evidence."
+    "completed in this review thread. Resolve only remaining findings, commit changes, validate "
+    "the clean commit and publish it, then call tempo_review with approve or human_review "
+    "and concrete evidence."
 )
 RECOVERY_CONTINUATION_PROMPT = (
     "Tempo resumed this durable thread after an operator unblock or worker recovery. "
@@ -559,6 +559,7 @@ class Orchestrator:
                             entry.session.pull_request_number,
                             decision=recovered_review["decision"],
                             summary=recovered_review["summary"],
+                            reviewed_head_sha=recovered_review.get("review_head_sha"),
                         )
                     else:
                         await self._run_review_agent(
@@ -1326,6 +1327,7 @@ class Orchestrator:
                 pull_request_number,
                 decision=review_session.review_decision,
                 summary=review_session.review_summary or "Independent review completed.",
+                reviewed_head_sha=review_session.review_head_sha,
             )
         finally:
             if review_session:
@@ -1340,6 +1342,7 @@ class Orchestrator:
         *,
         decision: str,
         summary: str,
+        reviewed_head_sha: str | None = None,
     ) -> None:
         entry = self.running.get(issue.id)
         if not entry:
@@ -1350,6 +1353,7 @@ class Orchestrator:
                 issue,
                 pull_request_number,
                 summary=summary,
+                reviewed_head_sha=reviewed_head_sha,
                 auto_merge=config.review.auto_merge,
                 merge_method=config.review.merge_method,
                 reviewers=config.review.reviewers,
@@ -1564,6 +1568,10 @@ class Orchestrator:
             session.review_summary = str(event.get("summary", "")).strip()
             if decision == "human_review":
                 session.human_review_reason = session.review_summary
+        elif event_name == "review_invalidated":
+            session.review_status = "in_progress"
+            session.review_summary = None
+            entry.phase = "ReviewingPullRequest"
         self._publish_live_state()
         if self.persistence and "delta" not in str(event_name).lower():
             await self.persistence.record_event(entry, event, live_session=session)
@@ -1580,6 +1588,8 @@ class Orchestrator:
                     "validation_fingerprint_recorded",
                     "tool_call_completed",
                     "no_change_completed",
+                    "review_completed",
+                    "review_invalidated",
                 }:
                     event_key = hashlib.sha256(
                         json.dumps(event, sort_keys=True, default=str).encode()

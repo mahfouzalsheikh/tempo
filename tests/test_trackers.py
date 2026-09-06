@@ -1,6 +1,9 @@
+import json
+
 import httpx
 import pytest
 
+from tempo.domain import Issue
 from tempo.trackers.github import GitHubTracker
 from tempo.trackers.memory import MemoryTracker
 
@@ -170,6 +173,8 @@ async def test_github_review_agent_documents_approval_and_merges():
     def handler(request):
         requests.append(request)
         path = request.url.path
+        if path.endswith("/pulls/7") and request.method == "GET":
+            return httpx.Response(200, json={"head": {"sha": "a" * 40}})
         if path.endswith("/comments") and request.method == "GET":
             return httpx.Response(200, json=[])
         if path.endswith("/pulls/7/merge"):
@@ -205,6 +210,7 @@ async def test_github_review_agent_documents_approval_and_merges():
         issue,
         7,
         summary="Reviewed the complete diff and validation passed.",
+        reviewed_head_sha="a" * 40,
         auto_merge=True,
         merge_method="squash",
         reviewers=[],
@@ -214,7 +220,7 @@ async def test_github_review_agent_documents_approval_and_merges():
     assert outcome["status"] == "merged"
     merge_request = next(request for request in requests if request.url.path.endswith("/merge"))
     assert merge_request.method == "PUT"
-    assert merge_request.content == b'{"merge_method":"squash"}'
+    assert json.loads(merge_request.content) == {"merge_method": "squash", "sha": "a" * 40}
     assert any(b"independent review agent approved" in request.content for request in requests)
     assert any(b"approved and merged" in request.content for request in requests)
     assert requests[-1].content == b'{"labels":["enhancement"]}'
@@ -228,6 +234,8 @@ async def test_github_merge_block_creates_explicit_human_handoff_and_requests_re
     def handler(request):
         requests.append(request)
         path = request.url.path
+        if path.endswith("/pulls/7") and request.method == "GET":
+            return httpx.Response(200, json={"head": {"sha": "a" * 40}})
         if path.endswith("/comments") and request.method == "GET":
             return httpx.Response(200, json=[])
         if path.endswith("/pulls/7/merge"):
@@ -252,6 +260,7 @@ async def test_github_merge_block_creates_explicit_human_handoff_and_requests_re
         issue,
         7,
         summary="The code and tests passed independent review.",
+        reviewed_head_sha="a" * 40,
         auto_merge=True,
         merge_method="squash",
         reviewers=["octocat"],
@@ -275,6 +284,8 @@ async def test_github_same_identity_review_is_recorded_without_self_approval():
     def handler(request):
         requests.append(request)
         path = request.url.path
+        if path.endswith("/pulls/7") and request.method == "GET":
+            return httpx.Response(200, json={"head": {"sha": "a" * 40}})
         if path.endswith("/comments") and request.method == "GET":
             return httpx.Response(200, json=[])
         if path.endswith("/pulls/7/merge"):
@@ -301,6 +312,7 @@ async def test_github_same_identity_review_is_recorded_without_self_approval():
         issue,
         7,
         summary="Independent review and validation passed.",
+        reviewed_head_sha="a" * 40,
         auto_merge=True,
         merge_method="squash",
         reviewers=[],
@@ -378,4 +390,105 @@ async def test_github_pr_creation_reuses_an_existing_head_branch():
     assert result["success"] is True
     assert '"number": 12' in result["output"]
     assert len(requests) == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scenario", "expected_status", "merge_count"),
+    [
+        ("changed_head", "human_review", 0),
+        ("missing_head", "human_review", 0),
+        ("unavailable_head", "human_review", 0),
+        ("legacy_approval", "human_review", 0),
+        ("changed_after_check", "human_review", 1),
+        ("lost_merge_response", "merged", 1),
+        ("lost_response_different_head", "human_review", 1),
+        ("already_merged", "merged", 0),
+    ],
+)
+async def test_merge_is_bound_to_reviewed_head_and_reconciles_lost_response(
+    scenario, expected_status, merge_count,
+):
+    requests = []
+    sha = "a" * 40
+    merged = scenario == "already_merged"
+
+    def handler(request):
+        nonlocal merged
+        requests.append(request)
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/pulls/7"):
+            if scenario == "unavailable_head":
+                return httpx.Response(503, json={"message": "unavailable"})
+            head = "b" * 40 if scenario == "changed_head" or (
+                merged and scenario == "lost_response_different_head"
+            ) else sha
+            return httpx.Response(200, json={
+                "head": {} if scenario == "missing_head" else {"sha": head},
+                "merged": merged, "merge_commit_sha": "c" * 40 if merged else None,
+            })
+        if path.endswith("/merge"):
+            assert json.loads(request.content)["sha"] == sha
+            if scenario == "changed_after_check":
+                return httpx.Response(409, json={"message": "Head changed"})
+            merged = True
+            raise httpx.ReadTimeout("Response lost after merge", request=request)
+        if path.endswith("/comments") and request.method == "GET":
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        tracker = GitHubTracker(repo="openai/example", client=client)
+        outcome = await tracker.complete_pull_request_review(
+            Issue(id="1", identifier="GH-1", title="Task", state="open"), 7,
+            summary="Reviewed candidate.",
+            reviewed_head_sha=None if scenario == "legacy_approval" else sha,
+            auto_merge=True, merge_method="squash", reviewers=[], team_reviewers=[],
+        )
+    assert outcome["status"] == expected_status
+    assert sum(request.url.path.endswith("/merge") for request in requests) == merge_count
+    if merge_count == 0 and expected_status == "human_review":
+        assert not any(b"independent review agent approved" in r.content for r in requests)
+    if expected_status == "merged":
+        assert outcome["sha"] == "c" * 40
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous_commit", ["a" * 40, "b" * 40])
+async def test_formal_approval_is_scoped_and_deduplicated_by_commit(previous_commit):
+    sha = "a" * 40
+    marker = f"<!-- tempo-review:1:7:{sha} -->"
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        path = request.url.path
+        if path.endswith("/pulls/7"):
+            return httpx.Response(200, json={"head": {"sha": sha}})
+        if path.endswith("/reviews") and request.method == "GET":
+            return httpx.Response(200, json=[{
+                "body": marker, "state": "APPROVED", "commit_id": previous_commit,
+            }])
+        if path.endswith("/comments") and request.method == "GET":
+            return httpx.Response(200, json=[])
+        if path.endswith("/merge"):
+            return httpx.Response(200, json={"merged": True, "sha": "c" * 40})
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        tracker = GitHubTracker(
+            repo="openai/example", client=client, token="author", review_token="reviewer",
+            review_client=client,
+        )
+        outcome = await tracker.complete_pull_request_review(
+            Issue(id="1", identifier="GH-1", title="Task", state="open"), 7,
+            summary="Reviewed candidate.", reviewed_head_sha=sha,
+            auto_merge=True, merge_method="squash", reviewers=[], team_reviewers=[],
+        )
+    assert outcome["status"] == "merged"
+    approvals = [r for r in requests if r.method == "POST" and r.url.path.endswith("/reviews")]
+    assert len(approvals) == int(previous_commit != sha)
+    if approvals:
+        assert json.loads(approvals[0].content)["commit_id"] == sha
     await client.aclose()
