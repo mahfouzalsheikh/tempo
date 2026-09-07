@@ -1,0 +1,83 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Ideas & plans · Tempo</title>
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260907-2">
+  <link rel="stylesheet" href="{% static 'intake.css' %}?v=1">
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to ideas and plans</a>
+<div class="app-shell">
+  {% include "_sidebar.html" %}
+  <main id="main-content" class="workspace intake-workspace">
+    <header class="workspace-header">
+      <div><p class="breadcrumb">TEMPO <span>/</span> IDEAS & PLANS</p>
+        <h1>{% if mode == "edit" %}{% if product %}Revise the brief{% else %}Start with an idea{% endif %}{% elif mode == "plan" %}Edit the task plan{% elif mode == "detail" %}{{ brief.title }}{% else %}Ideas & plans{% endif %}</h1>
+        <p class="subtitle">Define the outcome, agree on the checks, and review the work before coding begins.</p>
+      </div>
+      <div class="header-actions">{% if mode == "list" %}<a class="button primary" href="{% url 'idea_new' %}">New idea</a>{% else %}<a class="button ghost" href="{% url 'ideas' %}">All ideas</a>{% endif %}</div>
+    </header>
+    {% if error %}<div class="intake-error" role="alert">{{ error }}</div>{% endif %}
+    {% if mode == "error" %}<p><a class="button" href="{% if brief_id %}{% url 'idea_detail' brief_id %}{% else %}{% url 'ideas' %}{% endif %}">Return and review</a></p>{% endif %}
+    {% if mode == "list" %}
+      <div class="idea-list">
+      {% for card in cards %}
+        <a class="panel idea-card" href="{% url 'idea_detail' card.product.pk %}">
+          <div><p class="section-kicker">{{ card.product.project }}</p><h2>{{ card.title }}</h2><p>Brief {{ card.revision.number }} · Plan {{ card.plan.number }}</p></div>
+          <span class="chip {% if card.plan.approved_at %}succeeded{% else %}pending{% endif %}">{% if card.plan.approved_at %}Plan approved{% else %}Needs review{% endif %}</span>
+        </a>
+      {% empty %}
+        <section class="panel intake-empty"><p class="section-kicker">FROM IDEA TO A PLAN</p><h2>What should we build?</h2><p>Describe the people, problem, and expected behavior. Tempo will organize an editable starter plan around your acceptance criteria.</p><a class="button primary" href="{% url 'idea_new' %}">Write your first brief</a></section>
+      {% endfor %}
+      </div>
+    {% endif %}
+    {% if mode == "edit" %}
+      <form method="post" class="intake-form">
+        {% csrf_token %}{{ form.non_field_errors }}{% for hidden in form.hidden_fields %}{{ hidden }}{{ hidden.errors }}{% endfor %}
+        <section class="panel"><div class="panel-heading"><div><p class="section-kicker">1 · THE BRIEF</p><h2>Make the outcome clear</h2></div></div>
+          <div class="intake-fields">{% for field in form.visible_fields %}<div class="intake-field">{{ field.label_tag }}{{ field }}{{ field.errors }}</div>{% endfor %}</div>
+        </section>
+        <section class="panel"><div class="panel-heading"><div><p class="section-kicker">2 · ACCEPTANCE</p><h2>How will we know it works?</h2></div></div>
+          <p class="intake-copy">Use observable behavior, such as “Two people cannot reserve the same slot.” Then describe the test that proves it.</p>
+          {{ criteria.management_form }}{{ criteria.non_form_errors }}
+          <div id="criteria-forms">{% for criterion in criteria %}<fieldset class="contract-card"><legend>Acceptance criterion {{ forloop.counter }}</legend>{{ criterion.as_p }}</fieldset>{% endfor %}</div>
+          <button type="button" class="button ghost" data-add-form="criteria" data-max-forms="30">Add acceptance criterion</button>
+          <template id="criteria-template"><fieldset class="contract-card"><legend>New acceptance criterion</legend>{{ criteria.empty_form.as_p }}</fieldset></template>
+        </section>
+        <div class="intake-submit"><p>Saving creates a new brief revision and a starter plan for review. It does not start coding.</p><button class="button primary" type="submit">{% if product %}Save new brief revision{% else %}Save brief & create starter plan{% endif %}</button></div>
+      </form>
+    {% endif %}
+    {% if mode == "detail" %}
+      <section class="system-notice{% if plan.approved_at %} approved{% endif %}"><div><strong>{% if not is_current %}You’re viewing an earlier revision{% elif plan.approved_at %}Plan approved · execution setup is next{% else %}Review the plan before approving{% endif %}</strong><p>Brief {{ revision.number }} · Plan {{ plan.number }} · {% if plan.generator == "starter-v1" %}Starter template built from your criteria. Review scope, interfaces, and dependencies against the repository.{% else %}Edited by an operator.{% endif %} Plan approval records your decision; it does not queue coding agents.</p></div></section>
+      <div class="intake-actions">{% if is_current %}<a class="button" href="{% url 'idea_edit' product.pk %}">Revise brief</a><a class="button" href="{% url 'idea_plan' product.pk %}">Edit task plan</a>{% else %}<a class="button primary" href="{% url 'idea_detail' product.pk %}">View current revision</a>{% endif %}</div>
+      <section class="panel"><div class="panel-heading"><div><p class="section-kicker">THE BRIEF · {{ product.project }}</p><h2>The product we want</h2></div></div>
+        <dl class="brief-facts"><dt>Problem & goal</dt><dd>{{ brief.goal|linebreaksbr }}</dd><dt>People</dt><dd>{{ brief.users|linebreaksbr }}</dd><dt>In this version</dt><dd>{{ brief.scope|linebreaksbr }}</dd><dt>Outside this version</dt><dd>{{ brief.exclusions|default:"Not specified"|linebreaksbr }}</dd><dt>Constraints</dt><dd>{{ brief.constraints|default:"Not specified"|linebreaksbr }}</dd><dt>Target</dt><dd>{{ brief.target|linebreaksbr }}</dd></dl>
+        {% if brief.open_questions %}<div class="intake-error"><strong>Resolve before approval</strong><p>{{ brief.open_questions|linebreaksbr }}</p></div>{% endif %}
+      </section>
+      <section class="panel"><div class="panel-heading"><div><p class="section-kicker">ACCEPTANCE</p><h2>Expected behavior and checks</h2></div></div>
+        {% for criterion in brief.criteria %}<article class="contract-card"><p class="section-kicker">{{ criterion.id }}</p><h3>{{ criterion.outcome }}</h3><p><strong>Verify:</strong> {{ criterion.verification }}</p></article>{% endfor %}
+      </section>
+      <section class="panel"><div class="panel-heading"><div><p class="section-kicker">TASK PLAN</p><h2>Work in dependency order</h2></div></div><p class="intake-copy">Tasks in one group have no prerequisite between them. Shared interfaces and file ownership still need review before running agents in parallel.</p>
+      {% for wave in waves %}<div class="plan-wave"><p class="section-kicker">GROUP {{ forloop.counter }}</p><div class="task-grid">{% for task in wave %}<article class="contract-card"><p class="section-kicker">{{ task.id }} · {{ task.role }}</p><h3>{{ task.title }}</h3><p>{{ task.instructions }}</p><p class="task-links"><strong>Criteria:</strong> {{ task.criteria|join:", "|default:"—" }}<br><strong>After:</strong> {{ task.depends_on|join:", "|default:"Ready to plan" }}</p></article>{% endfor %}</div></div>{% endfor %}
+      </section>
+      {% if is_current and not plan.approved_at %}<section class="panel"><h2>Approve this plan for the next stage</h2><p class="intake-copy">Confirm that the brief, acceptance methods, and task dependencies describe the intended work. Editing either the brief or plan creates a new revision that requires its own approval.</p><form method="post" action="{% url 'idea_approve' product.pk %}">{% csrf_token %}<input type="hidden" name="expected_plan_id" value="{{ plan.pk }}"><input type="hidden" name="expected_digest" value="{{ plan.digest }}"><button class="button primary" type="submit" {% if brief.open_questions %}disabled{% endif %}>Approve reviewed plan</button></form></section>{% endif %}
+      {% if plan.approved_at %}<p class="intake-copy">Approved by {{ plan.approved_by }} on {{ plan.approved_at }}.</p>{% endif %}
+      <details class="panel"><summary>Revision history</summary><ul class="revision-list">{% for previous in product.revisions.all %}{% for previous_plan in previous.plans.all %}<li><a href="{% url 'idea_detail' product.pk %}?revision={{ previous.number }}&plan={{ previous_plan.number }}">Brief {{ previous.number }} · Plan {{ previous_plan.number }}</a> · {{ previous_plan.created_at }}{% if previous_plan.approved_at %} · Approved{% endif %}</li>{% endfor %}{% endfor %}</ul></details>
+    {% endif %}
+    {% if mode == "plan" %}
+      <section class="system-notice"><div><strong>Edit a new plan revision</strong><p>Use the IDs below to connect each task to its criteria and prerequisites. Tempo rejects missing references, cycles, and verification scheduled before implementation.</p></div></section>
+      <section class="panel"><h2>Acceptance criteria</h2>{% for criterion in brief.criteria %}<p><code>{{ criterion.id }}</code> · {{ criterion.outcome }}</p>{% endfor %}</section>
+      <form method="post" class="intake-form">{% csrf_token %}<input type="hidden" name="expected_plan_id" value="{{ expected_plan_id }}">{{ tasks.management_form }}{{ tasks.non_form_errors }}
+        <div id="tasks-forms">{% for task in tasks %}<fieldset class="contract-card"><legend>Task {{ forloop.counter }}</legend>{{ task.as_p }}</fieldset>{% endfor %}</div>
+        <button type="button" class="button ghost" data-add-form="tasks" data-max-forms="50">Add task</button>
+        <template id="tasks-template"><fieldset class="contract-card"><legend>New task</legend>{{ tasks.empty_form.as_p }}</fieldset></template>
+        <div class="intake-submit"><p>The saved plan remains a draft until reviewed and approved.</p><button class="button primary" type="submit">Validate & save plan revision</button></div>
+      </form>
+    {% endif %}
+  </main>
+</div>
+<script src="{% static 'intake.js' %}?v=1"></script>
+</body>
+</html>

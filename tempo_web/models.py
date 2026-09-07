@@ -733,3 +733,46 @@ class ValidationCommand(models.Model):
 
     def __str__(self) -> str:
         return f"{self.position}. {self.name}"
+
+
+class ProductBrief(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="product_briefs")
+    created_by = models.ForeignKey("auth.User", on_delete=models.PROTECT)
+    request_key = models.UUIDField(unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class BriefRevision(models.Model):
+    brief = models.ForeignKey(ProductBrief, on_delete=models.PROTECT, related_name="revisions")
+    number = models.PositiveIntegerField()
+    specification = models.JSONField()
+    digest = models.CharField(max_length=64)
+    created_by = models.ForeignKey("auth.User", on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-number"]
+        constraints = [models.UniqueConstraint(fields=["brief", "number"],
+                                               name="tempo_unique_brief_revision")]
+
+
+class ExecutionPlan(models.Model):
+    brief_revision = models.ForeignKey(
+        BriefRevision, on_delete=models.PROTECT, related_name="plans",
+    )
+    number = models.PositiveIntegerField()
+    specification = models.JSONField()
+    digest = models.CharField(max_length=64)
+    generator = models.CharField(max_length=32)
+    created_by = models.ForeignKey(
+        "auth.User", on_delete=models.PROTECT, related_name="created_plans",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    approved_by = models.ForeignKey("auth.User", null=True, blank=True, on_delete=models.PROTECT,
+                                    related_name="approved_plans")
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-number"]
+        constraints = [models.UniqueConstraint(fields=["brief_revision", "number"],
+                                               name="tempo_unique_plan_revision")]

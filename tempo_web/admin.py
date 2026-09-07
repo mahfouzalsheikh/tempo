@@ -9,12 +9,15 @@ from .models import (
     AgentRuntimeDefinition,
     AgentSession,
     ApprovalRequest,
+    BriefRevision,
     CredentialReference,
     Environment,
+    ExecutionPlan,
     ModelProviderDefinition,
     OperatorAction,
     Organization,
     PlatformConfigurationChange,
+    ProductBrief,
     Project,
     Repository,
     RunCheckpoint,
@@ -48,6 +51,9 @@ class ReadOnlyRuntimeAdmin(admin.ModelAdmin):
         return False
 
 
+admin.site.register(ProductBrief, ReadOnlyRuntimeAdmin)
+admin.site.register(BriefRevision, ReadOnlyRuntimeAdmin)
+admin.site.register(ExecutionPlan, ReadOnlyRuntimeAdmin)
 admin.site.register(WorkflowVersion, ReadOnlyRuntimeAdmin)
 admin.site.register(AgentRuntimeDefinition, ReadOnlyRuntimeAdmin)
 admin.site.register(ModelProviderDefinition, ReadOnlyRuntimeAdmin)

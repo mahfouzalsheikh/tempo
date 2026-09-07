@@ -8,6 +8,10 @@
       <span class="nav-icon">◫</span>
       Overview
     </a>
+    <a{% if request.resolver_match.url_name|slice:":4" == "idea" %} class="active"{% endif %} href="/ideas/">
+      <span class="nav-icon">✧</span>
+      Ideas & plans
+    </a>
     <a href="/#runs">
       <span class="nav-icon">↯</span>
       Active work

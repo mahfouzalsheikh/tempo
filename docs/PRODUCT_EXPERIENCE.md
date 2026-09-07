@@ -112,3 +112,9 @@ expected; uncaught page exceptions fail the scenario. Restart the local server a
 changes when Django's cached template loader is active. These fixtures supplement backend
 authorization tests and visual inspection; they do not establish production usability or
 replace evaluation with operators working on real repositories.
+
+The first intake workspace is now available at `/ideas/`: versioned product briefs, acceptance
+criteria and verification methods, editable starter task plans with dependency groups, exact
+revision approval, and history. See [product intake](PRODUCT_INTAKE.md). This delivers the
+planning part of stage C; agent execution, criterion evidence, and delivery views still need
+their task and release backends.

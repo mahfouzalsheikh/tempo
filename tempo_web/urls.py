@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.urls import path
 
-from . import views
+from . import intake_views, views
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
@@ -37,5 +37,14 @@ urlpatterns = [
         views.run_action,
         name="run_action",
     ),
+    path("ideas/", intake_views.ideas, name="ideas"),
+    path("ideas/new/", intake_views.edit_brief, name="idea_new"),
+    path("ideas/<int:brief_id>/", intake_views.idea_detail, name="idea_detail"),
+    path("ideas/<int:brief_id>/edit/", intake_views.edit_brief, name="idea_edit"),
+    path("ideas/<int:brief_id>/plan/", intake_views.edit_plan, name="idea_plan"),
+    path("ideas/<int:brief_id>/approve/", intake_views.approve, name="idea_approve"),
+    path("api/v1/briefs", intake_views.api, name="briefs_api"),
+    path("api/v1/briefs/<int:brief_id>", intake_views.api, name="brief_api"),
+    path("api/v1/briefs/<int:brief_id>/<str:action>", intake_views.api, name="brief_action_api"),
     path("api/v1/<str:identifier>", views.issue, name="issue"),
 ]

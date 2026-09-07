@@ -69,6 +69,15 @@ configuration identity before restarting. PostgreSQL tests cover competing resta
 claims. See [run restarts](RUN_RESTARTS.md). This is a new execution, not an in-place historical
 snapshot migration. Product intake and a complete brief-to-preview release slice remain next.
 
+The first product-intake slice adds versioned briefs, acceptance criteria with verification
+methods, typed task contracts, and reviewable execution plans. The Ideas & plans UI creates
+and edits briefs, generates a deterministic starter plan, displays dependency groups, and
+records approval for an exact revision. Edits append new unapproved revisions; structural
+validation rejects cycles, missing coverage, and premature verification. This does not yet
+invoke an agent planner or dispatch coding work from a product brief. See
+[product intake](PRODUCT_INTAKE.md). Connecting approved plans to isolated task execution and
+acceptance evidence remains the next Phase 1/2 step.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.
