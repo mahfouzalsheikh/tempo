@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Configuration · Tempo</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23b9f65f'/><path d='M8 9h16v4h-6v11h-4V13H8z' fill='%2311150d'/></svg>">
-  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260802-1">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260907-2">
 </head>
 <body data-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}">
   <a class="skip-link" href="#main-content">Skip to configuration</a>
@@ -17,13 +17,16 @@
       <div>
         <p class="breadcrumb">TEMPO <span>/</span> CONFIGURATION</p>
         <h1>Configuration</h1>
-        <p class="subtitle">Effective database-backed workflow policy. Credentials and hook bodies are never displayed.</p>
+        <p class="subtitle">Understand how projects run, which agents do the work, and what checks they must pass.</p>
       </div>
       <div class="header-actions">
         <span id="status" class="status"><i></i> Connecting</span>
-        {% if request.user.is_authenticated %}<button id="edit-platform" class="button primary" type="button">Edit platform</button>{% endif %}
+        {% if request.user.is_authenticated %}<button id="edit-platform" class="button primary" type="button">Edit workflow & agents</button>{% endif %}
       </div>
     </header>
+    <section class="system-notice">
+      <div><strong>Where to make changes</strong><p>The editor updates agents, providers, and workflow steps. Repository settings, required validation commands, and hooks are configured in the project’s workflow file. Find its path under “Workflow” below.</p></div>
+    </section>
     <div class="config-grid">
       <section class="panel validation-panel"><div class="panel-heading"><div><p class="section-kicker">SCOPE</p><h2>Projects & environments</h2></div></div><div id="config-projects" class="project-grid"></div></section>
       <section class="panel"><div class="panel-heading"><div><p class="section-kicker">SOURCE</p><h2>Tracker</h2></div></div><dl id="config-tracker" class="operator-definition-list"></dl></section>
@@ -50,6 +53,6 @@
     </form>
   </dialog>
   {% csrf_token %}
-  <script src="{% static 'admin.js' %}?v=20260802-1"></script>
+  <script src="{% static 'admin.js' %}?v=20260907-2"></script>
 </body>
 </html>

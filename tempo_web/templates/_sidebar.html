@@ -6,15 +6,15 @@
   <nav class="side-nav" aria-label="Primary">
     <a{% if request.resolver_match.url_name == "dashboard" %} class="active"{% endif %} href="/">
       <span class="nav-icon">◫</span>
-      Control center
+      Overview
     </a>
     <a href="/#runs">
       <span class="nav-icon">↯</span>
-      Runs
+      Active work
     </a>
     <a href="/#approvals">
       <span class="nav-icon">◇</span>
-      Approvals
+      Decisions
       <span id="nav-approval-count" class="nav-count" hidden>0</span>
     </a>
     <a href="/#projects">
@@ -43,7 +43,7 @@
       </span>
     {% else %}
       <span class="avatar guest">?</span>
-      <span><strong>Read-only</strong><small><a href="{% url 'login' %}?next={{ request.path|urlencode }}">Sign in to intervene</a></small></span>
+      <span><strong>Read-only</strong><small><a href="{% url 'login' %}?next={{ request.path|urlencode }}">Sign in to manage work</a></small></span>
     {% endif %}
   </div>
 </aside>

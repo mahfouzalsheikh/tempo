@@ -5,27 +5,27 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Control center · Tempo</title>
+  <title>Overview · Tempo</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23b9f65f'/><path d='M8 9h16v4h-6v11h-4V13H8z' fill='%2311150d'/></svg>">
-  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260802-1">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260907-2">
 </head>
-<body data-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}">
+<body class="overview-page" data-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}">
   <a class="skip-link" href="#main-content">Skip to dashboard</a>
   <div class="app-shell">
     {% include "_sidebar.html" %}
 
-    <main id="main-content" class="workspace">
+    <main id="main-content" class="workspace" tabindex="-1">
       <header class="workspace-header">
         <div>
           <p class="breadcrumb">TEMPO <span>/</span> OVERVIEW</p>
-          <h1>Control center</h1>
-          <p class="subtitle">Monitor active agents, review approvals, and resolve blocked work.</p>
+          <h1>Your work, at a glance.</h1>
+          <p class="subtitle">See what’s moving, what needs you, and what happens next.</p>
         </div>
         <div class="header-actions">
           <span id="status" class="status" role="status" aria-live="polite"><i></i> Connecting</span>
           <button id="refresh" class="button secondary" type="button">
             <span aria-hidden="true">↻</span>
-            <span>{% if request.user.is_authenticated %}Poll now{% else %}Refresh view{% endif %}</span>
+            <span>Refresh</span>
           </button>
         </div>
       </header>
@@ -36,27 +36,99 @@
       </section>
 
       <div id="content" {% if not snapshot %}hidden{% endif %}>
+        <section class="overview-brief" aria-labelledby="brief-title">
+          <div><p class="section-kicker">NEXT UP</p><h2 id="brief-title">Loading your workspace…</h2>
+            <p id="brief-copy">Checking active work and requests for your input.</p></div>
+          <a id="brief-action" class="button primary" href="#runs">View active work</a>
+        </section>
+        <p id="data-notice" class="data-notice" role="status" hidden></p>
+        <p id="updated-at" class="freshness">Waiting for the first update</p>
         <section class="metric-grid" aria-label="Control plane metrics">
           <article class="metric-card featured">
             <div class="metric-label"><span class="metric-icon running-icon">↯</span>In progress</div>
             <strong id="running-count">0</strong>
-            <small id="capacity">0 available slots</small>
+            <small id="capacity">Checking capacity</small>
           </article>
           <article class="metric-card">
             <div class="metric-label"><span class="metric-icon approval-icon">◇</span>Awaiting approval</div>
-            <strong id="approval-count">0</strong>
+            <strong id="approval-count">—</strong>
             <small>Waiting on an operator</small>
           </article>
           <article class="metric-card">
-            <div class="metric-label"><span class="metric-icon queue-icon">↻</span>Retry queue</div>
+            <div class="metric-label"><span class="metric-icon queue-icon">↻</span>Scheduled retries</div>
             <strong id="retry-count">0</strong>
-            <small><span id="claimed-count">0</span> claimed runs</small>
+            <small>Work that will try again automatically</small>
           </article>
           <article class="metric-card">
             <div class="metric-label"><span class="metric-icon stop-icon">!</span>Needs attention</div>
-            <strong id="attention-count">0</strong>
+            <strong id="attention-count">—</strong>
             <small><span id="safety-blocked-count">0</span> safety stops</small>
           </article>
+        </section>
+
+        <div class="control-grid">
+          <aside class="control-rail">
+            <section id="approvals" class="panel">
+              <div class="panel-heading">
+                <div><p class="section-kicker">YOUR DECISIONS</p><h2>Approval inbox</h2></div>
+                <span id="approval-caption" class="panel-count">Loading</span>
+              </div>
+              <div id="approvals-list" class="compact-list"></div>
+            </section>
+
+            <section id="attention" class="panel">
+              <div class="panel-heading">
+                <div><p class="section-kicker">RECOVERY</p><h2>Needs attention</h2></div>
+                <span id="attention-caption" class="panel-count">Loading</span>
+              </div>
+              <div id="attention-list" class="compact-list"></div>
+            </section>
+          </aside>
+          <section id="runs" class="panel run-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">IN PROGRESS</p>
+                <h2>Active work</h2>
+              </div>
+              <span id="run-caption" class="section-meta"></span>
+            </div>
+            <form id="run-filters" class="run-filters" role="search" aria-label="Find active work">
+              <label class="search-field" for="run-search">Find a run
+                <input id="run-search" type="search" placeholder="Search by title or issue…" autocomplete="off">
+              </label>
+              <div class="filter-field"><label for="project-filter">Project</label><select id="project-filter"><option value="">All projects</option></select></div>
+              <button id="clear-filters" class="button secondary" type="button" hidden>Clear filters</button>
+            </form>
+            <div id="running" class="run-list"></div>
+          </section>
+
+          <section id="projects" class="panel project-panel">
+            <div class="panel-heading">
+              <div><p class="section-kicker">WORKSPACE</p><h2>Projects</h2></div>
+              <span id="project-count" class="section-meta">0 projects</span>
+            </div>
+            <div id="project-grid" class="project-grid"></div>
+          </section>
+        </div>
+
+        <section id="queue" class="panel queue-panel">
+          <div class="panel-heading">
+            <div><p class="section-kicker">UP NEXT</p><h2>Scheduled retries</h2></div>
+            <span class="panel-count">Ordered by due time</span>
+          </div>
+          <div id="retries" class="queue-list"></div>
+        </section>
+
+        <details id="system-details" class="panel service-panel">
+          <summary class="panel-heading disclosure-heading">
+            <div>
+              <p class="section-kicker">SYSTEM</p>
+              <h2>System details</h2>
+              <p class="heading-description">Tracker, workspace, workflow, and polling information</p>
+            </div>
+            <span class="disclosure-icon" aria-hidden="true">⌄</span>
+          </summary>
+          <div class="metric-grid secondary-metrics" aria-label="Usage and validation totals">
           <article class="metric-card">
             <div class="metric-label"><span class="metric-icon success-icon">✓</span>Validated runs</div>
             <strong id="validated-count">0</strong>
@@ -67,77 +139,21 @@
             <strong id="token-count">0</strong>
             <small><span id="completed-count">0</span> completed runs</small>
           </article>
-        </section>
-
-        <div class="control-grid">
-          <section id="runs" class="panel run-panel">
-            <div class="panel-heading">
-              <div>
-                <p class="section-kicker">EXECUTION</p>
-                <h2>Live runs</h2>
-              </div>
-              <span class="live-caption"><i></i> Streaming</span>
-            </div>
-            <div id="running" class="run-list"></div>
-          </section>
-
-          <section id="projects" class="panel project-panel">
-            <div class="panel-heading">
-              <div><p class="section-kicker">PORTFOLIO</p><h2>Projects</h2></div>
-              <span id="project-count" class="section-meta">0 projects</span>
-            </div>
-            <div id="project-grid" class="project-grid"></div>
-          </section>
-
-          <aside class="control-rail">
-            <section id="approvals" class="panel">
-              <div class="panel-heading">
-                <div><p class="section-kicker">HUMAN GATES</p><h2>Approval inbox</h2></div>
-                <span id="approval-caption" class="panel-count">0 pending</span>
-              </div>
-              <div id="approvals-list" class="compact-list"></div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-heading">
-                <div><p class="section-kicker">RECOVERY</p><h2>Needs attention</h2></div>
-                <span id="attention-caption" class="panel-count">0 runs</span>
-              </div>
-              <div id="attention-list" class="compact-list"></div>
-            </section>
-          </aside>
-        </div>
-
-        <section class="panel queue-panel">
-          <div class="panel-heading">
-            <div><p class="section-kicker">DURABLE EXECUTION</p><h2>Retry queue</h2></div>
-            <span class="panel-count">Ordered by due time</span>
           </div>
-          <div id="retries" class="queue-list"></div>
-        </section>
-
-        <details class="panel service-panel">
-          <summary class="panel-heading disclosure-heading">
-            <div>
-              <p class="section-kicker">SYSTEM</p>
-              <h2>System details</h2>
-              <p class="heading-description">Tracker, workspace, workflow, and polling information</p>
-            </div>
-            <span class="disclosure-icon" aria-hidden="true">⌄</span>
-          </summary>
           <dl id="service" class="definition-grid"></dl>
         </details>
       </div>
     </main>
   </div>
 
-  <dialog id="action-dialog" class="action-dialog">
+  <dialog id="action-dialog" class="action-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-description">
     <form method="dialog" id="action-form">
       <div class="dialog-heading">
         <div><p class="section-kicker" id="dialog-kicker">RUN CONTROL</p><h2 id="dialog-title">Send feedback</h2></div>
         <button class="icon-button" type="button" data-dialog-close aria-label="Close">×</button>
       </div>
       <p id="dialog-description" class="dialog-description"></p>
+      <pre id="dialog-context" class="request-context" hidden></pre>
       <label id="dialog-field-label" for="dialog-value">Message</label>
       <textarea id="dialog-value" rows="7"></textarea>
       <p id="dialog-error" class="form-error" hidden></p>
@@ -150,6 +166,6 @@
 
   <div id="toast-region" class="toast-region" aria-live="polite"></div>
   {% csrf_token %}
-  <script src="{% static 'tempo.js' %}?v=20260802-1"></script>
+  <script src="{% static 'tempo.js' %}?v=20260907-2"></script>
 </body>
 </html>

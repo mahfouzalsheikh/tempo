@@ -294,6 +294,8 @@ Promote workflow/model/skill/tool revisions only after regression evaluation. St
 
 **12. Implementation sequence and acceptance gates**
 
+Product usability is now an explicit workstream starting in Phase 0, following the request to make Tempo easier to understand and operate. See [the product experience plan](PRODUCT_EXPERIENCE.md) for navigation, interaction rules, staged deliverables, and acceptance criteria. The first implementation prioritizes decisions and stopped work, searchable active runs, honest validation setup status, approval context, and stale-data handling. Guided setup follows with intake; task and delivery views arrive with their authoritative backend evidence. This advances UI work from the final phase while retaining the safety and isolation dependencies below.
+
 The effort ranges below are engineering estimates, not observed delivery rates. They include implementation and focused verification but exclude unpredictable provider, infrastructure, and deployment-target setup. With two experienced engineers, allow roughly a quarter for a useful pilot and additional time for broad production hardening; revise estimates after the first two phases.
 
 | Phase | Proposed effort | Concrete deliverables | Exit gate |
@@ -304,7 +306,7 @@ The effort ranges below are engineering estimates, not observed delivery rates. 
 | 3. End-to-end release slice | 3–4 engineer-weeks | One supported stack and deployment target; build artifact; preview; acceptance matrix; release manifest; readiness evaluator; rollback rehearsal | A fresh brief produces a working application and independently verified deployable artifact without manual code editing |
 | 4. Managed capabilities | 2–3 engineer-weeks | Tool broker completion; approved stdio/HTTP MCP adapters; skill registry; runtime conformance suite; role-specific bindings | A selected skill and MCP capability work end to end, are attributable and scoped, and fail safely on schema/auth changes |
 | 5. Distributed production operation | 3–5 engineer-weeks | Independent workers; durable read projections; distributed cancellation; full resource isolation; project roles; backup/restore; traces and lifetime budgets | Kill and partition workers under PostgreSQL load: no accepted work disappears, stale actions are rejected, ambiguous side effects reconcile |
-| 6. Evaluation and product usability | 2–4 engineer-weeks | Benchmark/reporting; revision promotion; guided onboarding; run graph; diffs/artifacts; release and blocker views | A second repository is onboarded through the product; revisions are compared on quality/cost; operators diagnose failures from the UI |
+| 6. Evaluation and usability at scale | 2–4 engineer-weeks | Benchmark/reporting; revision promotion; operator task evaluations; accessibility review; refinement of onboarding, work, and delivery views introduced earlier | A second repository is onboarded through the product; revisions are compared on quality/cost; operators diagnose failures from the UI |
 
 Some work overlaps, but dependencies matter: establish ownership before scaling workers, isolated workspaces before concurrent writers, constrained capability execution before MCP writes, and evidence identities before release promotion. Add minimal isolation, traces, and evaluation fixtures in early phases; Phase 5 expands and proves them at distributed scale.
 

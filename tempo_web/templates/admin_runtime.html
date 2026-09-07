@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Operations · Tempo</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23b9f65f'/><path d='M8 9h16v4h-6v11h-4V13H8z' fill='%2311150d'/></svg>">
-  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260802-1">
+  <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260907-2">
 </head>
 <body data-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}">
   <a class="skip-link" href="#main-content">Skip to operations</a>
@@ -39,6 +39,6 @@
     </main>
   </div>
   {% csrf_token %}
-  <script src="{% static 'admin.js' %}?v=20260802-1"></script>
+  <script src="{% static 'admin.js' %}?v=20260907-2"></script>
 </body>
 </html>

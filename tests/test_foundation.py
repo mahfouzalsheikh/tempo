@@ -182,6 +182,8 @@ Work on {{{{ issue.identifier }}}}.
             "acme/alpha",
             "acme/beta",
         }
+        assert all(row["validation_policy_configured"] is False for row in snapshot["projects"])
+        assert all(row["publication_required"] is True for row in snapshot["projects"])
     finally:
         await control_plane.stop()
 

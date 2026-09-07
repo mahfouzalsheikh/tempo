@@ -248,6 +248,13 @@ If review is disabled, automatic review and merge do not occur; Tempo creates a 
 handoff. If no code change is required, a validated implementation agent can finish with
 `tempo_complete`.
 
+## Operator interface
+
+The overview highlights decisions and stopped work before active runs. Search active work by
+issue/title or filter it by project; expand a run for its steps and check evidence. Project cards
+show validation setup, while usage totals and diagnostics live under System details. See the
+[product experience plan](docs/PRODUCT_EXPERIENCE.md) for the ongoing UI redesign.
+
 ## HTTP surfaces
 
 The main pages are:

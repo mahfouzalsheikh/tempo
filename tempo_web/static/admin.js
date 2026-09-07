@@ -148,7 +148,10 @@ async function updateAdmin() {
       "Max retry backoff": agents.max_retry_backoff_ms ? `${agents.max_retry_backoff_ms} ms` : "—",
     });
     definitionList("config-validation", {
-      "Status": validation.enabled === false ? "Disabled" : "Required",
+      "Checks": validation.enabled === false ? "Turned off"
+        : validation.policy_configured === false ? "Required checks are missing"
+        : validation.policy === "discovered" ? "Selected by the agent" : "Required checks configured",
+      "Required checks": (validation.required_checks || []).map(check => check.name).join(", ") || "None configured",
       "Runner": validation.runner,
       "Command timeout": validation.command_timeout_ms ? `${validation.command_timeout_ms} ms` : "—",
       "Cleanup timeout": validation.cleanup_timeout_ms ? `${validation.cleanup_timeout_ms} ms` : "—",

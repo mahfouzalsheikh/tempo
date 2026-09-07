@@ -207,4 +207,9 @@ class ControlPlane:
             "running": len(snapshot["running"]),
             "retries": len(snapshot["retries"]),
             "completed": snapshot["completed_count"],
+            "validation_enabled": config.validation.enabled,
+            "validation_policy": config.validation.policy,
+            "validation_policy_configured": not config.validation.missing_policy,
+            "publication_required": config.workflow.require_publication,
+            "configuration_error": bool(orchestrator.store.last_error),
         }

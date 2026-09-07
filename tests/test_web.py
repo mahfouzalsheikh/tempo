@@ -84,7 +84,7 @@ def test_health_and_state():
     assert client.get("/api/v1/A-1").json()["identifier"] == "A-1"
     assert client.get("/api/v1/missing").status_code == 404
     dashboard = client.get("/")
-    assert b"Control center" in dashboard.content
+    assert b"Your work, at a glance." in dashboard.content
     assert b"Approval inbox" in dashboard.content
     assert b"Projects" in dashboard.content
     assert dashboard.content.count(b'<nav class="side-nav"') == 1
