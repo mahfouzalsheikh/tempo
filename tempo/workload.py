@@ -9,7 +9,6 @@ import json
 import os
 import re
 import stat
-import tomllib
 import uuid
 from contextvars import ContextVar
 from pathlib import Path
@@ -17,6 +16,7 @@ from pathlib import Path
 from .credentials import BASE_ENVIRONMENT
 from .errors import ConfigError
 from .process import stop_process_group
+from .run_snapshot import execution_setting, portable_model_settings
 from .validation_auth import runner_environment
 from .validation_sandbox import container_arguments, remove_container
 
@@ -37,7 +37,7 @@ def execution_scope(identity: str):
 
 
 def execution_backend() -> str:
-    backend = os.getenv("TEMPO_RUNTIME_BACKEND", "process")
+    backend = execution_setting("TEMPO_RUNTIME_BACKEND", "process")
     if backend not in {"docker", "process"}:
         raise ConfigError("unsupported runtime execution backend")
     return backend
@@ -50,7 +50,7 @@ def state_identity(workspace: Path, kind: str) -> str:
 
 
 def prepare_home(identity: str) -> Path:
-    root = Path(os.environ.get("TEMPO_AGENT_STATE_ROOT", "/data/agent-state"))
+    root = Path(execution_setting("TEMPO_AGENT_STATE_ROOT", "/data/agent-state"))
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     home = root / identity
     home.mkdir(mode=0o700, exist_ok=True)
@@ -101,12 +101,7 @@ def seed_codex_auth(home: Path) -> None:
 
 
 def seed_codex_settings(home: Path) -> None:
-    source = Path(os.getenv("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
-    settings = tomllib.loads(source.read_text()) if source.exists() else {}
-    portable = {key: settings[key] for key in (
-        "model", "model_reasoning_effort", "personality", "service_tier",
-        "forced_login_method", "forced_chatgpt_workspace_id",
-    ) if isinstance(settings.get(key), str)}
+    portable = portable_model_settings()
     portable["cli_auth_credentials_store"] = "file"
     content = "\n".join(f"{key} = {json.dumps(value)}" for key, value in portable.items()) + "\n"
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -177,7 +172,8 @@ async def start_workload(
             stdin=stdin, stdout=asyncio.subprocess.PIPE, stderr=stderr, limit=limit,
             start_new_session=True,
         )
-    image = os.getenv("TEMPO_RUNTIME_IMAGE") or os.getenv("TEMPO_VALIDATION_IMAGE", "")
+    image = (execution_setting("TEMPO_RUNTIME_IMAGE")
+             or execution_setting("TEMPO_VALIDATION_IMAGE", ""))
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", image):
         raise ConfigError("runtime execution requires an immutable image ID")
     network = json.loads(await docker_control("network", "inspect", "tempo-agents"))[0]
@@ -186,7 +182,7 @@ async def start_workload(
         or network["Options"].get("com.docker.network.bridge.enable_icc") != "false"
         or network["Labels"].get("tempo.execution-policy") != "public-web-v1"):
         raise ConfigError("runtime execution network does not match policy")
-    duration = timeout_ms or int(os.getenv("TEMPO_RUNTIME_TIMEOUT_MS", "28800000"))
+    duration = timeout_ms or int(execution_setting("TEMPO_RUNTIME_TIMEOUT_MS", "28800000"))
     if not 0 < duration <= 86_400_000:
         raise ConfigError("runtime lifetime must be between one millisecond and 24 hours")
     persistent = kind in {"codex", "external"}

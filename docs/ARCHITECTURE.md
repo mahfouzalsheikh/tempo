@@ -251,8 +251,10 @@ flowchart TD
     Restore --> Current
 ```
 
-The prior tracker is retained until active runs finish, because those workers still reference it.
-Once no runs remain, retired tracker clients are closed.
+Newly queued work captures the complete effective configuration, main prompt, and execution
+defaults. Active workers and retries use their saved snapshot, their own tracker, and persistence
+bound to the original workflow version. Current concurrency limits still govern admission.
+See [execution snapshots and legacy upgrade behavior](RUN_SNAPSHOTS.md).
 
 ## Polling, eligibility, and scheduling
 

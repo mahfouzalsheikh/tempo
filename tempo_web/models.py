@@ -95,6 +95,7 @@ class WorkflowVersion(models.Model):
     path = models.TextField()
     checksum = models.CharField(max_length=64)
     config = models.JSONField(default=dict)
+    execution_snapshot = models.JSONField(default=dict, blank=True)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -372,6 +373,8 @@ class AgentRun(models.Model):
         db_index=True,
     )
     workspace_path = models.TextField(blank=True)
+    execution_snapshot = models.JSONField(default=dict, blank=True)
+    snapshot_digest = models.CharField(max_length=64, blank=True)
     available_at = models.DateTimeField(null=True, blank=True, db_index=True)
     worker_id = models.CharField(max_length=255, blank=True, db_index=True)
     lease_token = models.CharField(max_length=64, blank=True)

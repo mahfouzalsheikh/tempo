@@ -92,9 +92,9 @@ record the workspace, base commit, contribution commit, integration commit, and 
 On recovery, Tempo reconciles accepted and integrating contributions before starting graph work.
 It recognizes an already-applied candidate and does not rerun its agent or create another merge.
 Recorded integrated commits must remain ancestors of the integration head. A dirty, divergent,
-missing, or unrecorded workspace stops instead of being reset or overwritten. Complete run
-definition pinning remains separate work; changing a node out of isolated mode while it has a
-recorded contribution is rejected on recovery.
+missing, or unrecorded workspace stops instead of being reset or overwritten. New runs also use
+[saved execution snapshots](RUN_SNAPSHOTS.md), so later node configuration edits do not change
+their recovery graph. Older runs without a complete snapshot require explicit migration.
 
 Conflicts stop the run for operator attention and retain the original contribution. Earlier
 successful integrations remain intact; a conflicting merge never changes the issue checkout.

@@ -304,7 +304,7 @@ async def test_missing_policy_stops_dispatch_without_spending_agent_retries(tmp_
     import asyncio
 
     from tempo.config import ServiceConfig
-    from tempo.domain import Issue, RunningEntry
+    from tempo.domain import Issue, RunningEntry, WorkflowDefinition
     from tempo.errors import CodexError
     from tempo.orchestrator import Orchestrator
     from tempo.trackers.memory import MemoryTracker
@@ -316,7 +316,10 @@ async def test_missing_policy_stops_dispatch_without_spending_agent_retries(tmp_
         }
     )
     orchestrator = Orchestrator(str(tmp_path / "WORKFLOW.md"))
-    orchestrator.store = SimpleNamespace(current=lambda: (None, config))
+    definition = WorkflowDefinition(
+        config={}, prompt_template="Work", path=tmp_path / "WORKFLOW.md", mtime_ns=0,
+    )
+    orchestrator.store = SimpleNamespace(current=lambda: (definition, config))
     orchestrator.tracker = MemoryTracker()
     orchestrator.workspace = WorkspaceManager(tmp_path / "workspaces", HooksConfig())
     issue = Issue(id="missing", identifier="A-MISSING", title="Missing policy", state="open")

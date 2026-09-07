@@ -51,6 +51,16 @@ This delivers part of Phase 2; fresh repositories per retry, automatic conflict 
 runtime-neutral review, complete immutable run snapshots, scoped capability provisioning,
 and release artifacts remain outstanding.
 
+The next slice records complete execution configuration snapshots when runs are queued: parsed
+configuration, the main prompt, runtime/validation defaults, and portable model settings. Workers,
+node records, review, safety limits, hooks, and durable retries use saved inputs while new runs use
+new configuration. Independent run copies and digest/schema checks prevent catalog edits or
+corruption from silently changing execution. Migration `0012_execution_snapshots` retains older
+records without inventing missing history; legacy runs require explicit migration. Reload, retry,
+concurrency, and deployment checks cover the boundary. See [run snapshots](RUN_SNAPSHOTS.md).
+Explicit run migrations, tool/skill package identities, release artifacts, and capability
+provisioning remain outstanding.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

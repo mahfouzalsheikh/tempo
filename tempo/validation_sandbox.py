@@ -4,23 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 import re
 import uuid
 from pathlib import Path
 
 from .errors import ConfigError
 from .process import stop_process_group
+from .run_snapshot import execution_setting
 from .validation_auth import runner_environment
 
 
 def execution_config() -> tuple[str, str | None]:
-    backend = os.getenv("TEMPO_VALIDATION_BACKEND", "docker")
+    backend = execution_setting("TEMPO_VALIDATION_BACKEND", "docker")
     if backend == "process":
         return backend, None
     if backend != "docker":
         raise ConfigError("unsupported validation execution backend")
-    image = os.getenv("TEMPO_VALIDATION_IMAGE", "")
+    image = execution_setting("TEMPO_VALIDATION_IMAGE", "")
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", image):
         raise ConfigError("validation requires an immutable Docker image ID")
     return backend, image

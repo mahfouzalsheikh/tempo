@@ -14,7 +14,9 @@ import httpx
 
 from .config import ValidationConfig
 from .credentials import CONTROL_PLANE_SECRETS, process_environment
+from .errors import ConfigError
 from .process import stop_process_group
+from .run_snapshot import PINNED_EXECUTION, execution_setting
 from .validation_auth import runner_token
 from .workspace import WorkspaceManager
 
@@ -223,7 +225,7 @@ class ProjectValidator:
             "DJANGO_SECRET_KEY",
             "TEMPO_ADMIN_PASSWORD",
         }
-        self.runner_url = config.runner_url or os.getenv("TEMPO_VALIDATION_RUNNER_URL")
+        self.runner_url = config.runner_url or execution_setting("TEMPO_VALIDATION_RUNNER_URL")
 
     @staticmethod
     def tool_spec() -> dict[str, Any]:
@@ -271,7 +273,7 @@ class ProjectValidator:
         # Freeze the policy for this attempt, including host-selected commands and timeouts.
         policy = self.config.model_copy(deep=True)
         digest = policy.policy_digest
-        self.runner_url = policy.runner_url or os.getenv("TEMPO_VALIDATION_RUNNER_URL")
+        self.runner_url = policy.runner_url or execution_setting("TEMPO_VALIDATION_RUNNER_URL")
         if policy.missing_policy:
             return self._tool_result(
                 False,
@@ -427,7 +429,7 @@ class ProjectValidator:
     ) -> tuple[int, str]:
         timeout = httpx.Timeout(timeout_ms / 1000 + 10)
         credential = runner_token(self.config.runner_token)
-        expected_image = self.config.runner_image or os.getenv("TEMPO_VALIDATION_IMAGE")
+        expected_image = self.config.runner_image or execution_setting("TEMPO_VALIDATION_IMAGE")
         async with httpx.AsyncClient(
             timeout=timeout, trust_env=False, follow_redirects=False,
         ) as client:
@@ -443,6 +445,12 @@ class ProjectValidator:
                     **({"execution_image": expected_image} if expected_image else {}),
                 },
             ) as response:
+                if response.status_code == 409:
+                    raise ConfigError(
+                        "The validation runner does not provide this run's saved execution image. "
+                        "Restore a matching runner before retrying.",
+                        category="snapshot_environment_changed",
+                    )
                 if response.status_code != 200:
                     raise RuntimeError(f"validation runner returned HTTP {response.status_code}")
                 result: dict[str, Any] | None = None
@@ -475,6 +483,12 @@ class ProjectValidator:
         return result["exit_code"], result["output"]
 
     async def _run_local(self, command: str, workspace: Path, timeout_ms: int) -> tuple[int, str]:
+        if (PINNED_EXECUTION.get() is not None
+                and execution_setting("TEMPO_RUNTIME_BACKEND", "process") == "docker"):
+            raise ConfigError(
+                "Container runs require a configured validation runner; local fallback is blocked.",
+                category="snapshot_environment_changed",
+            )
         environment = process_environment(forbidden=CONTROL_PLANE_SECRETS | self.secret_names)
         process = await asyncio.create_subprocess_exec(
             "bash",

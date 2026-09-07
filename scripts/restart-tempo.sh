@@ -70,3 +70,4 @@ docker compose exec -T tempo python < scripts/check-validation-sandbox.py
 docker compose exec -T tempo python < scripts/check-execution-network.py
 docker compose exec -T -e TEMPO_SMOKE_REAL_CODEX=1 tempo python < scripts/check-runtime-sandbox.py
 docker compose exec -T tempo python < scripts/check-contribution-integration.py
+docker compose exec -T tempo python < scripts/check-run-snapshots.py

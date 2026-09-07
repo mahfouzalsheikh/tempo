@@ -138,6 +138,14 @@ class RunningEntry:
     run_record_id: int | None = None
     lease_token: str | None = None
     lease_lost: bool = False
+    execution_config: Any = None
+    execution_definition: Any = None
+    execution_snapshot: dict[str, Any] = field(default_factory=dict)
+    snapshot_digest: str = ""
+    persistence: Any = None
+    tracker: Any = None
+    workspace_manager: Any = None
+    workspace_identifier: str = ""
     graph_nodes: dict[str, NodeExecutionState] = field(default_factory=dict)
     node_sessions: dict[str, LiveSession] = field(default_factory=dict)
     node_sessions_aggregated: bool = False

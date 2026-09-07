@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .credentials import REFERENCE, TRACKER_CREDENTIAL_KEYS
 from .domain import normalize_state
 from .errors import ConfigError
+from .run_snapshot import execution_setting
 
 
 class TrackerConfig(BaseModel):
@@ -145,8 +146,8 @@ class ValidationConfig(BaseModel):
     @property
     def policy_digest(self) -> str:
         payload = {"schema": 1, "config": self.model_dump(mode="json"),
-                   "runner_image": self.runner_image or os.getenv("TEMPO_VALIDATION_IMAGE"),
-                   "runner": self.runner_url or os.getenv("TEMPO_VALIDATION_RUNNER_URL")}
+                   "runner_image": self.runner_image or execution_setting("TEMPO_VALIDATION_IMAGE"),
+                   "runner": self.runner_url or execution_setting("TEMPO_VALIDATION_RUNNER_URL")}
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 

@@ -103,8 +103,9 @@ not an end-to-end generated-product acceptance result.
 
 Parallel contributors now have independent repositories and serialized commit integration;
 nodes using the issue checkout run exclusively. See [contribution integration](CONTRIBUTION_INTEGRATION.md).
-Complete immutable execution snapshots, trusted build/release artifacts, and scoped capability
-grants remain planned.
+New runs pin their [execution configuration](RUN_SNAPSHOTS.md), including portable model settings
+and container defaults. Tool/skill artifact identities, trusted build/release artifacts, and
+scoped capability grants remain planned.
 
 After a control-plane crash, a running orphan remains bounded by its in-container watchdog. A
 reserved container that never started, or a still-running orphan, blocks reuse of that scope;

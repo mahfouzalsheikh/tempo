@@ -9,7 +9,9 @@ import os
 import socket
 import uuid
 from collections import Counter
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -31,6 +33,12 @@ from .domain import (
 from .errors import CodexError, LeaseLostError
 from .integration import ContributionCoordinator
 from .persistence import PersistenceStore
+from .run_snapshot import (
+    capture_snapshot,
+    check_execution_host,
+    execution_settings,
+    snapshot_digest,
+)
 from .trackers.base import Tracker
 from .trackers.github import GitHubTracker, build_tracker
 from .validation import workspace_fingerprint, workspace_publication_pending
@@ -39,6 +47,7 @@ from .workload import execution_scope
 from .workspace import WorkspaceManager
 
 log = structlog.get_logger(__name__)
+WORKER_STORE = ContextVar("worker_persistence", default=None)
 CONTINUATION_PROMPT = (
     "Continue working on the same issue. Check the tracker and current workspace state, "
     "then complete the next necessary steps. Do not repeat work already finished."
@@ -118,6 +127,16 @@ PUBLICATION_UPDATE_PROMPT = (
 
 
 class Orchestrator:
+    @property
+    def persistence(self):
+        """Scheduler calls use the live catalog; worker tasks retain their run-bound store."""
+        bound = WORKER_STORE.get()
+        return bound[1] if bound and bound[0] is self else self._persistence
+
+    @persistence.setter
+    def persistence(self, value):
+        self._persistence = value
+
     """Control plane backed by durable database claims and worker leases."""
 
     def __init__(self, workflow_path: str) -> None:
@@ -156,6 +175,7 @@ class Orchestrator:
             if managed_sections:
                 config = await self.store.replace_platform_sections(managed_sections)
                 self.persistence.config = config
+                self.persistence.definition = self.store.current()[0]
                 await self.persistence.initialize()
                 self._workflow_config_updated_at = updated_at
         await self._startup_cleanup()
@@ -198,6 +218,7 @@ class Orchestrator:
             config.tracker.kind,
             config=config,
             workflow_path=self.store.path,
+            definition=self.store.current()[0],
         )
         await self.persistence.initialize()
         await self.persistence.reconcile_incomplete_records()
@@ -260,6 +281,7 @@ class Orchestrator:
                 config.tracker.kind,
                 config=config,
                 workflow_path=self.store.path,
+                definition=definition,
             )
             await self.persistence.initialize()
             await self.persistence.reconcile_incomplete_records()
@@ -302,6 +324,7 @@ class Orchestrator:
             return False
         config = await self.store.replace_platform_sections(sections)
         self.persistence.config = config
+        self.persistence.definition = self.store.current()[0]
         await self.persistence.initialize()
         self._workflow_config_updated_at = updated_at
         self._publish_live_state()
@@ -335,9 +358,13 @@ class Orchestrator:
         _, config = self.store.current()
         assert self.tracker and self.workspace
         try:
+            protected = (
+                await self.persistence.unfinished_workspaces() if self.persistence else set()
+            )
             terminal = await self.tracker.fetch_issues_by_states(config.tracker.terminal_states)
             for issue in terminal:
-                await self.workspace.remove(issue.identifier)
+                if str(self.workspace.path_for(issue.identifier)) not in protected:
+                    await self.workspace.remove(issue.identifier)
         except Exception as exc:
             await log.awarning("startup_cleanup_failed", error=str(exc))
 
@@ -345,34 +372,38 @@ class Orchestrator:
         assert self.tracker
         now = utcnow()
         for issue_id, entry in list(self.running.items()):
+            run_config = entry.execution_config or config
             if entry.session.validation_status == "running":
                 # Validation commands and cleanup have their own explicit timeouts. A quiet Docker
                 # build is not evidence that the Codex app-server has stalled.
                 continue
             last = entry.session.last_codex_timestamp or entry.started_at
             if (
-                config.codex.stall_timeout_ms > 0
-                and (now - last).total_seconds() * 1000 > config.codex.stall_timeout_ms
+                run_config.codex.stall_timeout_ms > 0
+                and (now - last).total_seconds() * 1000 > run_config.codex.stall_timeout_ms
             ):
                 await self._cancel_running(issue_id, release=False, cleanup=False)
                 await log.awarning("agent_stalled", issue_id=issue_id)
         running_ids = list(self.running)
         if not running_ids:
             return
-        try:
-            refreshed = await self.tracker.fetch_issues_by_ids(running_ids)
-        except Exception as exc:
-            await log.awarning("reconciliation_failed", error=str(exc))
-            return
-        by_id = {issue.id: issue for issue in refreshed}
         for issue_id in running_ids:
-            issue = by_id.get(issue_id)
+            entry = self.running.get(issue_id)
+            if not entry:
+                continue
+            run_config = entry.execution_config or config
+            try:
+                refreshed = await (entry.tracker or self.tracker).fetch_issues_by_ids([issue_id])
+            except Exception as exc:
+                await log.awarning("reconciliation_failed", error=str(exc))
+                continue
+            issue = next((row for row in refreshed if row.id == issue_id), None)
             if issue is None:
                 await self._cancel_running(issue_id, release=True, cleanup=False)
-            elif normalize_state(issue.state) in config.terminal_states:
+            elif normalize_state(issue.state) in run_config.terminal_states:
                 await self._cancel_running(issue_id, release=True, cleanup=True)
-            elif normalize_state(issue.state) not in config.active_states or not self._routable(
-                issue, config
+            elif normalize_state(issue.state) not in run_config.active_states or not self._routable(
+                issue, run_config
             ):
                 await self._cancel_running(issue_id, release=True, cleanup=False)
             elif issue_id in self.running:
@@ -385,24 +416,34 @@ class Orchestrator:
         if release:
             self._cancel_release.add(issue_id)
         entry.task.cancel()
-        if cleanup and self.workspace:
+        manager = entry.workspace_manager or self.workspace
+        persistence = entry.persistence or self.persistence
+        if cleanup and manager:
             await asyncio.gather(entry.task, return_exceptions=True)
-            if self.persistence and entry.run_record_id:
+            if persistence and entry.run_record_id:
                 try:
-                    await self.persistence.assert_ownership(
+                    await persistence.assert_ownership(
                         entry.run_record_id, lease_token=entry.lease_token,
                     )
                 except LeaseLostError:
                     return
-            await self.workspace.remove(entry.issue.identifier)
+            if entry.execution_snapshot:
+                with execution_settings(entry.execution_snapshot["execution"]):
+                    await manager.remove(entry.workspace_identifier or entry.issue.identifier)
+            else:
+                await manager.remove(entry.workspace_identifier or entry.issue.identifier)
 
     async def _process_due_retries(self, config: ServiceConfig) -> None:
         assert self.tracker and self.workspace
         due = [entry for entry in self.retries.values() if entry.due_at <= utcnow()]
         for retry in due:
             self.retries.pop(retry.issue_id, None)
+            durable = self.persistence and retry.run_record_id
             try:
-                issues = await self.tracker.fetch_issues_by_ids([retry.issue_id])
+                issues = (
+                    [await self.persistence.queued_issue(retry.run_record_id)] if durable
+                    else await self.tracker.fetch_issues_by_ids([retry.issue_id])
+                )
             except Exception as exc:
                 await self._schedule_retry(
                     retry.issue_id,
@@ -417,12 +458,13 @@ class Orchestrator:
             if issue is None:
                 self.claimed.discard(retry.issue_id)
                 continue
-            if normalize_state(issue.state) in config.terminal_states:
+            if not durable and normalize_state(issue.state) in config.terminal_states:
                 await self.workspace.remove(issue.identifier)
                 self.claimed.discard(issue.id)
                 continue
-            if normalize_state(issue.state) not in config.active_states or not self._routable(
-                issue, config
+            if not durable and (
+                normalize_state(issue.state) not in config.active_states
+                or not self._routable(issue, config)
             ):
                 self.claimed.discard(issue.id)
                 continue
@@ -507,6 +549,7 @@ class Orchestrator:
             attempt=attempt,
             run_record_id=run_record_id,
             lease_token=lease_token,
+            persistence=self.persistence,
         )
         self.claimed.add(issue.id)
         self.retries.pop(issue.id, None)
@@ -518,10 +561,66 @@ class Orchestrator:
         self._publish_live_state()
 
     async def _run_worker(self, issue: Issue, attempt: int | None) -> None:
-        definition, config = self.store.current()
-        assert self.workspace and self.tracker
-        workspace_manager = self.workspace
         entry = self.running[issue.id]
+        persistence = entry.persistence or self.persistence
+        entry.persistence = persistence
+        if persistence and entry.run_record_id:
+            await persistence.assert_ownership(entry.run_record_id, lease_token=entry.lease_token)
+            persistence, definition, config, digest = await persistence.for_execution(
+                entry.run_record_id,
+            )
+            snapshot = persistence.execution_snapshot
+        else:
+            definition, current = self.store.current()
+            definition, config = copy.deepcopy(definition), current.model_copy(deep=True)
+            snapshot = capture_snapshot(definition, config)
+            digest = snapshot_digest(snapshot)
+            if persistence:
+                persistence = copy.copy(persistence)
+                persistence.config, persistence.definition = config, definition
+                persistence.execution_snapshot = snapshot
+        check_execution_host(snapshot)
+        entry.execution_config, entry.execution_definition = config, definition
+        entry.execution_snapshot, entry.snapshot_digest = snapshot, digest
+        entry.persistence = persistence
+        entry.workspace_manager = WorkspaceManager(config.workspace.root, config.hooks)
+        entry.workspace_identifier = issue.identifier
+        saved_path = getattr(persistence, "workspace_path", "") if persistence else ""
+        if saved_path:
+            saved = Path(saved_path)
+            valid_workspace = await asyncio.to_thread(
+                lambda: saved.is_dir()
+                and entry.workspace_manager.path_for(saved.name) == saved.resolve(),
+            )
+            if not valid_workspace:
+                raise CodexError(
+                    "The run's recorded workspace is missing or outside its saved root.",
+                    category="snapshot_environment_changed",
+                )
+            entry.workspace_identifier = saved.name
+        # In-memory tracker updates are external state in tests/local use, not workflow edits.
+        shared_tracker = (
+            config.tracker.kind == "memory" and self.tracker is not None
+            and self.store.current()[1].tracker == config.tracker
+        )
+        tracker = self.tracker if shared_tracker else build_tracker(
+            config.tracker.kind, config.tracker.provider,
+            config.tracker.terminal_states, config.tracker.required_labels,
+        )
+        entry.tracker = tracker
+        token = WORKER_STORE.set((self, persistence))
+        try:
+            with execution_settings(snapshot["execution"]):
+                await self._run_worker_snapshot(issue, attempt)
+        finally:
+            WORKER_STORE.reset(token)
+            if not shared_tracker:
+                await tracker.close()
+
+    async def _run_worker_snapshot(self, issue: Issue, attempt: int | None) -> None:
+        entry = self.running[issue.id]
+        definition, config = entry.execution_definition, entry.execution_config
+        workspace_manager = entry.workspace_manager
         persistence = self.persistence
         owner_token = entry.lease_token
 
@@ -533,7 +632,7 @@ class Orchestrator:
                     owner.run_record_id, lease_token=owner_token,
                 )
 
-        tracker = self.tracker.for_run(assert_ownership)
+        tracker = entry.tracker.for_run(assert_ownership)
         tracker.bind_validation_policy(config.validation)
         workspace = None
 
@@ -553,7 +652,15 @@ class Orchestrator:
                     "or explicitly select discovery mode for migration.",
                     category="validation_policy_missing",
                 )
-            workspace = await workspace_manager.create(issue.identifier)
+            refreshed = await tracker.fetch_issues_by_ids([issue.id])
+            current = next((row for row in refreshed if row.id == issue.id), None)
+            if (current is None or normalize_state(current.state) not in config.active_states
+                    or not self._routable(current, config)):
+                self._cancel_release.add(issue.id)
+                return
+            issue = current
+            entry.issue = current
+            workspace = await workspace_manager.create(entry.workspace_identifier)
             if persistence:
                 entry.run_record_id = await persistence.start_run(entry, workspace.path)
             tracker.revoke_publication(issue.id)
@@ -1063,6 +1170,7 @@ class Orchestrator:
                     "token_budget_exceeded",
                     "validation_attempt_limit",
                     "integration_conflict",
+                    "snapshot_missing", "snapshot_invalid", "snapshot_environment_changed",
                 }
                 if safety_limit:
                     state.status = "failed"
@@ -1670,7 +1778,7 @@ class Orchestrator:
         if "rate_limits" in event:
             self.rate_limits = event["rate_limits"]
         event_name = event.get("event")
-        _, config = self.store.current()
+        config = entry.execution_config or self.store.current()[1]
         if event_name == "validation_started":
             total_validation_attempts = sum(
                 item.validation_attempt_count for item in entry.node_sessions.values()
@@ -1743,7 +1851,7 @@ class Orchestrator:
                 session.pull_request_url, session.pull_request_number = pull_request
         elif (
             event_name == "tool_call_completed" and event.get("tool") == "github_api"
-            and not isinstance(self.tracker, GitHubTracker)
+            and not isinstance(entry.tracker or self.tracker, GitHubTracker)
             and not event.get("host_contributor")
         ):
             arguments = event.get("arguments") or {}
@@ -1830,6 +1938,14 @@ class Orchestrator:
             )
 
     async def _worker_finished(self, issue_id: str, task: asyncio.Task[None]) -> None:
+        entry = self.running.get(issue_id)
+        token = WORKER_STORE.set((self, entry.persistence if entry else self.persistence))
+        try:
+            await self._worker_finished_snapshot(issue_id, task)
+        finally:
+            WORKER_STORE.reset(token)
+
+    async def _worker_finished_snapshot(self, issue_id: str, task: asyncio.Task[None]) -> None:
         try:
             async with self._lock:
                 entry = self.running.get(issue_id)
@@ -1864,7 +1980,7 @@ class Orchestrator:
                         self.claimed.discard(issue_id)
                         self.retries.pop(issue_id, None)
                         return
-                    _, config = self.store.current()
+                    config = entry.execution_config or self.store.current()[1]
                     if error is None and not task.cancelled():
                         if self.persistence:
                             await self.persistence.finish_run(entry, status="succeeded", error=None)
@@ -1879,6 +1995,8 @@ class Orchestrator:
                             "validation_attempt_limit", "provider_usage_limit",
                             "validation_policy_missing",
                             "integration_conflict",
+                            "snapshot_missing", "snapshot_invalid",
+                            "snapshot_environment_changed",
                         }
                         or next_attempt > config.agent.max_retries
                     )
@@ -2122,9 +2240,12 @@ class Orchestrator:
                     "url": entry.issue.url,
                     "attempt": entry.attempt,
                     "phase": entry.phase,
+                    "snapshot_digest": entry.snapshot_digest,
                     "started_at": entry.started_at.isoformat(),
-                    "max_tokens": config.agent.max_tokens_per_run,
-                    "max_validation_attempts": config.validation.max_attempts_per_run,
+                    "max_tokens": (entry.execution_config or config).agent.max_tokens_per_run,
+                    "max_validation_attempts": (
+                        entry.execution_config or config
+                    ).validation.max_attempts_per_run,
                     "graph": [
                         {
                             **state.__dict__,
@@ -2306,6 +2427,7 @@ class Orchestrator:
             self.store.managed_sections
         )
         self.persistence.config = config
+        self.persistence.definition = self.store.current()[0]
         await self.persistence.initialize()
         self._refresh.set()
 

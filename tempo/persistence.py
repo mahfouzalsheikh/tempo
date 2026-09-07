@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
-import hashlib
 import json
 import re
 import uuid
+from copy import copy, deepcopy
 from datetime import timedelta
 from functools import wraps
 from pathlib import Path
@@ -16,6 +17,7 @@ from django.db.models import Count, Max, Q, Sum
 
 from .domain import Issue, RunningEntry, Totals, utcnow
 from .errors import LeaseLostError
+from .run_snapshot import capture_snapshot, restore_snapshot, snapshot_digest
 
 if TYPE_CHECKING:
     from .agent_runtime import RuntimeResumeContext
@@ -45,11 +47,15 @@ class PersistenceStore:
     """Database-backed execution queue, leases, checkpoints, and runtime history."""
 
     def __init__(
-        self, tracker_kind: str, *, config: Any = None, workflow_path: Path | None = None
+        self, tracker_kind: str, *, config: Any = None, workflow_path: Path | None = None,
+        definition: Any = None,
     ) -> None:
         self.tracker_kind = tracker_kind
         self.config = config
         self.workflow_path = workflow_path
+        self.definition = definition
+        self.execution_snapshot: dict = {}
+        self._initialization_lock = asyncio.Lock()
         self.project_id: int | None = None
         self.environment_id: int | None = None
         self.workflow_version_id: int | None = None
@@ -105,7 +111,17 @@ class PersistenceStore:
         )
 
     async def initialize(self) -> None:
-        from tempo_web.models import Environment, Organization, Project, Repository, WorkflowVersion
+        desired_config, desired_definition = deepcopy(self.config), deepcopy(self.definition)
+        async with self._initialization_lock:
+            working = copy(self)
+            working.config, working.definition = desired_config, desired_definition
+            await working._initialize()
+            self.project_id, self.environment_id = working.project_id, working.environment_id
+            self.workflow_version_id = working.workflow_version_id
+            self.execution_snapshot = working.execution_snapshot
+
+    async def _initialize(self) -> None:
+        from tempo_web.models import Environment, Organization, Project, Repository
 
         project_config = getattr(self.config, "project", None)
         organization_slug = getattr(project_config, "organization", "default")
@@ -152,9 +168,20 @@ class PersistenceStore:
                 },
             )
         workflow_path = self.workflow_path
-        workflow_bytes = b""
-        if workflow_path and workflow_path.exists():
-            workflow_bytes = await sync_to_async(workflow_path.read_bytes, thread_sensitive=False)()
+        if self.config is not None:
+            from .domain import WorkflowDefinition
+            from .workflow import load_workflow
+
+            definition = self.definition
+            if definition is None:
+                definition = (
+                    load_workflow(workflow_path) if workflow_path and workflow_path.exists()
+                    else WorkflowDefinition(config={}, prompt_template="", mtime_ns=0,
+                                            path=Path(workflow_path or "WORKFLOW.md"))
+                )
+            self.execution_snapshot = await sync_to_async(
+                capture_snapshot, thread_sensitive=False,
+            )(definition, self.config)
         workflow_name = getattr(getattr(self.config, "workflow", None), "name", None)
         workflow_name = workflow_name or "issue-to-pull-request"
         platform_payload = {}
@@ -170,35 +197,72 @@ class PersistenceStore:
                     "workflow",
                 )
             }
-        checksum = hashlib.sha256(
-            workflow_bytes + json.dumps(platform_payload, sort_keys=True).encode()
-        ).hexdigest()
-        latest = (
-            await WorkflowVersion.objects.filter(
-                project=project,
-                name=workflow_name,
-            )
-            .order_by("-version")
-            .afirst()
-        )
-        workflow, _ = await WorkflowVersion.objects.aget_or_create(
-            project=project,
-            checksum=checksum,
-            defaults={
-                "name": workflow_name,
-                "version": (latest.version + 1) if latest else 1,
-                "path": str(workflow_path or ""),
-                "config": _json_safe(
-                    self.config.model_dump(mode="json") if self.config is not None else {}
-                ),
-                "active": True,
-            },
+        checksum = snapshot_digest(self.execution_snapshot)
+        workflow = await self._version_for_snapshot(
+            project.pk, workflow_name, checksum, str(workflow_path or ""),
         )
         self.project_id = project.pk
         self.environment_id = environment.pk
         self.workflow_version_id = workflow.pk
         await self._ensure_workflow_configuration(platform_payload)
         await self._sync_platform_definitions()
+
+    @sync_to_async(thread_sensitive=True)
+    def _version_for_snapshot(self, project_id, name, checksum, path):
+        from tempo_web.models import Project, WorkflowVersion
+
+        with transaction.atomic():
+            Project.objects.select_for_update().get(pk=project_id)
+            existing = WorkflowVersion.objects.filter(
+                project_id=project_id, checksum=checksum,
+            ).first()
+            if existing:
+                return existing
+            latest = WorkflowVersion.objects.filter(project_id=project_id, name=name).aggregate(
+                maximum=Max("version"),
+            )["maximum"] or 0
+            return WorkflowVersion.objects.create(
+                project_id=project_id, name=name, checksum=checksum, version=latest + 1,
+                path=path, execution_snapshot=self.execution_snapshot,
+                config=_json_safe(self.config.model_dump(mode="json") if self.config else {}),
+            )
+
+    async def for_execution(self, run_id: int):
+        """Bind a copy of persistence to the run's saved inputs, never the live catalog."""
+        from tempo_web.models import AgentRun
+
+        run = await AgentRun.objects.get_queryset().filter(
+            pk=run_id, project_id=self.project_id,
+        ).aget()
+        definition, config = restore_snapshot(run.execution_snapshot, run.snapshot_digest)
+        bound = copy(self)
+        bound.config, bound.definition = config, definition
+        bound.environment_id = run.environment_id
+        bound.workspace_path = run.workspace_path
+        bound.workflow_version_id = run.workflow_version_id
+        bound.tracker_kind = config.tracker.kind
+        bound.execution_snapshot = _json_safe(run.execution_snapshot)
+        return bound, definition, config, run.snapshot_digest
+
+    async def queued_issue(self, run_id: int) -> Issue:
+        from tempo_web.models import AgentRun
+
+        run = await AgentRun.objects.select_related("issue").aget(
+            pk=run_id, project_id=self.project_id,
+        )
+        row = run.issue
+        return Issue(
+            id=row.external_id, identifier=row.identifier, title=row.title,
+            description=row.description, state=row.state, url=row.url or None,
+            labels=row.labels, native_ref=row.native_ref, priority=run.priority,
+        )
+
+    async def unfinished_workspaces(self) -> set[str]:
+        from tempo_web.models import AgentRun
+
+        return {path async for path in AgentRun.objects.filter(
+            status__in=["queued", "running", "waiting_approval", "retry_scheduled", "paused"],
+        ).exclude(workspace_path="").values_list("workspace_path", flat=True)}
 
     async def workflow_configuration(self) -> tuple[dict[str, Any], Any | None]:
         if self.project_id is None:
@@ -505,6 +569,9 @@ class PersistenceStore:
                 project_id=self.project_id,
                 environment_id=self.environment_id,
                 workflow_version_id=self.workflow_version_id,
+                execution_snapshot=_json_safe(self.execution_snapshot),
+                snapshot_digest=(snapshot_digest(self.execution_snapshot)
+                                 if self.execution_snapshot else ""),
                 issue=issue,
                 attempt=entry.attempt,
                 phase=entry.phase,
@@ -617,19 +684,24 @@ class PersistenceStore:
     def initialize_run_nodes(self, entry: RunningEntry) -> None:
         if not entry.run_record_id or self.config is None:
             return
-        from tempo_web.models import RunNode, WorkflowNodeDefinition
+        from tempo_web.models import AgentRun, RunNode, WorkflowNodeDefinition
+
+        run = AgentRun.objects.get(pk=entry.run_record_id)
+        config = self.config
+        if run.execution_snapshot:
+            _, config = restore_snapshot(run.execution_snapshot, run.snapshot_digest)
 
         definitions = {
             row.key: row
             for row in WorkflowNodeDefinition.objects.filter(
-                workflow_version_id=self.workflow_version_id
+                workflow_version_id=run.workflow_version_id
             )
         }
-        incoming: dict[str, list[str]] = {node.id: [] for node in self.config.workflow.nodes}
-        for edge in self.config.workflow.edges:
+        incoming: dict[str, list[str]] = {node.id: [] for node in config.workflow.nodes}
+        for edge in config.workflow.edges:
             incoming[edge.target].append(edge.source)
-        for node in self.config.workflow.nodes:
-            profile = self.config.agents.get(node.agent or "")
+        for node in config.workflow.nodes:
+            profile = config.agents.get(node.agent or "")
             row, _ = RunNode.objects.get_or_create(
                 run_id=entry.run_record_id,
                 node_key=node.id,
@@ -641,7 +713,7 @@ class PersistenceStore:
                     "role": profile.role if profile else "",
                     "runtime": profile.runtime if profile else "",
                     "model": (
-                        self.config.model_providers[profile.model].model or profile.model
+                        config.model_providers[profile.model].model or profile.model
                         if profile
                         else ""
                     ),
@@ -946,7 +1018,10 @@ class PersistenceStore:
         """Accept work durably before a worker process is launched."""
         if self.project_id is None:
             await self.initialize()
-        from tempo_web.models import AgentRun, TrackedIssue
+        from tempo_web.models import AgentRun, TrackedIssue, WorkflowVersion
+
+        version_id, environment_id = self.workflow_version_id, self.environment_id
+        version = await WorkflowVersion.objects.aget(pk=version_id)
 
         tracked, _ = await TrackedIssue.objects.aupdate_or_create(
             project_id=self.project_id,
@@ -968,8 +1043,10 @@ class PersistenceStore:
             return None
         run = await AgentRun.objects.acreate(
             project_id=self.project_id,
-            environment_id=self.environment_id,
-            workflow_version_id=self.workflow_version_id,
+            environment_id=environment_id,
+            workflow_version_id=version_id,
+            execution_snapshot=_json_safe(version.execution_snapshot),
+            snapshot_digest=version.checksum if version.execution_snapshot else "",
             issue=tracked,
             idempotency_key=key,
             attempt=attempt,

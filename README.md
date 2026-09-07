@@ -96,6 +96,9 @@ repositories with `workspace: isolated`; Tempo integrates their committed change
 work. Nodes using the integration checkout run exclusively. See
 [contributions and integration](docs/CONTRIBUTION_INTEGRATION.md) for configuration and recovery.
 
+New runs retain a [verified execution snapshot](docs/RUN_SNAPSHOTS.md). Workflow edits apply to
+newly queued work; existing runs and retries keep their original prompts, policies, and defaults.
+
 After source changes, rebuild and health-check all services with:
 
 ```bash

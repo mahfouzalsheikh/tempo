@@ -423,6 +423,7 @@ def control_state(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed
                     "error": row.error,
                     "started_at": row.started_at.isoformat(),
                     "checkpoint": row.checkpoint,
+                    "snapshot_digest": row.snapshot_digest,
                 }
                 for row in rows
             ]

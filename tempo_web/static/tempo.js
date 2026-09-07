@@ -224,6 +224,7 @@ function runCard(row) {
       <div class="token-stat"><b>${compactNumber(session.codex_total_tokens)}</b><span>tokens</span></div>
     </summary>
     <div class="run-detail">
+      ${row.snapshot_digest ? `<p class="run-subtitle">Pinned configuration <code>${esc(row.snapshot_digest.slice(0, 12))}</code> · retained on retry</p>` : ""}
       <section>
         <div class="detail-heading"><h3>Steps & agents</h3><span class="panel-count">${number((row.graph || []).length)} steps</span></div>
         <div class="run-graph">${graph || emptyState("Legacy workflow", "This run has no explicit graph state.", "⌁")}</div>

@@ -43,7 +43,7 @@
   <dialog id="platform-dialog" class="action-dialog platform-dialog">
     <form method="dialog" id="platform-form">
       <div class="dialog-heading"><div><p class="section-kicker">PLATFORM CONFIGURATION</p><h2>Workflow graph and providers</h2></div><button class="icon-button" type="button" data-platform-close aria-label="Close">×</button></div>
-      <p class="dialog-description">Edit the authoritative database configuration below. Tempo validates references and graph acyclicity, records a new revision, and reloads it without restart. The same record is editable in the Django administration panel.</p>
+      <p class="dialog-description">Changes apply to newly queued runs. Existing runs and retries retain their saved configuration. Tempo validates references and workflow dependencies, records a new revision, and reloads it without restart. You can still pause or cancel an existing run.</p>
       <label for="platform-project">Project</label>
       <select id="platform-project"></select>
       <label for="platform-json">Configuration sections (JSON)</label>
