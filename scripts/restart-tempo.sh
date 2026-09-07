@@ -16,8 +16,10 @@ docker compose up --detach --no-recreate --wait --wait-timeout 180 postgres proj
 
 echo "Loading the immutable validation image into the execution daemon..."
 export TEMPO_VALIDATION_IMAGE
-TEMPO_VALIDATION_IMAGE="$(docker image inspect --format '{{.Id}}' tempo-validation-runner)"
-docker image save tempo-validation-runner | docker compose exec -T project-runner docker image load
+# Docker engines using different image stores may expose manifest vs config IDs.
+# Resolve the immutable ID in the daemon that will actually execute the jobs.
+docker image save tempo-validation-runner:latest | docker compose exec -T project-runner docker image load
+TEMPO_VALIDATION_IMAGE="$(docker compose exec -T project-runner docker image inspect --format '{{.Id}}' tempo-validation-runner:latest)"
 docker compose exec -T project-runner docker image inspect "$TEMPO_VALIDATION_IMAGE" --format '{{.Id}}'
 
 echo "Updating Tempo and the validation runner..."
