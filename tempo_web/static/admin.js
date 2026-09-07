@@ -153,6 +153,7 @@ async function updateAdmin() {
         : validation.policy === "discovered" ? "Selected by the agent" : "Required checks configured",
       "Required checks": (validation.required_checks || []).map(check => check.name).join(", ") || "None configured",
       "Runner": validation.runner,
+      "Execution image": validation.execution_image || "Not pinned",
       "Command timeout": validation.command_timeout_ms ? `${validation.command_timeout_ms} ms` : "—",
       "Cleanup timeout": validation.cleanup_timeout_ms ? `${validation.cleanup_timeout_ms} ms` : "—",
       "Max commands": validation.max_commands,

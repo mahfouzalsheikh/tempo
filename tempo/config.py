@@ -121,6 +121,7 @@ class ValidationConfig(BaseModel):
     required_checks: list[ValidationCheckConfig] = Field(default_factory=list, max_length=50)
     cleanup_command: str | None = None
     runner_url: str | None = None
+    runner_image: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     runner_token: str = Field(
         default="$TEMPO_VALIDATION_RUNNER_TOKEN", pattern=r"^\$[A-Za-z_][A-Za-z0-9_]*$",
     )
@@ -144,6 +145,7 @@ class ValidationConfig(BaseModel):
     @property
     def policy_digest(self) -> str:
         payload = {"schema": 1, "config": self.model_dump(mode="json"),
+                   "runner_image": self.runner_image or os.getenv("TEMPO_VALIDATION_IMAGE"),
                    "runner": self.runner_url or os.getenv("TEMPO_VALIDATION_RUNNER_URL")}
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 

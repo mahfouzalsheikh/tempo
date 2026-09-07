@@ -137,13 +137,15 @@ async def test_project_validator_stops_after_failure_but_still_cleans_up(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_isolated_runner_command_reports_exit_code_and_output(tmp_path):
+async def test_isolated_runner_command_reports_exit_code_and_output(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEMPO_VALIDATION_BACKEND", "process")
     result = await run_command("printf runner; exit 3", tmp_path, 5000, 1000)
     assert result == {"exit_code": 3, "output": "runner"}
 
 
 @pytest.mark.asyncio
-async def test_isolated_runner_streams_output_before_result(tmp_path):
+async def test_isolated_runner_streams_output_before_result(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEMPO_VALIDATION_BACKEND", "process")
     items = [
         item
         async for item in stream_command(

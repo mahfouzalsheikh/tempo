@@ -517,10 +517,12 @@ failure prevents a pass. See [required validation policy](VALIDATION_POLICY.md) 
 evidence identity, and migration details. A timeout kills the whole process group and reports exit
 code 124. Only the configured output tail is retained.
 
-Local and remote validation subprocesses receive only the baseline environment allowlist described
-in [credential boundaries](CREDENTIALS.md); coding-runtime grants do not propagate to them. Compose
-sends commands to the validation service, which shares the workspace volume and Docker host;
-it is not given the application credentials or Codex home.
+Local validation uses the baseline environment allowlist described in
+[credential boundaries](CREDENTIALS.md). In Compose, the authenticated runner creates a disposable
+container per command with a pinned image, a single workspace bind mount, no network, resource
+limits, and unprivileged project code. Only the trusted runner can access its Docker daemon;
+project commands receive no Docker socket, runner token, or application credentials. See
+[validation isolation](VALIDATION_SANDBOX.md) for compatibility mode and remaining boundaries.
 
 The validation runner checks that requested workspaces resolve beneath its configured root and
 accepts at most 1 MiB request bodies. `/run-stream` returns newline-delimited output events followed
@@ -853,14 +855,11 @@ The `tempo` and `validation-runner` services use the same image. The image conta
 Pipenv-installed locked dependencies, Git, SSH, Node, Codex CLI, and Docker CLI. The application
 runs as UID 10001; the Docker daemon is a separate privileged service.
 
-The Tempo service bind-mounts the host's `~/.codex` read/write at `/home/tempo/.codex`, so Codex
-uses the same ChatGPT authentication and state as the host CLI. The validation service does not
-receive this mount.
-
-The Tempo container uses `seccomp=unconfined` for its outer Docker boundary because Docker's
-default seccomp profile blocks the namespace operation required by Codex's Linux `bwrap` sandbox.
-Codex itself remains in `workspace-write` mode, so agent commands retain the inner filesystem and
-network restrictions instead of switching to unrestricted execution.
+Tempo imports host Codex authentication from the read-only `/run/tempo-host-codex` mount
+into a container-owned state volume. Neither the validation service nor disposable job containers
+receive host Codex state. The checked-in workflow uses `externalSandbox`; coding agents and hooks
+still share the control-plane container and require further isolation. Compose uses the default
+outer seccomp profile. The restricted validation boundary does not extend to agent commands.
 
 `tempo` waits for PostgreSQL, validation, and Docker health checks. It mounts `WORKFLOW.md`
 read-only and exposes the application on container port 8000. The validation service exposes only

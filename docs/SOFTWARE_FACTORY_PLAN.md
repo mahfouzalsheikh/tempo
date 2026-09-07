@@ -14,6 +14,14 @@ The fifth Phase 0 slice retains tracker credential references in saved configura
 
 The next Phase 0 slice protects operational reads with installation-wide authentication and authenticates validation jobs before reading their payloads. Runner credentials stay out of command environments and job records. The deployment script provisions its local secret, saves a private database backup, preserves dependency containers, and verifies the deployed commit. See [access and deployment notes](ACCESS_AND_DEPLOYMENT.md). Per-project roles, per-job capabilities, and isolated execution remain outstanding. Completed steps are now committed, pushed, and deployed for testing as requested.
 
+The next Phase 0 slice moves validation commands into disposable containers. Each command uses an
+immutable image bound to validation evidence, its own workspace mount, no network or Docker access,
+unprivileged project code, resource limits, and bounded cleanup. Docker probes cover sibling and
+credential access, network denial, simultaneous jobs, timeout, and cancellation. Deployment loads
+the pinned image into the execution daemon and exercises both authenticated endpoints. See
+[validation isolation](VALIDATION_SANDBOX.md). Coding-agent and hook isolation, per-node workspaces,
+lease-scoped job capabilities, and immutable complete run snapshots remain outstanding.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

@@ -32,19 +32,22 @@ job payloads and saved configuration. The client disables environment proxies an
 non-success response bodies are not copied into validation history. Runtime grants cannot expose
 the standard or configured runner credential names to coding agents.
 
-Requests must contain exactly workspace, command, timeout_ms, and max_output_chars. Workspace
+Requests contain workspace, command, timeout_ms, and max_output_chars. Docker jobs must also
+supply execution_image matching the runner's immutable image ID; a mismatch returns 409. Workspace
 must be a directory strictly beneath the runner's root. Limits are one MiB for the body, ten
 seconds to receive it, one hour per command, and one million retained output characters. The
 runner rejects type coercions, root-directory execution, and extra environment fields.
 
-Validation subprocesses do not inherit the authentication token. The remote runner explicitly
-passes its configured `DOCKER_HOST` so project checks can use the existing Docker execution
-service. Other server variables remain excluded by the environment allowlist.
+The runner uses its configured `DOCKER_HOST` to create a disposable container for each command.
+Project code receives neither Docker access nor the authentication token. The container mounts
+only the requested workspace, has no network, and runs project code as UID 10001. Image identity
+is bound to the request, final result, and validation policy. See [validation isolation](VALIDATION_SANDBOX.md).
 
 The shared credential authenticates the caller, not an individual leased run. Per-job capability
-tokens, network segregation, trusted validation harnesses, and task/process isolation remain
-necessary. The current private Compose network uses HTTP and a privileged Docker execution
-service. Use TLS for runner traffic crossing a trusted-host boundary. Authentication alone does
+tokens, control-plane network segregation, trusted validation harnesses, and isolation for
+coding agents and hooks remain necessary. The current private Compose network uses HTTP and a
+privileged Docker execution service. Use TLS for runner traffic crossing a trusted-host boundary.
+Authentication alone does
 not prevent a process with shared filesystem/process access from reaching credentials.
 
 ## Commit, push, deploy
@@ -58,9 +61,11 @@ Run `./scripts/restart-tempo.sh` from a committed checkout. It:
 1. Ensures a stable local runner credential is configured.
 2. Builds Tempo and the validation runner with the Git commit recorded in their image metadata.
 3. Starts existing database and execution dependencies without forcibly recreating them.
-4. Stops Tempo gracefully and writes a private PostgreSQL backup beneath `var/backups/`.
-5. Updates the two application services and waits for health checks. Startup applies migrations.
-6. Verifies the served revision matches the requested commit and anonymous state reads return 401.
+4. Loads the built image into the execution daemon and passes its immutable image ID to both services.
+5. Stops Tempo gracefully and writes a private PostgreSQL backup beneath `var/backups/`.
+6. Updates the two application services and waits for health checks. Startup applies migrations.
+7. Verifies the served revision matches the requested commit and anonymous state reads return 401.
+8. Executes disposable sandbox probes through both authenticated validation endpoints.
 
 The script preserves named volumes. It does not run `down -v`, remove orphan services, or
 automatically restore a database. It exits on failure. If an update fails after Tempo stops, fix

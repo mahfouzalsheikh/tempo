@@ -16,6 +16,7 @@ TOKEN = "test-runner-" + "x" * 48
 
 @pytest.fixture
 def runner(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEMPO_VALIDATION_BACKEND", "process")
     monkeypatch.setenv("TEMPO_VALIDATION_RUNNER_TOKEN", TOKEN)
     monkeypatch.setattr(validation_server, "ROOT", tmp_path)
     task = tmp_path / "task"
@@ -120,6 +121,37 @@ async def test_host_sends_credential_only_in_header_and_suppresses_error_body(ru
     with pytest.raises(ConfigError):
         await validator._run_remote("test", "true", runner, 1000)
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("returned_image", [None, "sha256:" + "b" * 64, "sha256:" + "a" * 64])
+async def test_host_requires_result_from_expected_image(runner, monkeypatch, returned_image):
+    expected = "sha256:" + "a" * 64
+
+    async def event(_):
+        pass
+
+    validator = ProjectValidator(
+        ValidationConfig(runner_url="http://runner", runner_image=expected),
+        WorkspaceManager(runner.parent, HooksConfig()), event, set(),
+    )
+    client_class = httpx.AsyncClient
+
+    def handler(request):
+        assert json.loads(request.content)["execution_image"] == expected
+        result = {"type": "result", "exit_code": 0, "output": "passed"}
+        if returned_image is not None:
+            result["execution_image"] = returned_image
+        return httpx.Response(200, text=json.dumps(result) + "\n")
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client_class(
+        **kwargs, transport=httpx.MockTransport(handler),
+    ))
+    if returned_image == expected:
+        assert await validator._run_remote("test", "true", runner, 1000) == (0, "passed")
+    else:
+        with pytest.raises(RuntimeError, match="different execution image"):
+            await validator._run_remote("test", "true", runner, 1000)
 
 
 def test_credential_provisioning_is_private_and_stable(tmp_path, monkeypatch):

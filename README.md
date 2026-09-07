@@ -56,8 +56,7 @@ explicit credential grants. See [credential references and upgrade notes](docs/C
 Start the stack:
 
 ```bash
-python3 scripts/provision-runner-token.py
-docker compose up --build
+./scripts/restart-tempo.sh
 ```
 
 Open <http://localhost:8030>. The port can be changed with `TEMPO_PORT` in `.env`.
@@ -77,7 +76,7 @@ startup:
 
 ```bash
 codex login status
-docker compose up
+./scripts/restart-tempo.sh
 ```
 
 Compose persists PostgreSQL data, workspaces, SQLite fallback data, and mutable Codex state in
@@ -90,9 +89,10 @@ profiles. Only run repositories you trust in this deployment: commands can acces
 container, although tracker credentials are removed from the agent command environment and GitHub
 writes remain mediated by Tempo's provider tool.
 
-The Tempo service relaxes Docker's outer seccomp profile so Codex can create its inner Linux
-`workspace-write` sandbox with `bwrap`. Codex commands remain restricted to the issue workspace;
-the validation and Docker-in-Docker services keep their separate isolation boundaries.
+Validation commands run in disposable containers with a pinned image, no network or Docker
+access, resource limits, and only their task workspace mounted. Coding agents and hooks still
+share the control-plane container. See [validation isolation](docs/VALIDATION_SANDBOX.md) for
+the tested boundary and remaining work.
 
 After source changes, rebuild and health-check all services with:
 
@@ -100,8 +100,9 @@ After source changes, rebuild and health-check all services with:
 ./scripts/restart-tempo.sh
 ```
 
-The script provisions runner authentication, backs up PostgreSQL, preserves data volumes, and
-checks the deployed commit. See [access and deployment notes](docs/ACCESS_AND_DEPLOYMENT.md).
+The script provisions runner authentication, loads the immutable validation image into the
+execution daemon, backs up PostgreSQL, preserves data volumes, and checks the deployed commit
+and sandbox execution. See [access and deployment notes](docs/ACCESS_AND_DEPLOYMENT.md).
 
 ## Local development with Pipenv
 

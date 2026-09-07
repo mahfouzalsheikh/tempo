@@ -23,6 +23,7 @@ services:
       TEMPO_ADMIN_EMAIL: "${TEMPO_ADMIN_EMAIL:-}"
       DOCKER_HOST: tcp://project-runner:2375
       TEMPO_VALIDATION_RUNNER_URL: http://validation-runner:8787
+      TEMPO_VALIDATION_IMAGE: "${TEMPO_VALIDATION_IMAGE:-}"
       TEMPO_VALIDATION_RUNNER_TOKEN: "${TEMPO_VALIDATION_RUNNER_TOKEN:?Run python3 scripts/provision-runner-token.py first}"
     volumes:
       - ./WORKFLOW.md:/app/WORKFLOW.md:ro
@@ -64,6 +65,8 @@ services:
     restart: unless-stopped
     environment:
       TEMPO_WORKSPACE_ROOT: /data/workspaces
+      TEMPO_VALIDATION_BACKEND: docker
+      TEMPO_VALIDATION_IMAGE: "${TEMPO_VALIDATION_IMAGE:-}"
       TEMPO_VALIDATION_RUNNER_TOKEN: "${TEMPO_VALIDATION_RUNNER_TOKEN:?Run python3 scripts/provision-runner-token.py first}"
       DOCKER_HOST: tcp://project-runner:2375
     depends_on:

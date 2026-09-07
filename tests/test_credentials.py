@@ -172,8 +172,9 @@ async def test_hooks_grant_clone_token_and_redact_failures(tmp_path, poisoned_en
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["local", "remote", "stream"])
 async def test_validation_processes_do_not_inherit_host_credentials(
-    tmp_path, poisoned_environment, mode,
+    tmp_path, poisoned_environment, mode, monkeypatch,
 ):
+    monkeypatch.setenv("TEMPO_VALIDATION_BACKEND", "process")
     command = shlex.join([
         sys.executable, "-c", "import json, os; print(json.dumps(dict(os.environ)))",
     ])

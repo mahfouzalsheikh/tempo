@@ -421,6 +421,7 @@ class ProjectValidator:
     ) -> tuple[int, str]:
         timeout = httpx.Timeout(timeout_ms / 1000 + 10)
         credential = runner_token(self.config.runner_token)
+        expected_image = self.config.runner_image or os.getenv("TEMPO_VALIDATION_IMAGE")
         async with httpx.AsyncClient(
             timeout=timeout, trust_env=False, follow_redirects=False,
         ) as client:
@@ -433,6 +434,7 @@ class ProjectValidator:
                     "command": command,
                     "timeout_ms": timeout_ms,
                     "max_output_chars": self.config.max_output_chars,
+                    **({"execution_image": expected_image} if expected_image else {}),
                 },
             ) as response:
                 if response.status_code != 200:
@@ -462,6 +464,8 @@ class ProjectValidator:
             raise RuntimeError("validation runner ended without a result")
         if type(result.get("exit_code")) is not int or not isinstance(result.get("output"), str):
             raise RuntimeError("validation runner returned an invalid result")
+        if result.get("execution_image") != expected_image:
+            raise RuntimeError("validation evidence belongs to a different execution image")
         return result["exit_code"], result["output"]
 
     async def _run_local(self, command: str, workspace: Path, timeout_ms: int) -> tuple[int, str]:

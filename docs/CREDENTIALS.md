@@ -72,8 +72,10 @@ redacted from hook failure output before logging or raising an error.
 
 Validation subprocesses use the baseline environment, with an explicit Docker endpoint on the
 remote runner. Runtime grants do not propagate to validation, and job payloads do not carry secrets.
-The runner now authenticates requests with a separate credential and explicitly passes its
-configured `DOCKER_HOST` to validation commands. See [runner authentication](ACCESS_AND_DEPLOYMENT.md).
+The runner authenticates requests with a separate credential and uses `DOCKER_HOST` only in
+its trusted container-management process. Disposable validation containers receive neither value
+and have no network or Docker socket. See [validation isolation](VALIDATION_SANDBOX.md) and
+[runner authentication](ACCESS_AND_DEPLOYMENT.md).
 Per-job capabilities and additional scoped validation credentials remain planned.
 
 ## Upgrade

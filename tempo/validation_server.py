@@ -12,7 +12,8 @@ from typing import Any
 import uvicorn
 
 from .errors import ConfigError
-from .validation_auth import runner_environment, runner_token
+from .validation_auth import runner_token
+from .validation_sandbox import command_process, execution_config
 
 ROOT = Path(os.getenv("TEMPO_WORKSPACE_ROOT", "/data/workspaces")).resolve(strict=False)
 MAX_REQUEST_BYTES = 1024 * 1024
@@ -26,10 +27,11 @@ async def application(scope: dict[str, Any], receive: Any, send: Any) -> None:
     if method == "GET" and path == "/healthz":
         try:
             runner_token()
+            backend, image = execution_config()
         except ConfigError:
-            await _respond(send, 503, {"status": "authentication_not_configured"})
+            await _respond(send, 503, {"status": "runner_not_configured"})
             return
-        await _respond(send, 200, {"status": "ok"})
+        await _respond(send, 200, {"status": "ok", "backend": backend, "image": image})
         return
     if method != "POST" or path not in {"/run", "/run-stream"}:
         await _respond(send, 404, {"error": "not_found"})
@@ -65,7 +67,7 @@ async def application(scope: dict[str, Any], receive: Any, send: Any) -> None:
         return
     try:
         payload = json.loads(body)
-        if not isinstance(payload, dict) or set(payload) != {
+        if not isinstance(payload, dict) or set(payload) - {"execution_image"} != {
             "workspace", "command", "timeout_ms", "max_output_chars",
         }:
             raise ValueError("invalid job shape")
@@ -86,6 +88,14 @@ async def application(scope: dict[str, Any], receive: Any, send: Any) -> None:
             raise ValueError("invalid command settings")
     except (KeyError, TypeError, ValueError, OSError):
         await _respond(send, 400, {"error": "invalid_request"})
+        return
+    try:
+        backend, image = execution_config()
+    except ConfigError:
+        await _respond(send, 503, {"error": "runner_not_configured"})
+        return
+    if payload.get("execution_image") != image:
+        await _respond(send, 409, {"error": "execution_image_mismatch"})
         return
     if path == "/run-stream":
         await send(
@@ -110,73 +120,40 @@ async def application(scope: dict[str, Any], receive: Any, send: Any) -> None:
 async def run_command(
     command: str, workspace: Path, timeout_ms: int, max_output_chars: int
 ) -> dict[str, Any]:
-    process = await asyncio.create_subprocess_exec(
-        "bash",
-        "--noprofile", "--norc", "-c",
-        command,
-        cwd=workspace,
-        env=runner_environment(),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        start_new_session=True,
-    )
-    timed_out = False
-    try:
-        output, _ = await asyncio.wait_for(process.communicate(), timeout=timeout_ms / 1000)
-    except TimeoutError:
-        timed_out = True
-        _kill_process_group(process)
-        output, _ = await process.communicate()
-    except asyncio.CancelledError:
-        _kill_process_group(process)
-        await process.wait()
-        raise
-    text = output.decode(errors="replace")[-max_output_chars:]
-    exit_code = process.returncode if process.returncode is not None else -1
-    if timed_out:
-        exit_code = 124
-        text = f"Timed out after {timeout_ms}ms.\n{text}"
-    return {"exit_code": exit_code, "output": text}
+    async for item in stream_command(command, workspace, timeout_ms, max_output_chars):
+        if item["type"] == "result":
+            return {key: value for key, value in item.items() if key != "type"}
+    raise RuntimeError("validation command ended without a result")
 
 
 async def stream_command(command: str, workspace: Path, timeout_ms: int, max_output_chars: int):
-    process = await asyncio.create_subprocess_exec(
-        "bash",
-        "--noprofile", "--norc", "-c",
-        command,
-        cwd=workspace,
-        env=runner_environment(),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        start_new_session=True,
-    )
-    assert process.stdout
     captured = ""
     timed_out = False
-    try:
-        async with asyncio.timeout(timeout_ms / 1000):
-            while chunk := await process.stdout.read(2048):
-                text = chunk.decode(errors="replace")
-                captured = f"{captured}{text}"[-max_output_chars:]
-                yield {"type": "output", "text": text}
-            await process.wait()
-    except TimeoutError:
-        timed_out = True
-        _kill_process_group(process)
-        await process.wait()
-    except asyncio.CancelledError:
-        _kill_process_group(process)
-        await process.wait()
-        raise
-    finally:
-        if process.returncode is None:
+    async with command_process(command, workspace, timeout_ms) as process:
+        assert process.stdout
+        try:
+            async with asyncio.timeout(timeout_ms / 1000 + (5 if process.validation_image else 0)):
+                while chunk := await process.stdout.read(2048):
+                    text = chunk.decode(errors="replace")
+                    captured = f"{captured}{text}"[-max_output_chars:]
+                    yield {"type": "output", "text": text}
+                await process.wait()
+        except TimeoutError:
+            timed_out = True
             _kill_process_group(process)
             await process.wait()
+        except asyncio.CancelledError:
+            _kill_process_group(process)
+            await process.wait()
+            raise
     exit_code = process.returncode if process.returncode is not None else -1
     if timed_out:
         exit_code = 124
         captured = f"Timed out after {timeout_ms}ms.\n{captured}"
-    yield {"type": "result", "exit_code": exit_code, "output": captured}
+    yield {
+        "type": "result", "exit_code": exit_code, "output": captured,
+        **({"execution_image": process.validation_image} if process.validation_image else {}),
+    }
 
 
 def _kill_process_group(process: asyncio.subprocess.Process) -> None:

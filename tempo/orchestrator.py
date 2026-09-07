@@ -2143,10 +2143,12 @@ class Orchestrator:
                     for check in config.validation.required_checks
                 ],
                 "runner": (
-                    "isolated"
+                    "remote runner"
                     if config.validation.runner_url or os.getenv("TEMPO_VALIDATION_RUNNER_URL")
                     else "local process"
                 ),
+                "execution_image": config.validation.runner_image
+                or os.getenv("TEMPO_VALIDATION_IMAGE"),
                 "command_timeout_ms": config.validation.command_timeout_ms,
                 "cleanup_timeout_ms": config.validation.cleanup_timeout_ms,
                 "max_commands": config.validation.max_commands,
