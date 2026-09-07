@@ -326,6 +326,7 @@ class WorkflowNodeConfig(BaseModel):
     name: str | None = None
     agent: str | None = None
     prompt: str = ""
+    workspace: Literal["integration", "isolated"] = "integration"
     max_retries: int = Field(default=0, ge=0, le=20)
     approval_message: str = "Approve this workflow gate to continue."
     settings: dict[str, Any] = Field(default_factory=dict)
@@ -344,6 +345,8 @@ class WorkflowNodeConfig(BaseModel):
             raise ValueError("agent nodes must reference an agent profile")
         if self.type != "agent" and self.agent:
             raise ValueError("only agent nodes may reference an agent profile")
+        if self.type != "agent" and self.workspace != "integration":
+            raise ValueError("only agent nodes may use isolated workspaces")
         return self
 
 
@@ -468,6 +471,18 @@ class ServiceConfig(BaseModel):
                 raise ValueError(
                     f"workflow node {node.id} references unknown agent profile {node.agent}"
                 )
+            if node.workspace == "isolated":
+                profile = self.agents[node.agent]
+                if profile.completion != "turn":
+                    raise ValueError("isolated contributors must use completion: turn")
+                for provider in profile.tool_providers:
+                    bundle = self.tool_providers[provider]
+                    if (bundle.kind != "tempo" or bundle.allow_all
+                            or set(bundle.tools) - {"github_api"}):
+                        raise ValueError(
+                            "isolated contributors require explicit read-only tool bundles "
+                            "(allow_all: false; tools: [github_api] or [])"
+                        )
         return self
 
     @property

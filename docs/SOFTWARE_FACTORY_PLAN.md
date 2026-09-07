@@ -40,6 +40,17 @@ also disable repository fsmonitor commands and hooks. See [runtime isolation](RU
 Parallel graph nodes still share issue workspaces; isolated contributions and integration,
 immutable complete run snapshots, scoped capability provisioning, and release artifacts remain.
 
+The next slice adds explicit isolated contributor nodes with independent repositories, clean
+base-relative commit handoffs, and serialized integration. Integration-checkout nodes now run
+exclusively. Accepted and integrating commits have durable recovery checkpoints; conflicts stop
+without changing the shared checkout, and downstream validation must check the combined result.
+Configuration and live run views explain workspace modes and show integrated commit identities.
+Git and Docker probes cover concurrent writers, conflicts, lease loss, metadata redirection, and
+interrupted checkpoint recovery. See [contribution integration](CONTRIBUTION_INTEGRATION.md).
+This delivers part of Phase 2; fresh repositories per retry, automatic conflict repair,
+runtime-neutral review, complete immutable run snapshots, scoped capability provisioning,
+and release artifacts remain outstanding.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

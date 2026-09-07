@@ -33,7 +33,7 @@ addresses. Validation retains its stricter `--network=none` boundary.
 The `tempo-agent-state` volume is shared only by the control plane and execution daemon. Its paths
 are identical at `/data/agent-state`. Agent homes are derived from workspace, durable run/node
 identity, and runtime kind. Review has a separate execution scope. Concurrent nodes receive
-different homes even while the existing graph still shares an issue workspace.
+different homes. Nodes can also use [private contributor checkouts](CONTRIBUTION_INTEGRATION.md).
 
 Each runtime scope reserves a stable container name before updating its home. A second launch
 cannot overwrite an active session's login or reuse that home. Cleanup addresses the immutable
@@ -101,9 +101,10 @@ not an end-to-end generated-product acceptance result.
 
 ## Remaining work
 
-Parallel graph nodes still share their issue workspace. Separate task contributions, serialized
-integration, complete immutable execution snapshots, trusted build/release artifacts, and scoped
-capability grants remain planned. This step does not make concurrent writers to one checkout safe.
+Parallel contributors now have independent repositories and serialized commit integration;
+nodes using the issue checkout run exclusively. See [contribution integration](CONTRIBUTION_INTEGRATION.md).
+Complete immutable execution snapshots, trusted build/release artifacts, and scoped capability
+grants remain planned.
 
 After a control-plane crash, a running orphan remains bounded by its in-container watchdog. A
 reserved container that never started, or a still-running orphan, blocks reuse of that scope;

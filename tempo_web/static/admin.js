@@ -53,10 +53,12 @@ function renderPlatform(project) {
   const edges = workflow.edges || [];
   const incoming = Object.fromEntries(nodes.map(node => [node.id, []]));
   for (const edge of edges) (incoming[edge.to] ||= []).push(`${edge.from} [${edge.condition}]`);
-  byId("graph-summary").textContent = `${nodes.length} nodes · ${edges.length} edges · parallel ${workflow.max_parallel_nodes || 1}`;
+  const contributors = nodes.filter(node => node.workspace === "isolated").length;
+  byId("graph-summary").textContent = `${nodes.length} steps · ${contributors} private checkouts · parallel limit ${workflow.max_parallel_nodes || 1}`;
   byId("config-graph").innerHTML = nodes.map(node => `<article class="graph-node ${esc(node.type)}">
     <div><span>${esc(node.type)}</span><strong>${esc(node.name || node.id)}</strong></div>
     <small>${esc(node.agent || "control node")}</small>
+    <small>${node.type === "agent" ? (node.workspace === "isolated" ? "Private checkout · integrated on completion" : "Integration checkout · runs exclusively") : "Workflow control"}</small>
     <p>${esc((incoming[node.id] || []).length ? `after ${incoming[node.id].join(", ")}` : "entry node")}</p>
   </article>`).join("") || "<p>No graph nodes configured.</p>";
   byId("config-team").innerHTML = Object.entries(project.agents || {}).map(([name, agent]) =>

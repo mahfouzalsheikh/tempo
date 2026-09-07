@@ -684,6 +684,16 @@ class PersistenceStore:
             output={},
         )
 
+    async def contribution_states(self, run_id: int) -> dict[str, dict[str, Any]]:
+        from tempo_web.models import RunCheckpoint
+
+        states = {}
+        async for checkpoint in RunCheckpoint.objects.filter(
+            run_id=run_id, kind="contribution_state",
+        ).order_by("sequence"):
+            states[checkpoint.payload["node_id"]] = checkpoint.payload
+        return states
+
     async def successful_validation_context(self, run_id: int) -> dict[str, str] | None:
         """Return the latest durable passed-validation fingerprint and workflow node."""
         from tempo_web.models import RunCheckpoint, ValidationAttempt

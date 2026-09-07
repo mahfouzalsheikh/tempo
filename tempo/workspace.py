@@ -29,6 +29,11 @@ def workspace_key(identifier: str) -> str:
     return sanitized
 
 
+def contribution_root(workspace: Path) -> Path:
+    digest = hashlib.sha256(workspace.name.encode()).hexdigest()[:24]
+    return workspace.parent / f".tempo-contributions-{digest}"
+
+
 class WorkspaceManager:
     def __init__(self, root: Path, hooks: HooksConfig) -> None:
         self.root = root.resolve(strict=False)
@@ -88,6 +93,10 @@ class WorkspaceManager:
         if self.hooks.before_remove:
             await self.run_hook("before_remove", self.hooks.before_remove, path, fatal=False)
         await asyncio.to_thread(shutil.rmtree, path)
+        contributions = contribution_root(path)
+        if contributions.exists():
+            self._assert_no_symlink_escape(contributions)
+            await asyncio.to_thread(shutil.rmtree, contributions)
 
     async def before_run(self, path: Path) -> None:
         if self.hooks.before_run:

@@ -29,6 +29,7 @@ from .domain import (
     utcnow,
 )
 from .errors import CodexError, LeaseLostError
+from .integration import ContributionCoordinator
 from .persistence import PersistenceStore
 from .trackers.base import Tracker
 from .trackers.github import GitHubTracker, build_tracker
@@ -688,6 +689,41 @@ class Orchestrator:
             )
         if self.persistence:
             await self.persistence.initialize_run_nodes(entry)
+        contributions = None
+        if any(node.workspace == "isolated" for node in config.workflow.nodes):
+            async def save_contribution(state):
+                if self.persistence and entry.run_record_id:
+                    await self.persistence.checkpoint(
+                        entry.run_record_id, "contribution_state", state,
+                        idempotency_key=f"contribution:{entry.run_record_id}:{uuid.uuid4().hex}",
+                        lease_token=entry.lease_token,
+                    )
+
+            contributions = ContributionCoordinator(
+                workspace_path, str(entry.run_record_id or issue.id),
+                await self.persistence.contribution_states(entry.run_record_id)
+                if self.persistence and entry.run_record_id else {},
+                save_contribution, tracker.assert_ownership,
+            )
+            for node_id, state in contributions.states.items():
+                if not any(n.id == node_id and n.workspace == "isolated"
+                           for n in config.workflow.nodes):
+                    raise CodexError(
+                        "A recorded contribution no longer matches the workflow nodes.",
+                        category="integration_conflict",
+                    )
+                if state["status"] in {"accepted", "integrating", "integrated"}:
+                    output = await contributions.integrate(node_id)
+                    restored = entry.graph_nodes[node_id]
+                    restored.status = "succeeded"
+                    restored.output = output
+                    restored.finished_at = utcnow()
+                    if self.persistence and entry.run_record_id:
+                        await self.persistence.finish_run_node(
+                            entry.run_record_id, node_id, status="succeeded", output=output,
+                            lease_token=entry.lease_token,
+                        )
+                    tracker.revoke_publication(issue.id)
         await self._restore_validation_gate(
             entry,
             config,
@@ -755,8 +791,13 @@ class Orchestrator:
                 raise CodexError(
                     "workflow graph cannot make progress", category="workflow_graph_deadlock"
                 )
-            for start in range(0, len(ready), config.workflow.max_parallel_nodes):
-                batch = ready[start : start + config.workflow.max_parallel_nodes]
+            for batch in self._workspace_batches(ready, config.workflow.max_parallel_nodes):
+                paths = {}
+                for node in batch:
+                    paths[node.id] = (
+                        await contributions.prepare(node.id)
+                        if node.workspace == "isolated" else workspace_path
+                    )
                 tasks = [
                     asyncio.create_task(
                         self._execute_workflow_node(
@@ -765,9 +806,10 @@ class Orchestrator:
                             definition,
                             config,
                             node,
-                            workspace_path,
+                            paths[node.id],
                             workspace_manager,
                             tracker,
+                            contributions,
                         ),
                         name=f"tempo-{issue.identifier}-{node.id}",
                     )
@@ -799,6 +841,24 @@ class Orchestrator:
                 f"workflow node {failed.node_id} failed: {failed.error or 'unknown error'}",
                 category="workflow_node_failed",
             )
+
+    @staticmethod
+    def _workspace_batches(ready, maximum):
+        """Only independent contributor checkouts may overlap in time."""
+        batch = []
+        for node in ready:
+            if node.workspace != "isolated":
+                if batch:
+                    yield batch
+                    batch = []
+                yield [node]
+                continue
+            batch.append(node)
+            if len(batch) == maximum:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
 
     async def _restore_validation_gate(
         self,
@@ -908,6 +968,7 @@ class Orchestrator:
         workspace_path: Any,
         workspace_manager: WorkspaceManager,
         tracker: Tracker,
+        contributions: ContributionCoordinator | None = None,
     ) -> None:
         entry = self.running[issue.id]
         state = entry.graph_nodes[node.id]
@@ -952,16 +1013,22 @@ class Orchestrator:
                         )
                     output = {"approved": True, "note": decision.get("note", "")}
                 else:
-                    output = await self._execute_agent_node(
-                        issue,
-                        attempt,
-                        definition,
-                        config,
-                        node,
-                        workspace_path,
-                        workspace_manager,
-                        tracker,
-                    )
+                    accepted = contributions.states.get(node.id, {}) if contributions else {}
+                    if node.workspace == "isolated" and accepted.get("status") in {
+                        "accepted", "integrating", "integrated",
+                    }:
+                        output = await contributions.integrate(node.id)
+                    else:
+                        output = await self._execute_agent_node(
+                            issue, attempt, definition, config, node,
+                            workspace_path, workspace_manager, tracker,
+                        )
+                        if node.workspace == "isolated":
+                            entry.phase = f"Integrating:{node.id}"
+                            self._publish_live_state()
+                            output = await contributions.accept(node.id, output)
+                    if node.workspace == "isolated":
+                        tracker.revoke_publication(issue.id)
                 state.status = "succeeded"
                 state.output = output
                 state.finished_at = utcnow()
@@ -995,6 +1062,7 @@ class Orchestrator:
                 safety_limit = getattr(exc, "category", "") in {
                     "token_budget_exceeded",
                     "validation_attempt_limit",
+                    "integration_conflict",
                 }
                 if safety_limit:
                     state.status = "failed"
@@ -1036,6 +1104,11 @@ class Orchestrator:
         entry = self.running[issue.id]
         profile = config.agents[node.agent or ""]
         enabled_tools = providers.enabled_tools(config, profile)
+        if node.workspace == "isolated" and (
+            profile.completion != "turn" or enabled_tools is None
+            or enabled_tools - {"github_api"}
+        ):
+            raise CodexError("Isolated contributors require turn completion and read-only tools.")
         has_validation_tool = enabled_tools is None or "project_validation" in enabled_tools
         live = LiveSession(active_node_id=node.id, active_agent_role=profile.role)
         resume_context = (
@@ -1053,7 +1126,17 @@ class Orchestrator:
         entry.session = live
 
         async def on_event(event: dict[str, Any]) -> None:
+            event_name = str(event.get("event", ""))
+            if node.workspace == "isolated" and (
+                event_name.startswith(("validation_", "review_"))
+                or event_name == "no_change_completed"
+            ):
+                raise CodexError(
+                    "Contributor runtime events cannot authorize validation or issue completion.",
+                    category="integration_conflict",
+                )
             event = {**event, "node_id": node.id, "agent_role": profile.role,
+                     "host_contributor": node.workspace == "isolated",
                      "host_publication": tracker.verify_publication_event(event)}
             await self._codex_event(issue.id, event, live_session=live, expected_entry=entry)
 
@@ -1165,6 +1248,14 @@ class Orchestrator:
                         )
                 if operator_feedback:
                     prompt = f"Operator feedback:\n{operator_feedback}\n\n{prompt}"
+                if node.workspace == "isolated":
+                    prompt += (
+                        "\n\nTempo contribution contract: this is your private repository. "
+                        "Complete only this node's assignment, run relevant local checks, and "
+                        "commit all intended changes before ending the turn. Leave a clean "
+                        "checkout. Do not publish or complete the issue. Tempo integrates your "
+                        "commit; a later node validates and publishes the combined result."
+                    )
                 await runtime.run_turn(runtime_session, prompt, current_issue)
                 if operator_feedback and self.persistence and entry.run_record_id:
                     await self.persistence.clear_run_feedback(entry.run_record_id,
@@ -1653,6 +1744,7 @@ class Orchestrator:
         elif (
             event_name == "tool_call_completed" and event.get("tool") == "github_api"
             and not isinstance(self.tracker, GitHubTracker)
+            and not event.get("host_contributor")
         ):
             arguments = event.get("arguments") or {}
             method = str(arguments.get("method", "GET")).upper()
@@ -1786,6 +1878,7 @@ class Orchestrator:
                         category in {
                             "validation_attempt_limit", "provider_usage_limit",
                             "validation_policy_missing",
+                            "integration_conflict",
                         }
                         or next_attempt > config.agent.max_retries
                     )

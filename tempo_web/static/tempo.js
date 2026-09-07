@@ -194,6 +194,7 @@ function runCard(row) {
   const session = row.session || {};
   const graph = (row.graph || []).map(node => `<div class="run-node ${esc(node.status)}" title="${esc(node.error || node.role || node.node_type)}">
     <span></span><strong>${esc(node.name || node.node_id)}</strong><small>${esc(node.role || node.node_type)} · ${esc(node.status)}</small>
+    ${node.output?.contribution ? `<small>Integrated commit <code>${esc(String(node.output.contribution.integrated_sha || "").slice(0, 12))}</code></small>` : ""}
   </div>`).join("");
   const commands = (session.validation_commands || []).map((command, index) => `
     <details data-disclosure="${esc(row.run_id)}:command:${index}" class="command ${Number(command.exit_code) === 0 ? "passed" : "failed"}">

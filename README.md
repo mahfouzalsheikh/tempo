@@ -91,8 +91,10 @@ homes for login and session history. Hooks receive only their explicit grants. S
 
 Validation uses a stricter container with no network access. The
 [execution network policy](docs/EXECUTION_NETWORK.md) blocks other job containers from reaching
-the daemon, sibling containers, and private infrastructure. Graph nodes still share an issue
-checkout; separate writable contributions and integration remain planned.
+the daemon, sibling containers, and private infrastructure. Graph nodes can use independent
+repositories with `workspace: isolated`; Tempo integrates their committed changes before downstream
+work. Nodes using the integration checkout run exclusively. See
+[contributions and integration](docs/CONTRIBUTION_INTEGRATION.md) for configuration and recovery.
 
 After source changes, rebuild and health-check all services with:
 

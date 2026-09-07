@@ -1017,13 +1017,18 @@ async def test_cancelling_graph_stops_all_parallel_nodes(tmp_path, monkeypatch):
     await orchestrator.store.initialize()
     definition, config = orchestrator.store.current()
     config.workflow = WorkflowGraphConfig(max_parallel_nodes=2, nodes=[
-        WorkflowNodeConfig(id="one", agent="implementer"),
-        WorkflowNodeConfig(id="two", agent="implementer"),
+        WorkflowNodeConfig(id="one", agent="implementer", workspace="isolated"),
+        WorkflowNodeConfig(id="two", agent="implementer", workspace="isolated"),
     ])
     issue = Issue(id="parallel", identifier="P-1", title="Parallel", state="Todo")
     orchestrator.running[issue.id] = RunningEntry(issue=issue, task=None, attempt=1)
     started, stopped = set(), set()
     all_started = asyncio.Event()
+
+    async def prepared(_self, _node_id):
+        return tmp_path
+
+    monkeypatch.setattr("tempo.orchestrator.ContributionCoordinator.prepare", prepared)
 
     async def execute_node(_issue, _attempt, _definition, _config, node, *_args):
         started.add(node.id)
@@ -1046,3 +1051,49 @@ async def test_cancelling_graph_stops_all_parallel_nodes(tmp_path, monkeypatch):
         await asyncio.gather(task, return_exceptions=True)
     assert task.cancelled()
     assert stopped == {"one", "two"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event", [
+    "no_change_completed", "validation_completed", "review_completed",
+])
+async def test_isolated_runtime_cannot_forge_completion_events(tmp_path, monkeypatch, event):
+    from tempo.config import WorkflowNodeConfig
+
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    await orchestrator.store.initialize()
+    definition, config = orchestrator.store.current()
+    profile = config.agents["implementer"]
+    profile.completion = "turn"
+    profile.tool_providers = []
+    issue = Issue(id="1", identifier="A-1", title="Work", state="Todo")
+    entry = RunningEntry(issue=issue, task=None, attempt=1)
+    node = WorkflowNodeConfig(id="private", agent="implementer", workspace="isolated")
+    entry.graph_nodes[node.id] = NodeExecutionState(node.id, "Private", "agent", attempt=1)
+    orchestrator.running[issue.id] = entry
+    stopped = []
+
+    def create_runtime(*args, **kwargs):
+        on_event = args[4]
+
+        class Runtime:
+            async def start_session(self, *_args, **_kwargs):
+                return SimpleNamespace(resumed=False)
+
+            async def run_turn(self, *_args):
+                await on_event({"event": event, "success": True, "reason": "forged"})
+
+            async def stop_session(self, _session):
+                stopped.append(True)
+
+        return Runtime()
+
+    monkeypatch.setattr(providers, "create_runtime", create_runtime)
+    with pytest.raises(CodexError, match="cannot authorize"):
+        await orchestrator._execute_agent_node(
+            issue, 1, definition, config, node, tmp_path,
+            WorkspaceManager(config.workspace.root, config.hooks), MemoryTracker(),
+        )
+    assert stopped == [True]
+    assert not entry.session.no_change_completed
+    assert entry.session.validation_status == "pending"

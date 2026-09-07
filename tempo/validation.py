@@ -36,7 +36,7 @@ def _fingerprint_header(digest, path: bytes, mode: bytes, size: int) -> None:
     digest.update(size.to_bytes(8, "big"))
 
 
-async def workspace_fingerprint(workspace: Path) -> str:
+async def workspace_fingerprint(workspace: Path, *, env=None) -> str:
     """Hash tracked and untracked workspace content independently of Git metadata."""
     process = await asyncio.create_subprocess_exec(
         "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
@@ -47,7 +47,7 @@ async def workspace_fingerprint(workspace: Path) -> str:
         "--exclude-standard",
         "-z",
         cwd=workspace,
-        env=process_environment(),
+        env=env if env is not None else process_environment(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -72,7 +72,7 @@ async def workspace_fingerprint(workspace: Path) -> str:
     return digest.hexdigest()
 
 
-async def commit_fingerprint(workspace: Path, sha: str) -> str | None:
+async def commit_fingerprint(workspace: Path, sha: str, *, env=None) -> str | None:
     """Hash the actual Git blobs, independent of index flags, timestamps and replace refs."""
     process = await asyncio.create_subprocess_exec(
         "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
@@ -83,7 +83,7 @@ async def commit_fingerprint(workspace: Path, sha: str) -> str | None:
         "--full-tree",
         sha,
         cwd=workspace,
-        env=process_environment(),
+        env=env if env is not None else process_environment(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -106,7 +106,7 @@ async def commit_fingerprint(workspace: Path, sha: str) -> str | None:
         "cat-file",
         "--batch",
         cwd=workspace,
-        env=process_environment(),
+        env=env if env is not None else process_environment(),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
@@ -174,7 +174,7 @@ async def workspace_publication_pending(
     return revisions[0] != revisions[1]
 
 
-async def clean_workspace_head(workspace: Path) -> str | None:
+async def clean_workspace_head(workspace: Path, *, env=None) -> str | None:
     """Return the committed candidate only when the checkout is clean and stable."""
 
     async def git(*arguments: str) -> bytes | None:
@@ -184,7 +184,7 @@ async def clean_workspace_head(workspace: Path) -> str | None:
             "--no-replace-objects",
             *arguments,
             cwd=workspace,
-            env=process_environment(),
+            env=env if env is not None else process_environment(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -197,8 +197,8 @@ async def clean_workspace_head(workspace: Path) -> str | None:
     status = await git("status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
     if status != b"":
         return None
-    committed = await commit_fingerprint(workspace, before.decode())
-    if await workspace_fingerprint(workspace) != committed:
+    committed = await commit_fingerprint(workspace, before.decode(), env=env)
+    if await workspace_fingerprint(workspace, env=env) != committed:
         return None
     after = await git("rev-parse", "--verify", "HEAD^{commit}")
     return before.decode("ascii") if before == after else None

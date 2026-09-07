@@ -928,7 +928,9 @@ then explicitly passes selected variables to services.
 - GitHub discovery polls `open` or `closed` issue lists; there is no webhook receiver.
 - Worker tasks live in the control-plane process. Database leases fence worker persistence and
   serialize recovery, but there is no independently deployable worker pool or atomic fencing of
-  external effects. Issue workspaces are shared across attempts and are not task sandboxes.
+  external effects. Issue workspaces persist across attempts. Isolated contributor nodes use
+  independent repositories and a serialized integration queue; see
+  [contribution integration](CONTRIBUTION_INTEGRATION.md). Integration-checkout nodes run exclusively.
 - Workflow nodes and conditional edges are configurable, but execution still runs inside the
   control-plane process rather than a distributed workflow engine.
 - `RunNode` preserves graph-agent thread state. The separate post-publication review still uses the

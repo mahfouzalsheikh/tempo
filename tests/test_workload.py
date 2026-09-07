@@ -122,14 +122,17 @@ async def test_docker_backend_never_falls_back_when_image_is_missing(tmp_path, m
     assert not (tmp_path / "unexpected").exists()
 
 
-def test_runtime_and_hook_isolation_with_durable_session_resume(request):
+@pytest.mark.parametrize("probe", [
+    "check-runtime-sandbox.py", "check-contribution-integration.py",
+])
+def test_runtime_and_hook_isolation_with_durable_session_resume(request, probe):
     _, environment = request.getfixturevalue("execution_daemon")
     root = Path(__file__).resolve().parents[1]
     shared = environment["TEMPO_TEST_SHARED_ROOT"]
     result = docker(
         "run", "--rm", "--network=host", "--entrypoint", "python",
         "--mount", f"type=bind,src={root / 'tempo'},dst=/app/tempo,ro",
-        "--mount", f"type=bind,src={root / 'scripts/check-runtime-sandbox.py'},dst=/probe.py,ro",
+        "--mount", f"type=bind,src={root / 'scripts' / probe},dst=/probe.py,ro",
         "--mount", f"type=bind,src={shared},dst=/runtime-fixtures",
         "--env", "TEMPO_RUNTIME_BACKEND=docker",
         "--env", f"DOCKER_HOST={environment['DOCKER_HOST']}",
