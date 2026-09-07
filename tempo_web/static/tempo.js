@@ -284,8 +284,9 @@ function approvalRow(approval) {
 function attentionRow(row) {
   let controls = "";
   if (authenticated) {
-    if (row.status === "paused") controls += actionButton("Resume", "resume", row.run_id, "primary");
-    if (row.phase === "SafetyLimitReached") controls += actionButton("Unblock", "unblock", row.run_id, "primary");
+    if (row.status === "paused" && row.snapshot_digest) controls += actionButton("Resume", "resume", row.run_id, "primary");
+    if (row.phase === "SafetyLimitReached" && row.snapshot_digest) controls += actionButton("Unblock", "unblock", row.run_id, "primary");
+    if (row.can_restart) controls += actionButton("Restart with current configuration", "restart", row.run_id);
     controls += actionButton("Feedback", "feedback", row.run_id);
     controls += actionButton("Cancel", "cancel", row.run_id, "danger");
   }
@@ -295,7 +296,9 @@ function attentionRow(row) {
       <span class="priority">P${esc(row.priority || 5)}</span>
     </div>
     ${row.error ? `<p class="error-copy">${esc(row.error)}</p>` : ""}
-    <p class="request-description">${row.status === "paused" ? "Resume when you’re ready for the agent to continue." : "Review the stop reason before unblocking. Check configuration if a required check or permission is missing."}</p>
+    ${!row.snapshot_digest ? '<p class="request-description">This older run has no saved configuration. Restart it to use the current setup.</p>' : ""}
+    ${row.restarted_from_id ? `<p class="request-description">Restarted from run #${esc(row.restarted_from_id)}</p>` : ""}
+    <p class="request-description">${row.status === "paused" ? "Resume the saved execution, or restart to use the current configuration." : "Review the stop reason and current configuration before starting again. A fresh restart must pass new checks."}</p>
     ${controls ? `<div class="compact-actions">${controls}</div>` : ""}
   </article>`;
 }
@@ -523,6 +526,17 @@ document.addEventListener("click", event => {
         rows: 2,
         submit: "Update priority",
       });
+    } else if (action === "restart") {
+      const row = latestAttention.find(item => String(item.run_id) === runId);
+      if (!row?.can_restart) return;
+      openDialog({
+        mode: "run", runId, action,
+        expectedSnapshotDigest: row.restart_snapshot_digest,
+        title: "Restart with current configuration?",
+        description: "Tempo will queue a new run with a fresh checkout and agent context. Existing work, approvals, and validation stay in the old run’s history. The new run must pass its own checks.",
+        preview: `Current configuration: ${row.restart_snapshot_digest.slice(0, 12)}`,
+        hideInput: true, submit: "Start fresh run",
+      });
     } else if (action === "cancel") {
       openDialog({
         mode: "run",
@@ -589,6 +603,9 @@ byId("action-form").addEventListener("submit", async event => {
   try {
     if (context.mode === "run") {
       let payload = {};
+      if (context.action === "restart") {
+        payload = {expected_snapshot_digest: context.expectedSnapshotDigest};
+      }
       if (context.action === "feedback") {
         const message = byId("dialog-value").value.trim();
         if (!message) throw new Error("Feedback cannot be empty.");

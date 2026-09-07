@@ -585,6 +585,9 @@ class Orchestrator:
         entry.persistence = persistence
         entry.workspace_manager = WorkspaceManager(config.workspace.root, config.hooks)
         entry.workspace_identifier = issue.identifier
+        fresh_key = getattr(persistence, "fresh_workspace_key", "") if persistence else ""
+        if fresh_key:
+            entry.workspace_identifier = fresh_key
         saved_path = getattr(persistence, "workspace_path", "") if persistence else ""
         if saved_path:
             saved = Path(saved_path)
@@ -598,6 +601,11 @@ class Orchestrator:
                     category="snapshot_environment_changed",
                 )
             entry.workspace_identifier = saved.name
+        elif fresh_key and entry.workspace_manager.path_for(fresh_key).exists():
+            raise CodexError(
+                "The fresh checkout exists without a saved workspace record; restart again.",
+                category="snapshot_environment_changed",
+            )
         # In-memory tracker updates are external state in tests/local use, not workflow edits.
         shared_tracker = (
             config.tracker.kind == "memory" and self.tracker is not None
@@ -2096,7 +2104,28 @@ class Orchestrator:
         if not context:
             return False, "run_not_found"
         issue_id = context["issue_id"]
+        if action == "restart":
+            async with self._lock:
+                if issue_id in self.running:
+                    return False, "stop_run_before_restart"
+                result = await self.persistence.restart_run(
+                    run_id, user_id=user_id, idempotency_key=idempotency_key,
+                    expected_snapshot_digest=str(payload.get("expected_snapshot_digest", "")),
+                )
+                if result[0]:
+                    self.retries.pop(issue_id, None)
+                    self.claimed.discard(issue_id)
+                    self.safety_blocked.discard(issue_id)
+                    self.completed.discard(issue_id)
+                    self._feedback.pop(issue_id, None)
+                    self._refresh.set()
+                    self._publish_live_state()
+                return result
+        if context["superseded"]:
+            return False, "run_superseded"
         entry = self.running.get(issue_id)
+        if entry and entry.run_record_id != run_id:
+            return False, "another_run_is_active_for_issue"
         valid_actions = {
             "pause",
             "resume",

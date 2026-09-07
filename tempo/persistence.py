@@ -239,6 +239,7 @@ class PersistenceStore:
         bound.config, bound.definition = config, definition
         bound.environment_id = run.environment_id
         bound.workspace_path = run.workspace_path
+        bound.fresh_workspace_key = run.fresh_workspace_key
         bound.workflow_version_id = run.workflow_version_id
         bound.tracker_kind = config.tracker.kind
         bound.execution_snapshot = _json_safe(run.execution_snapshot)
@@ -835,23 +836,28 @@ class PersistenceStore:
                 },
             )
 
-    async def clear_incomplete_run_node_context(self, run_id: int) -> None:
+    @sync_to_async(thread_sensitive=True)
+    def clear_incomplete_run_node_context(self, run_id: int) -> None:
         """Discard failed-node runtime context while preserving completed graph work."""
-        from tempo_web.models import RunNode
+        from tempo_web.models import AgentRun, RunNode
 
-        await RunNode.objects.filter(run_id=run_id).exclude(
-            status=RunNode.Status.SUCCEEDED
-        ).aupdate(
-            session_id="",
-            thread_id="",
-            turn_count=0,
-            input_tokens=0,
-            output_tokens=0,
-            total_tokens=0,
-            thread_input_tokens=0,
-            thread_output_tokens=0,
-            thread_total_tokens=0,
-        )
+        with transaction.atomic():
+            run = AgentRun.objects.select_for_update().get(pk=run_id, project_id=self.project_id)
+            if AgentRun.objects.filter(restarted_from=run).exists():
+                raise LeaseLostError("Superseded run context cannot be reset.")
+            RunNode.objects.filter(run_id=run_id).exclude(
+                status=RunNode.Status.SUCCEEDED
+            ).update(
+                session_id="",
+                thread_id="",
+                turn_count=0,
+                input_tokens=0,
+                output_tokens=0,
+                total_tokens=0,
+                thread_input_tokens=0,
+                thread_output_tokens=0,
+                thread_total_tokens=0,
+            )
 
     async def run_node_resume_context(
         self,
@@ -1335,7 +1341,90 @@ class PersistenceStore:
             "priority": run.priority,
             "error": run.error,
             "feedback": run.feedback,
+            "superseded": await AgentRun.objects.filter(restarted_from_id=run_id).aexists(),
         }
+
+    @sync_to_async(thread_sensitive=True)
+    def restart_run(
+        self, run_id: int, *, user_id: int, idempotency_key: str,
+        expected_snapshot_digest: str,
+    ) -> tuple[bool, str]:
+        """Atomically replace stopped work, preserving the historical execution contract."""
+        from tempo_web.models import AgentRun, ApprovalRequest, OperatorAction, WorkflowVersion
+
+        version_id, environment_id = self.workflow_version_id, self.environment_id
+        with transaction.atomic():
+            source = AgentRun.objects.select_for_update().filter(
+                pk=run_id, project_id=self.project_id,
+            ).first()
+            if source is None:
+                return False, "run_not_found"
+            existing = OperatorAction.objects.filter(idempotency_key=idempotency_key).first()
+            if existing:
+                if (existing.run_id != run_id or existing.action != "restart"
+                        or existing.requested_by_id != user_id
+                        or existing.payload.get("expected_snapshot_digest")
+                        != expected_snapshot_digest):
+                    return False, "idempotency_key_conflict"
+                return True, existing.message
+            if AgentRun.objects.filter(restarted_from=source).exists():
+                return False, "run_superseded"
+            if source.status not in {"failed", "cancelled", "paused", "queued", "retry_scheduled"}:
+                return False, "stop_run_before_restart"
+            if source.worker_id or source.lease_token:
+                return False, "stop_run_before_restart"
+            if AgentRun.objects.filter(issue_id=source.issue_id, status__in=[
+                "queued", "retry_scheduled", "running", "waiting_approval", "paused",
+            ]).exclude(pk=run_id).exists():
+                return False, "issue_has_other_active_run"
+            version = WorkflowVersion.objects.get(pk=version_id, project_id=self.project_id)
+            if not expected_snapshot_digest or version.checksum != expected_snapshot_digest:
+                return False, "configuration_changed_refresh_before_restart"
+            _, config = restore_snapshot(version.execution_snapshot, version.checksum)
+            previous = source.workflow_version.config if source.workflow_version_id else {}
+            old_tracker = previous.get("tracker", {})
+            if (source.issue.tracker_kind != config.tracker.kind or
+                    (config.tracker.kind == "github" and
+                     old_tracker.get("provider", {}).get("repo")
+                     != config.tracker.provider.get("repo"))):
+                return False, "restart_tracker_target_changed"
+            key = source.idempotency_key or (
+                f"{self.project_id}:{self.tracker_kind}:{source.issue.external_id}"
+            )
+            if AgentRun.objects.filter(idempotency_key=key).exclude(pk=run_id).exists():
+                return False, "issue_has_other_run"
+            source.idempotency_key = None
+            source.status = AgentRun.Status.CANCELLED
+            source.phase = "SupersededByRestart"
+            source.available_at = None
+            source.finished_at = source.finished_at or utcnow()
+            source.save(update_fields=[
+                "idempotency_key", "status", "phase", "available_at", "finished_at",
+            ])
+            ApprovalRequest.objects.filter(run=source, status="pending").update(
+                status="cancelled", decision_note="Superseded by an explicit fresh restart",
+                decided_at=utcnow(), decided_by_id=user_id,
+            )
+            successor = AgentRun.objects.create(
+                restarted_from=source, fresh_workspace_key=f"restart-{uuid.uuid4().hex}",
+                project_id=self.project_id, environment_id=environment_id,
+                workflow_version=version, issue_id=source.issue_id,
+                idempotency_key=key,
+                execution_snapshot=_json_safe(version.execution_snapshot),
+                snapshot_digest=version.checksum, priority=source.priority, attempt=0,
+                status=AgentRun.Status.QUEUED, phase="Queued", available_at=utcnow(),
+                started_at=utcnow(),
+            )
+            message = (f"New run #{successor.pk} queued with current configuration "
+                       "and a fresh workspace")
+            OperatorAction.objects.create(
+                run=source, action="restart", requested_by_id=user_id,
+                idempotency_key=idempotency_key, status=OperatorAction.Status.APPLIED,
+                applied_at=utcnow(), message=message,
+                payload={"expected_snapshot_digest": expected_snapshot_digest,
+                         "successor_run_id": successor.pk},
+            )
+            return True, message
 
     async def set_control_state(
         self,
@@ -1373,7 +1462,17 @@ class PersistenceStore:
                     "lease_expires_at": None,
                 }
             )
-        await AgentRun.objects.filter(pk=run_id, project_id=self.project_id).aupdate(**updates)
+        await self._apply_control_state(run_id, updates)
+
+    @sync_to_async(thread_sensitive=True)
+    def _apply_control_state(self, run_id: int, updates: dict) -> None:
+        from tempo_web.models import AgentRun
+
+        with transaction.atomic():
+            run = AgentRun.objects.select_for_update().get(pk=run_id, project_id=self.project_id)
+            if AgentRun.objects.filter(restarted_from=run).exists():
+                raise LeaseLostError("Superseded runs cannot be changed; control their successor.")
+            AgentRun.objects.filter(pk=run_id).update(**updates)
 
     async def sync_issue(self, issue: Issue) -> None:
         from tempo_web.models import TrackedIssue

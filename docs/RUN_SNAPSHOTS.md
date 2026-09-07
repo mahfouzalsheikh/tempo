@@ -58,8 +58,9 @@ reconstruct their original execution contract reliably. Historical completed rec
 readable. An older queued, paused, or retried run without a complete snapshot stops with
 `snapshot_missing` before a tracker or workspace hook is launched. It does not adopt the latest
 configuration. Ordinary retry/requeue is not a configuration migration and cannot repair this.
-An explicit legacy migration/restart operation remains follow-up work; do not manually fabricate
-a historical snapshot or reuse old validation approvals under a new policy.
+Use the explicit [fresh restart operation](RUN_RESTARTS.md) to create a successor under the
+current configuration. Do not fabricate historical snapshots or reuse old validation approvals
+under a new policy. In-place schema migration remains future work.
 
 Changed, malformed, or unsupported snapshots stop with `snapshot_invalid`. Configuration schema
 changes that add implicit defaults require an explicit snapshot migration instead of silent

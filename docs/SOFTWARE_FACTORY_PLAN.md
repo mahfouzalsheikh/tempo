@@ -61,6 +61,14 @@ concurrency, and deployment checks cover the boundary. See [run snapshots](RUN_S
 Explicit run migrations, tool/skill package identities, release artifacts, and capability
 provisioning remain outstanding.
 
+The next recovery slice adds explicit fresh restarts for legacy and stopped runs. A restart
+atomically records a successor with the current configuration, its own checkout and agent state,
+and empty validation/publication evidence. The old run remains auditable and cannot be requeued;
+pending approvals are cancelled. The dashboard exposes legacy/failed work and confirms the
+configuration identity before restarting. PostgreSQL tests cover competing restarts and worker
+claims. See [run restarts](RUN_RESTARTS.md). This is a new execution, not an in-place historical
+snapshot migration. Product intake and a complete brief-to-preview release slice remain next.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

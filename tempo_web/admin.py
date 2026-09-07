@@ -144,6 +144,8 @@ class AgentRunAdmin(ReadOnlyRuntimeAdmin):
         "phase",
         "status",
         "workspace_path",
+        "restarted_from",
+        "fresh_workspace_key",
         "execution_snapshot",
         "snapshot_digest",
         "started_at",

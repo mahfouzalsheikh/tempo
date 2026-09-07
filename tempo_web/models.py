@@ -340,6 +340,10 @@ class AgentRun(models.Model):
         FAILED = "failed", "Failed"
         CANCELLED = "cancelled", "Cancelled"
 
+    restarted_from = models.OneToOneField(
+        "self", on_delete=models.PROTECT, related_name="successor", null=True, blank=True,
+    )
+    fresh_workspace_key = models.CharField(max_length=100, blank=True)
     project = models.ForeignKey(
         Project,
         on_delete=models.PROTECT,

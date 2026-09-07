@@ -10,6 +10,7 @@ from pathlib import Path
 from asgiref.sync import async_to_sync
 from django.contrib.auth import authenticate
 from django.contrib.staticfiles import finders
+from django.db import transaction
 from django.http import (
     Http404,
     HttpRequest,
@@ -261,6 +262,8 @@ def run_action(
             existing_action.run_id != run_id
             or existing_action.action != action
             or existing_action.requested_by_id != request.user.pk
+            or (action == "restart" and existing_action.payload.get("expected_snapshot_digest")
+                != payload.get("expected_snapshot_digest"))
         ):
             return JsonResponse({"error": "idempotency_key_conflict"}, status=409)
         return JsonResponse(
@@ -272,13 +275,20 @@ def run_action(
                 "idempotency_key": idempotency_key,
             }
         )
-    success, message = async_to_sync(orchestrator.control_run)(
-        run_id,
-        action,
-        payload,
-        user_id=request.user.pk,
-        idempotency_key=idempotency_key,
-    )
+    from django.db import IntegrityError
+
+    from tempo.errors import ConfigError, LeaseLostError
+
+    try:
+        success, message = async_to_sync(orchestrator.control_run)(
+            run_id, action, payload, user_id=request.user.pk, idempotency_key=idempotency_key,
+        )
+    except (LeaseLostError, ConfigError):
+        return JsonResponse(
+            {"error": "run_or_configuration_changed_refresh_before_retry"}, status=409,
+        )
+    except IntegrityError:
+        return JsonResponse({"error": "conflicting_control_request"}, status=409)
     if not success:
         status = 404 if message == "run_not_found" else 409
         return JsonResponse({"error": message}, status=status)
@@ -326,6 +336,7 @@ def approvals(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed:
     )
 
 
+@transaction.atomic
 def approval_decision(
     request: HttpRequest,
     approval_id: int,
@@ -352,6 +363,15 @@ def approval_decision(
     ).first()
     if not approval:
         return JsonResponse({"error": "pending_approval_not_found"}, status=404)
+    from .models import AgentRun
+
+    run = AgentRun.objects.select_for_update().get(pk=approval.run_id)
+    approval.refresh_from_db()
+    if AgentRun.objects.filter(restarted_from=run).exists():
+        return JsonResponse({"error": "run_superseded"}, status=409)
+    if approval.status != ApprovalRequest.Status.PENDING:
+        return JsonResponse({"error": "pending_approval_not_found"}, status=404)
+    approval.run = run
     edited_arguments = payload.get("arguments", {})
     if edited_arguments is not None and not isinstance(edited_arguments, dict):
         return JsonResponse({"error": "arguments_must_be_an_object"}, status=400)
@@ -395,16 +415,32 @@ def control_state(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed
 
     from .models import AgentRun
 
+    orchestrator = get_orchestrator()
+    controllers = getattr(orchestrator, "orchestrators", [orchestrator])
+    current_digests = {}
+    from tempo.run_snapshot import snapshot_digest
+
+    for controller in controllers:
+        persistence = getattr(controller, "persistence", None)
+        if persistence and persistence.execution_snapshot:
+            current_digests[persistence.project_id] = snapshot_digest(
+                persistence.execution_snapshot,
+            )
+
     rows = (
         AgentRun.objects.filter(
             Q(
                 status__in=[
                     AgentRun.Status.PAUSED,
                     AgentRun.Status.WAITING_APPROVAL,
+                    AgentRun.Status.FAILED,
+                    AgentRun.Status.CANCELLED,
                 ]
             )
             | Q(phase="SafetyLimitReached")
+            | Q(snapshot_digest="", status__in=["queued", "retry_scheduled"])
         )
+        .filter(successor__isnull=True)
         .select_related("issue", "project", "project__organization")
         .order_by("priority", "-started_at")[:100]
     )
@@ -424,6 +460,12 @@ def control_state(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed
                     "started_at": row.started_at.isoformat(),
                     "checkpoint": row.checkpoint,
                     "snapshot_digest": row.snapshot_digest,
+                    "restarted_from_id": row.restarted_from_id,
+                    "restart_snapshot_digest": current_digests.get(row.project_id, ""),
+                    "can_restart": row.status in {
+                        "failed", "cancelled", "paused", "queued", "retry_scheduled",
+                    } and not row.lease_token and not row.worker_id
+                    and row.project_id in current_digests,
                 }
                 for row in rows
             ]
