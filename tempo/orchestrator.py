@@ -34,6 +34,7 @@ from .trackers.base import Tracker
 from .trackers.github import GitHubTracker, build_tracker
 from .validation import workspace_fingerprint, workspace_publication_pending
 from .workflow import WorkflowStore, render_node_prompt, render_prompt
+from .workload import execution_scope
 from .workspace import WorkspaceManager
 
 log = structlog.get_logger(__name__)
@@ -1083,10 +1084,11 @@ class Orchestrator:
         runtime_session_kwargs = (
             {"resume_context": resume_context} if resume_context else {}
         )
-        runtime_session = await runtime.start_session(
-            workspace_path,
-            **runtime_session_kwargs,
-        )
+        with execution_scope(f"run:{entry.run_record_id or issue.id}:node:{node.id}"):
+            runtime_session = await runtime.start_session(
+                workspace_path,
+                **runtime_session_kwargs,
+            )
         if resume_context and not getattr(runtime_session, "resumed", False):
             live.thread_input_tokens = 0
             live.thread_output_tokens = 0
@@ -1349,10 +1351,11 @@ class Orchestrator:
                         "usage_baseline": resume_context.get("usage_baseline"),
                     }
                 )
-            review_session = await review_client.start_session(
-                workspace_path,
-                **review_session_kwargs,
-            )
+            with execution_scope(f"run:{entry.run_record_id or issue.id}:review"):
+                review_session = await review_client.start_session(
+                    workspace_path,
+                    **review_session_kwargs,
+                )
             pull_request_url = (
                 entry.session.pull_request_url or f"pull request #{pull_request_number}"
             )
@@ -2099,6 +2102,9 @@ class Orchestrator:
                 "terminal_states": config.tracker.terminal_states,
             },
             "agents": {
+                "execution_backend": os.getenv("TEMPO_RUNTIME_BACKEND", "process"),
+                "execution_image": os.getenv("TEMPO_RUNTIME_IMAGE")
+                or os.getenv("TEMPO_VALIDATION_IMAGE"),
                 "max_concurrent": config.agent.max_concurrent_agents,
                 "max_turns": config.agent.max_turns,
                 "max_tokens_per_run": config.agent.max_tokens_per_run,

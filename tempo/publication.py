@@ -26,6 +26,8 @@ async def git_command(cwd, *arguments, env=None, input=None, stdout=asyncio.subp
         "--no-replace-objects",
         "-c",
         "core.hooksPath=/dev/null",
+        "-c", "core.fsmonitor=false",
+        "-c", "protocol.ext.allow=never",
         *arguments,
         cwd=cwd,
         env=env if env is not None else process_environment(),

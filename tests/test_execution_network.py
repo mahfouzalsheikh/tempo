@@ -21,11 +21,16 @@ def docker(*arguments, **kwargs):
 
 
 @pytest.fixture(scope="module")
-def execution_daemon():
+def execution_daemon(tmp_path_factory):
     image = os.getenv("TEMPO_TEST_VALIDATION_IMAGE")
     if not os.getenv("TEMPO_TEST_EXECUTION_NETWORK") or not image:
         pytest.skip("Set TEMPO_TEST_EXECUTION_NETWORK=1 and TEMPO_TEST_VALIDATION_IMAGE for probes")
     identity = uuid.uuid4().hex
+    shared = tmp_path_factory.mktemp("runtime-shared")
+    shared.chmod(0o777)
+    for directory in (shared / "workspaces", shared / "state"):
+        directory.mkdir(mode=0o777)
+        directory.chmod(0o777)
     daemon, network, canary = (
         f"tempo-network-test-{kind}-{identity}" for kind in ("dind", "net", "web")
     )
@@ -36,6 +41,7 @@ def execution_daemon():
         docker("run", "--detach", "--privileged", "--name", daemon, "--network", network,
                "--publish", "127.0.0.1::2375", "--env", "DOCKER_TLS_CERTDIR=",
                "--mount", f"type=bind,src={ROOT / 'scripts/execution-daemon.sh'},dst=/daemon.sh,ro",
+               "--mount", f"type=bind,src={shared},dst=/runtime-fixtures",
                "--entrypoint", "sh", "docker:27-dind", "/daemon.sh",
                "--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock",
                "--dns=1.1.1.1", "--dns=8.8.8.8", check=True)
@@ -66,9 +72,13 @@ def execution_daemon():
         yield daemon, {
             "PATH": os.environ["PATH"], "DOCKER_HOST": f"tcp://{port}",
             "TEMPO_VALIDATION_IMAGE": nested_image,
+            "TEMPO_TEST_SHARED_ROOT": str(shared),
             "TEMPO_NETWORK_PROBE_PRIVATE_TARGETS": json.dumps([[canary_ip, 443]]),
         }
     finally:
+        # Test workloads use UID 10001; remove their private files before host pytest cleanup.
+        docker("exec", daemon, "rm", "-rf", "/runtime-fixtures/state",
+               "/runtime-fixtures/workspaces")
         for name in (daemon, canary):
             docker("rm", "--force", "--volumes", name)
         docker("network", "rm", network)

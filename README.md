@@ -83,18 +83,16 @@ Compose persists PostgreSQL data, workspaces, SQLite fallback data, and mutable 
 named volumes. `docker compose down` preserves all of them; `docker compose down -v`
 intentionally deletes the named volumes but does not delete host Codex state.
 
-The checked-in workflow uses Codex App Server's `externalSandbox` turn policy because Docker is
-the execution boundary and nested `bwrap` namespaces are commonly blocked by container security
-profiles. Only run repositories you trust in this deployment: commands can access the Tempo
-container, although tracker credentials are removed from the agent command environment and GitHub
-writes remain mediated by Tempo's provider tool.
+The checked-in workflow uses Codex App Server's `externalSandbox` turn policy. Compose now
+runs coding agents, reviewers, external runtimes, and hooks in disposable containers with a task
+workspace mount, resource limits, and a restricted network. Agent nodes receive private persistent
+homes for login and session history. Hooks receive only their explicit grants. See
+[runtime isolation](docs/RUNTIME_ISOLATION.md) for upgrade behavior and remaining work.
 
-Validation commands run in disposable containers with a pinned image, no network or Docker
-access, resource limits, and only their task workspace mounted. Coding agents and hooks still
-share the control-plane container. See [validation isolation](docs/VALIDATION_SANDBOX.md) for
-the tested boundary and remaining work. The [execution network policy](docs/EXECUTION_NETWORK.md)
-also blocks job bridges from reaching the daemon and private infrastructure, as groundwork for
-isolating coding agents.
+Validation uses a stricter container with no network access. The
+[execution network policy](docs/EXECUTION_NETWORK.md) blocks other job containers from reaching
+the daemon, sibling containers, and private infrastructure. Graph nodes still share an issue
+checkout; separate writable contributions and integration remain planned.
 
 After source changes, rebuild and health-check all services with:
 
@@ -104,7 +102,7 @@ After source changes, rebuild and health-check all services with:
 
 The script provisions runner authentication, loads the immutable validation image into the
 execution daemon, backs up PostgreSQL, preserves data volumes, and checks the deployed commit
-and sandbox execution. See [access and deployment notes](docs/ACCESS_AND_DEPLOYMENT.md).
+and sandbox execution, including runtime initialization and login recognition. See [access and deployment notes](docs/ACCESS_AND_DEPLOYMENT.md).
 
 ## Local development with Pipenv
 

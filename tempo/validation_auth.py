@@ -19,7 +19,7 @@ def runner_token(reference: str = RUNNER_TOKEN_REFERENCE) -> str:
 
 def runner_environment() -> dict[str, str]:
     environment = process_environment()
-    # Only the remote runner receives its operator-configured Docker execution endpoint.
+    # Trusted execution brokers receive the Docker endpoint; workload containers never do.
     if os.getenv("DOCKER_HOST"):
         environment["DOCKER_HOST"] = os.environ["DOCKER_HOST"]
     return environment

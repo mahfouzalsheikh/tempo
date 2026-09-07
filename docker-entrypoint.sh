@@ -16,6 +16,8 @@ for name in auth.json config.toml; do
     fi
 done
 
-chown tempo:tempo /data/workspaces /data/database /data/log "$codex_home"
+mkdir -p /data/agent-state
+chown tempo:tempo /data/workspaces /data/agent-state /data/database /data/log "$codex_home"
+chmod 0700 /data/agent-state
 
 exec setpriv --reuid=tempo --regid=tempo --clear-groups tempo "$@"

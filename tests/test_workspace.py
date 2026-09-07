@@ -74,6 +74,6 @@ async def test_cancelled_hook_stops_its_child_processes(tmp_path):
     # A killed child may briefly remain a zombie until its reaper collects it.
     try:
         state = await asyncio.to_thread(state_file.read_text)
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return
     assert state.split()[2] == "Z"

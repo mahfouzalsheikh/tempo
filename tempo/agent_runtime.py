@@ -20,8 +20,8 @@ from .config import (
 from .credentials import CONTROL_PLANE_SECRETS, process_environment
 from .domain import Issue
 from .errors import CodexError, ConfigError
-from .process import stop_process_group
 from .trackers.base import Tracker
+from .workload import EXECUTION_SECRETS, start_workload, stop_workload
 from .workspace import WorkspaceManager
 
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
@@ -245,19 +245,12 @@ class ExternalCommandRuntime(AgentRuntime):
         await self.tracker.assert_ownership()
         environment = process_environment(
             self.environment,
-            forbidden=CONTROL_PLANE_SECRETS | self.tracker.secret_environment_names()
+            forbidden=CONTROL_PLANE_SECRETS | EXECUTION_SECRETS
+            | self.tracker.secret_environment_names()
             | {self.runner_secret_name},
         )
-        process = await asyncio.create_subprocess_exec(
-            "bash",
-            "--noprofile", "--norc", "-c",
-            f"exec {self.command}",
-            cwd=workspace,
-            env=environment,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
+        process = await start_workload(
+            f"exec {self.command}", workspace, environment, kind="external",
         )
         session = ExternalCommandSession(process=process, workspace=workspace)
         asyncio.create_task(self._drain_stderr(process))
@@ -290,7 +283,7 @@ class ExternalCommandRuntime(AgentRuntime):
                     result.get("resume_failure") or "runtime did not confirm session continuation"
                 )
         except BaseException:
-            await stop_process_group(process)
+            await stop_workload(process)
             raise
         return session
 
@@ -332,7 +325,7 @@ class ExternalCommandRuntime(AgentRuntime):
                         timeout=3,
                     )
         finally:
-            await stop_process_group(session.process)
+            await stop_workload(session.process)
 
     async def _request(
         self,

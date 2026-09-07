@@ -181,21 +181,22 @@ class ReviewConfig(BaseModel):
 
 class CodexConfig(ProcessConfig):
     command: str = "codex app-server"
-    approval_policy: str | dict[str, Any] = Field(
-        default_factory=lambda: {
-            "reject": {
-                "sandbox_approval": True,
-                "rules": True,
-                "mcp_elicitations": True,
-            }
-        }
-    )
+    approval_policy: str | dict[str, Any] = "never"
     thread_sandbox: str = "workspace-write"
     turn_sandbox_policy: dict[str, Any] | None = None
     turn_timeout_ms: int = Field(default=3_600_000, gt=0)
     read_timeout_ms: int = Field(default=5_000, gt=0)
     stall_timeout_ms: int = Field(default=300_000, ge=0)
     model: str | None = None
+
+    @field_validator("approval_policy", mode="before")
+    @classmethod
+    def normalize_legacy_reject_policy(cls, value):
+        if value == {"reject": {
+            "sandbox_approval": True, "rules": True, "mcp_elicitations": True,
+        }}:
+            return "never"
+        return value
 
     @field_validator("command")
     @classmethod

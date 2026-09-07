@@ -12,7 +12,7 @@ from .config import HooksConfig
 from .credentials import process_environment, redact_credentials
 from .domain import Workspace
 from .errors import WorkspaceError
-from .process import stop_process_group
+from .workload import EXECUTION_SECRETS, execution_backend, start_workload, stop_workload
 
 log = structlog.get_logger(__name__)
 SAFE_KEY = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -100,31 +100,30 @@ class WorkspaceManager:
     async def run_hook(self, name: str, script: str, cwd: Path, *, fatal: bool) -> None:
         self.assert_contained(cwd)
         await log.ainfo("workspace_hook_started", hook=name, workspace_path=str(cwd))
-        environment = process_environment(self.hooks.environment)
-        process = await asyncio.create_subprocess_exec(
-            "bash",
-            "--noprofile", "--norc", "-c",
-            script,
-            cwd=cwd,
-            env=environment,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
+        environment = process_environment(self.hooks.environment, forbidden=EXECUTION_SECRETS)
+        process = await start_workload(
+            script, cwd, environment, kind="hook", timeout_ms=self.hooks.timeout_ms,
+            stdin=None, stderr=asyncio.subprocess.STDOUT,
         )
+        output = b""
+        retained = 2000 + max((len(environment[key].encode())
+                               for key in self.hooks.environment), default=0)
         try:
-            output, _ = await asyncio.wait_for(
-                process.communicate(), timeout=self.hooks.timeout_ms / 1000
-            )
+            grace = 5 if execution_backend() == "docker" else 0
+            async with asyncio.timeout(self.hooks.timeout_ms / 1000 + grace):
+                while chunk := await process.stdout.read(2048):
+                    output = (output + chunk)[-retained:]
+                await process.wait()
         except TimeoutError as exc:
-            await stop_process_group(process)
             message = f"{name} hook timed out after {self.hooks.timeout_ms}ms"
             await log.awarning("workspace_hook_timeout", hook=name, workspace_path=str(cwd))
             if fatal:
                 raise WorkspaceError(message, category="hook_timeout") from exc
             return
         except asyncio.CancelledError:
-            await stop_process_group(process)
             raise
+        finally:
+            await stop_workload(process)
         if process.returncode:
             text = redact_credentials(
                 output.decode(errors="replace"),

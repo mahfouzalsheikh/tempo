@@ -140,6 +140,8 @@ async function updateAdmin() {
       "Terminal states": tracker.terminal_states,
     });
     definitionList("config-agents", {
+      "Execution": agents.execution_backend === "docker" ? "Disposable container" : "Local process",
+      "Runtime image": agents.execution_image || "Not pinned",
       "Max concurrent": agents.max_concurrent,
       "Max turns": agents.max_turns,
       "Token limit per attempt": agents.max_tokens_per_run,

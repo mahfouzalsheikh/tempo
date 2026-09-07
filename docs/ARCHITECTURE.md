@@ -856,13 +856,15 @@ Pipenv-installed locked dependencies, Git, SSH, Node, Codex CLI, and Docker CLI.
 runs as UID 10001; the Docker daemon is a separate privileged service built from
 `Dockerfile.execution`. Its startup wrapper installs a workload firewall before accepting jobs;
 see [execution network policy](EXECUTION_NETWORK.md). Validation still uses `--network=none`;
-the restricted agent bridge is provisioned for future runtime isolation.
+the restricted agent bridge runs coding runtimes and hooks through the
+[runtime isolation launcher](RUNTIME_ISOLATION.md).
 
 Tempo imports host Codex authentication from the read-only `/run/tempo-host-codex` mount
-into a container-owned state volume. Neither the validation service nor disposable job containers
-receive host Codex state. The checked-in workflow uses `externalSandbox`; coding agents and hooks
-still share the control-plane container and require further isolation. Compose uses the default
-outer seccomp profile. The restricted validation boundary does not extend to agent commands.
+into a container-owned state volume. Agent nodes receive separate persistent homes, seeded with
+only the model login and selected settings. Validation and hooks receive no model login. The
+checked-in workflow uses `externalSandbox` within disposable runtime containers; the launcher
+enforces the filesystem, process, resource, and network boundary. Compose uses the default outer
+seccomp profile. Validation commands retain the stricter network-free boundary.
 
 `tempo` waits for PostgreSQL, validation, and Docker health checks. It mounts `WORKFLOW.md`
 read-only and exposes the application on container port 8000. The validation service exposes only

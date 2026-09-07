@@ -16,6 +16,8 @@ services:
       TEMPO_LOG_LEVEL: "${TEMPO_LOG_LEVEL:-INFO}"
       TEMPO_TIME_ZONE: "${TEMPO_TIME_ZONE:-UTC}"
       TEMPO_WORKSPACE_ROOT: /data/workspaces
+      TEMPO_RUNTIME_BACKEND: docker
+      TEMPO_AGENT_STATE_ROOT: /data/agent-state
       TEMPO_DATABASE_PATH: /data/database/tempo.sqlite3
       DATABASE_URL: "postgresql://tempo:${TEMPO_POSTGRES_PASSWORD:-tempo-local}@postgres:5432/tempo"
       TEMPO_ADMIN_USERNAME: "${TEMPO_ADMIN_USERNAME:-}"
@@ -28,6 +30,7 @@ services:
     volumes:
       - ./WORKFLOW.md:/app/WORKFLOW.md:ro
       - tempo-workspaces:/data/workspaces
+      - tempo-agent-state:/data/agent-state
       - tempo-database:/data/database
       # Import credentials as root during container startup, then run Tempo as its
       # unprivileged user with state stored in a container-owned volume. A direct
@@ -102,9 +105,11 @@ services:
       retries: 20
     volumes:
       - tempo-workspaces:/data/workspaces
+      - tempo-agent-state:/data/agent-state
 
 volumes:
   tempo-workspaces:
   tempo-database:
   tempo-codex:
   tempo-postgres:
+  tempo-agent-state:

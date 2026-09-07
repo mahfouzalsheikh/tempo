@@ -44,8 +44,8 @@ only the requested workspace, has no network, and runs project code as UID 10001
 is bound to the request, final result, and validation policy. See [validation isolation](VALIDATION_SANDBOX.md).
 
 The shared credential authenticates the caller, not an individual leased run. Per-job capability
-tokens, control-plane network segregation, trusted validation harnesses, and isolation for
-coding agents and hooks remain necessary. The current private Compose network uses HTTP and a
+tokens, control-plane network segregation, and trusted validation harnesses remain necessary.
+Coding agents and hooks now use [isolated containers](RUNTIME_ISOLATION.md). The current private Compose network uses HTTP and a
 privileged Docker execution service. Workload bridge traffic is now restricted by the
 [execution network policy](EXECUTION_NETWORK.md); the control-plane network still has daemon access.
 Use TLS for runner traffic crossing a trusted-host boundary.
@@ -67,7 +67,8 @@ Run `./scripts/restart-tempo.sh` from a committed checkout. It:
 5. Updates execution infrastructure, waits for firewall-aware readiness, and provisions the agent network.
 6. Loads the validation image into the daemon and supplies its immutable ID to both application services.
 7. Starts the application services and waits for health checks. Startup applies migrations.
-8. Verifies the deployed commit, protected reads, both validation endpoints, and network isolation.
+8. Verifies the deployed commit, protected reads, validation, network isolation, runtime resume,
+   hook isolation, and initialization/login recognition with the installed Codex binary.
 
 The script preserves named volumes. It does not run `down -v`, remove orphan services, or
 automatically restore a database. It exits on failure. If an update fails after Tempo stops, fix

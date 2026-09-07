@@ -1,9 +1,10 @@
+import asyncio
 import subprocess
 
 import pytest
 
 from tempo.config import HooksConfig, ValidationConfig
-from tempo.validation import ProjectValidator, workspace_publication_pending
+from tempo.validation import ProjectValidator, clean_workspace_head, workspace_publication_pending
 from tempo.validation_server import run_command, stream_command
 from tempo.workspace import WorkspaceManager
 
@@ -52,6 +53,26 @@ def commit_publication_update(workspace):
         check=True,
         capture_output=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_host_git_checks_never_execute_repository_fsmonitor(tmp_path):
+    workspace = publication_repo(tmp_path)
+    marker = tmp_path / "host-command-executed"
+    script = tmp_path / "malicious-monitor"
+    script.write_text(f"#!/bin/sh\ntouch '{marker}'\nprintf '\\0'\n")
+    script.chmod(0o755)
+    await asyncio.to_thread(subprocess.run,
+                   ["git", "-C", str(workspace), "config", "core.fsmonitor", str(script)],
+                   check=True)
+    await asyncio.to_thread(subprocess.run,
+                   ["git", "-C", str(workspace), "status", "--porcelain"],
+                   check=True, capture_output=True)
+    assert marker.exists()  # Positive control: Git would execute this repository setting.
+    marker.unlink()
+    assert await clean_workspace_head(workspace)
+    assert not await workspace_publication_pending(workspace)
+    assert not marker.exists()
 
 
 @pytest.mark.asyncio

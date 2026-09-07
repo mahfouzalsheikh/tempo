@@ -64,11 +64,11 @@ The probes exercise sibling and credential denial, no effective capabilities, re
 paths, network denial, workspace writes, simultaneous commands, timeout, cancellation, and
 failure to confirm cleanup. Image identity and mismatch tests do not require Docker.
 
-Coding agents and hooks still share the control-plane container; graph nodes still share issue
-workspaces. A process outside this validation boundary can mutate a mounted workspace or race
+Compose coding agents and hooks now have their own [container boundary](RUNTIME_ISOLATION.md);
+graph nodes still share issue workspaces. A process outside this validation boundary can mutate a mounted workspace or race
 path resolution. The runner credential is installation-wide, not bound to a leased task. The
 privileged execution daemon still shares the control-plane network, while a
 [workload firewall](EXECUTION_NETWORK.md) now blocks access from its job bridges. Containers share a host
 kernel; this slice does not establish hostile multitenant isolation. Workspace disk quotas,
 global job admission, trusted test harnesses, per-node workspaces, scoped job authorization,
-agent/hook isolation, and stronger execution infrastructure remain planned.
+lease-aware execution recovery and stronger execution infrastructure remain planned.

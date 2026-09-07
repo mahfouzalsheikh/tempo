@@ -63,12 +63,12 @@ restart the daemon, and repeat connection probes. They do not alter the running 
 
 ## Remaining boundary
 
-Agent and hook processes still run inside Tempo and can reach its filesystem and Compose network.
-Validation jobs retain their stricter network-free sandbox. The new bridge is infrastructure for
-the next agent/hook isolation slice; it does not itself move any runtime.
+Compose now runs coding agents and hooks on this bridge through the
+[runtime isolation launcher](RUNTIME_ISOLATION.md). Validation jobs retain their stricter
+network-free sandbox. Standalone process compatibility mode remains available for trusted development.
 
 The Docker API still trusts the control-plane network. Mutual TLS or an authenticated execution
-broker, task-scoped grants, isolated runtime homes, per-node workspaces, and complete run snapshots
+broker, task-scoped grants, per-node workspaces, and complete run snapshots
 remain planned. The daemon is privileged and containers share the host kernel. Root access to the
 daemon can change policy or create a custom network outside the supported bridge configuration;
 untrusted workloads must never receive that authority.

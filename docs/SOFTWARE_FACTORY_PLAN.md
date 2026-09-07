@@ -30,6 +30,16 @@ drains application services before execution updates and runs live connection pr
 [execution network policy](EXECUTION_NETWORK.md). This closes a prerequisite for containerized
 agents; coding agents and hooks have not yet moved out of the control plane.
 
+The next Phase 0 slice moves Codex implementation/review sessions, external JSONL runtimes,
+and lifecycle hooks into disposable containers on the restricted execution network. Each agent
+node has a private persistent home; model login and selected model settings are seeded without
+importing ambient host connectors. Stable reservations prevent duplicate use of a home, while
+immutable container IDs protect replacement sessions from delayed cleanup. Runtime, resume,
+credential, cleanup, and real Codex initialization probes cover the new boundary. Host Git checks
+also disable repository fsmonitor commands and hooks. See [runtime isolation](RUNTIME_ISOLATION.md).
+Parallel graph nodes still share issue workspaces; isolated contributions and integration,
+immutable complete run snapshots, scoped capability provisioning, and release artifacts remain.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

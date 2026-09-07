@@ -53,7 +53,7 @@ def container_arguments(name: str, image: str, workspace: Path, command: str, ti
     ]
 
 
-async def remove_container(name: str) -> None:
+async def _remove_container_once(name: str) -> bool:
     process = await asyncio.create_subprocess_exec(
         "docker", "rm", "--force", name, env=runner_environment(),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True,
@@ -63,8 +63,17 @@ async def remove_container(name: str) -> None:
     except BaseException:
         await stop_process_group(process)
         raise
-    if process.returncode and b"No such container" not in error:
-        raise RuntimeError("validation container cleanup could not be confirmed")
+    if not process.returncode or b"No such container" in error:
+        return True
+    if b"removal of container" in error and b"already in progress" in error:
+        return False
+    raise RuntimeError("execution container cleanup could not be confirmed")
+
+
+async def remove_container(name: str) -> None:
+    async with asyncio.timeout(15):
+        while not await _remove_container_once(name):  # noqa: ASYNC110 - poll daemon-owned removal
+            await asyncio.sleep(0.1)
 
 
 @contextlib.asynccontextmanager

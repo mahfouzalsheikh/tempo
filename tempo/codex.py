@@ -15,9 +15,9 @@ from .config import ServiceConfig
 from .credentials import CONTROL_PLANE_SECRETS, process_environment
 from .domain import Issue
 from .errors import CodexError
-from .process import stop_process_group
 from .trackers.base import Tracker
 from .validation import ProjectValidator, clean_workspace_head, workspace_fingerprint
+from .workload import EXECUTION_SECRETS, start_workload, stop_workload
 from .workspace import WorkspaceManager
 
 log = structlog.get_logger(__name__)
@@ -96,21 +96,14 @@ class CodexAppServer:
             raise CodexError("agent cwd cannot be workspace root", category="invalid_workspace_cwd")
         environment = process_environment(
             self.config.environment,
-            forbidden=CONTROL_PLANE_SECRETS | self.tracker.secret_environment_names()
+            forbidden=CONTROL_PLANE_SECRETS | EXECUTION_SECRETS
+            | self.tracker.secret_environment_names()
             | {self.validator.config.runner_token[1:]},
         )
         try:
-            process = await asyncio.create_subprocess_exec(
-                "bash",
-                "--noprofile", "--norc", "-c",
-                f"exec {self.config.command}",
-                cwd=workspace,
-                env=environment,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            process = await start_workload(
+                f"exec {self.config.command}", workspace, environment, kind="codex",
                 limit=10 * 1024 * 1024,
-                start_new_session=True,
             )
         except FileNotFoundError as exc:
             raise CodexError(
@@ -835,10 +828,12 @@ class CodexAppServer:
         return await workspace_fingerprint(workspace)
 
     async def stop_session(self, session: CodexSession) -> None:
-        await stop_process_group(session.process)
-        session.reader_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await session.reader_task
+        try:
+            await stop_workload(session.process)
+        finally:
+            session.reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await session.reader_task
 
     async def _send(self, session: CodexSession, message: dict[str, Any]) -> None:
         if not session.process.stdin:

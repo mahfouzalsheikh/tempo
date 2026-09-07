@@ -25,12 +25,13 @@ rotation takes effect when the adapter is rebuilt, normally on service restart.
 
 ## Explicit subprocess grants
 
-Coding runtimes, hooks, local validation, remote validation subprocesses, and host Git inspection
-commands receive only these ambient variables when present:
+Local process compatibility paths and host Git inspection receive only these ambient variables
+when present:
 
 `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_ALL`, `TMPDIR`.
 
-Missing PATH falls back to the operating system's default executable path. Shells run without
+Missing PATH falls back to the operating system's default executable path. Docker workloads
+use fixed HOME, PATH, CODEX_HOME, and temporary-directory settings inside their containers. Shells run without
 login/profile startup files. Unknown environment variables, shell functions, `BASH_ENV`, proxy
 credentials, database credentials, Git credential configuration, SSH-agent sockets, and provider
 API keys are no longer inherited implicitly.
@@ -48,8 +49,6 @@ hooks:
 codex:
   environment:
     OPENAI_API_KEY: $TEMPO_CODEX_API_KEY
-    # Include this only when using a nondefault Codex state directory:
-    CODEX_HOME: $TEMPO_CODEX_STATE_DIRECTORY
 runtime_providers:
   specialist:
     kind: openai-agents
@@ -60,7 +59,10 @@ runtime_providers:
 
 For Codex runtimes, provider-specific grants override the same variable in `codex.environment`.
 External runtimes receive only their own provider grants. Do not configure an API-key grant when
-using login-based authentication without that key; HOME-based authentication files still work.
+using login-based authentication without that key; isolated Codex nodes receive a private login
+cache. Docker workloads cannot override CODEX_HOME or broker endpoint variables through grants.
+Configure `TEMPO_AGENT_STATE_ROOT` on the host and mount it at the same path in the execution daemon
+when changing the private-home storage location.
 Granting a key to a coding runtime also makes it available to that runtime's child commands.
 
 Coding-runtime grants reject both source and destination names matching the tracker's credentials
@@ -100,3 +102,10 @@ and are not covered by the snapshot migration. HOME/PATH remain trusted operator
 credential files, shared process privileges, writable configuration, Docker sockets, and network
 access require the planned task isolation and capability broker. The existing `CredentialReference`
 database model is not yet a vault integration. No claim of complete secret isolation is made.
+
+
+Compose coding agents and hooks now execute in [isolated containers](RUNTIME_ISOLATION.md).
+Agent nodes receive private persistent homes with model login and selected model settings;
+hooks receive a temporary home. Runtime Docker metadata contains only explicitly granted job
+credentials, and job networks cannot access the Docker API. Host MCP/plugin configuration is
+not implicitly imported into those private homes.

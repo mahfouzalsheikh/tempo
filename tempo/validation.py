@@ -39,7 +39,8 @@ def _fingerprint_header(digest, path: bytes, mode: bytes, size: int) -> None:
 async def workspace_fingerprint(workspace: Path) -> str:
     """Hash tracked and untracked workspace content independently of Git metadata."""
     process = await asyncio.create_subprocess_exec(
-        "git",
+        "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+        "-c", "protocol.ext.allow=never",
         "ls-files",
         "--cached",
         "--others",
@@ -74,7 +75,8 @@ async def workspace_fingerprint(workspace: Path) -> str:
 async def commit_fingerprint(workspace: Path, sha: str) -> str | None:
     """Hash the actual Git blobs, independent of index flags, timestamps and replace refs."""
     process = await asyncio.create_subprocess_exec(
-        "git",
+        "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+        "-c", "protocol.ext.allow=never",
         "--no-replace-objects",
         "ls-tree",
         "-rz",
@@ -98,7 +100,8 @@ async def commit_fingerprint(workspace: Path, sha: str) -> str | None:
             return None  # Submodules require separate source/evidence identities.
         entries.append((path, mode, object_id))
     process = await asyncio.create_subprocess_exec(
-        "git",
+        "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+        "-c", "protocol.ext.allow=never",
         "--no-replace-objects",
         "cat-file",
         "--batch",
@@ -138,7 +141,8 @@ async def workspace_publication_pending(
 ) -> bool:
     """Return whether validated workspace content still needs publication."""
     status = await asyncio.create_subprocess_exec(
-        "git",
+        "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+        "-c", "protocol.ext.allow=never",
         "status",
         "--porcelain",
         cwd=workspace,
@@ -154,7 +158,8 @@ async def workspace_publication_pending(
     revisions: list[bytes] = []
     for revision in ("HEAD", "@{upstream}"):
         process = await asyncio.create_subprocess_exec(
-            "git",
+            "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+            "-c", "protocol.ext.allow=never",
             "rev-parse",
             revision,
             cwd=workspace,
@@ -174,7 +179,8 @@ async def clean_workspace_head(workspace: Path) -> str | None:
 
     async def git(*arguments: str) -> bytes | None:
         process = await asyncio.create_subprocess_exec(
-            "git",
+            "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+            "-c", "protocol.ext.allow=never",
             "--no-replace-objects",
             *arguments,
             cwd=workspace,
