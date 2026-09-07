@@ -414,7 +414,7 @@ sequenceDiagram
         C->>O: events and dynamic tool calls
         C->>V: project_validation via Tempo
         V-->>C: command results
-        C->>G: github_api via Tempo
+        C->>G: github_publish via Tempo
         alt Pull request created
             O->>DB: checkpoint pull-request event
             O->>O: stop implementation loop
@@ -465,15 +465,17 @@ instructing the agent to reconstruct from workspace, Git history, tracker state,
 
 | Tool | Available role | Purpose and restrictions |
 | --- | --- | --- |
-| `github_api` | Implementation and review | Calls the configured repository's GitHub REST API with the host-held token |
+| `github_api` | Implementation and review | Reads repository-scoped GitHub source, issues, PRs and refs |
+| `github_publish` | Configured publishers and review | Publishes a clean accepted commit to the durable run branch and creates/recovers its PR |
+| `github_comment` | Configured agents and review | Posts an idempotent source-issue comment |
 | `project_validation` | Both, when enabled | Runs an agent-supplied build/test sequence and records results |
 | `tempo_complete` | Implementation only | Finishes a validated issue when no code change is required |
 | `tempo_review` | Review only | Records `approve` or `human_review`; approval requires an unchanged validated workspace |
 
-GitHub mutations must target `/repos/<configured-owner>/<configured-repo>/...`. Agent calls cannot
-merge pull requests or directly mutate issue state/labels. A pull-request creation body receives
-`Closes #<issue>` if it does not already contain it. Creation reuses an existing open pull request
-with the same head branch.
+Generic GitHub mutations are denied. Publication accepts only a title/body and uses a host-recorded
+repository, base commit, and run branch. The PR receives a closing line and run marker; recovery
+checks the head/base identities and marker before reusing it. Comments have a separate source-issue
+operation. See [controlled publication](PUBLICATION.md) for the push protocol and upgrade notes.
 
 ### Events and live state
 
@@ -500,13 +502,13 @@ flowchart TD
     Changed -- No --> Passed{"All validation commands passed?"}
     Passed -- No --> Fail["Record failed attempt and return output"]
     Passed -- Yes --> Authorize["Store fingerprint and authorize publication"]
-    Authorize --> Mutation["Agent may perform scoped GitHub mutation"]
+    Authorize --> Mutation["Agent calls github_publish"]
     Mutation --> StillSame{"Fingerprint still matches?"}
     StillSame -- No --> Reject
-    StillSame -- Yes --> GitHub["Execute host-side GitHub call"]
+    StillSame -- Yes --> GitHub["Verify commit blobs, record intent, publish with expected SHA"]
 ```
 
-Fingerprinting hashes each Git-tracked and non-ignored untracked file path and its bytes. If Git
+Fingerprinting hashes framed Git-tracked and non-ignored untracked file paths, modes and bytes. If Git
 cannot list files, Tempo scans non-`.git` files. Symlinks contribute their target. Validation
 commands are therefore allowed to create ignored build products, but not to modify project files
 included by the fingerprint.
@@ -598,8 +600,9 @@ require a real sandbox lifecycle.
 
 Each run uses a separate GitHub publication gate and checks its lease before non-read HTTP
 requests, including review, merge, and issue finalization. These checks reject stale requests
-before sending; they do not atomically fence GitHub or recall a request already in flight. Durable
-side-effect intents and reconciliation remain necessary for ambiguous external outcomes.
+before sending; they do not atomically fence GitHub or recall a request already in flight. Publication
+uses durable intents and expected-SHA pushes to reconcile branch/PR outcomes. A general ledger for
+other external effects remains planned.
 
 Checkpoint sequence allocation and the run's latest checkpoint pointer update under the parent
 lock. Replaying an existing idempotency key preserves the latest pointer. Finishing an attempt

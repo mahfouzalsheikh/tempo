@@ -456,9 +456,10 @@ class CodexAppServer:
                     }
                 )
                 return
-            mutating_tool_call = name == "github_api" and str(
-                arguments.get("method", "GET")
-            ).upper() not in {"GET", "HEAD"}
+            mutating_tool_call = name in {"github_publish", "github_comment"} or (
+                name == "github_api" and str(arguments.get("method", "GET")).upper()
+                not in {"GET", "HEAD"}
+            )
             if (
                 mutating_tool_call
                 and self.config.approval_policy != "never"
@@ -510,12 +511,12 @@ class CodexAppServer:
                         "output": "A concrete completion reason is required.",
                         "contentItems": [],
                     }
-                elif not fingerprint_matches:
+                elif not fingerprint_matches or not await self.tracker.unchanged_from_base():
                     result = {
                         "success": False,
                         "output": (
-                            "The current workspace must pass unchanged local validation before "
-                            "Tempo can complete a ticket without a pull request."
+                            "No-change completion requires unchanged validation and a clean tree "
+                            "identical to the task's recorded base. Publish implementation changes."
                         ),
                         "contentItems": [],
                     }
@@ -595,9 +596,14 @@ class CodexAppServer:
                         ),
                         "contentItems": [],
                     }
+            elif name == "github_publish":
+                result = await self.tracker.publish_candidate(
+                    arguments, issue,
+                    session.validation_fingerprint if self.validation_enabled else None,
+                )
             else:
                 if (
-                    mutating_tool_call
+                    name == "github_api" and mutating_tool_call
                     and session.validation_fingerprint
                     and session.validation_fingerprint
                     != await self._workspace_fingerprint(session.workspace)
@@ -716,7 +722,7 @@ class CodexAppServer:
             session.review_summary = None
             session.review_head_sha = None
             await self.on_event({"event": "review_invalidated", "attempt_id": uuid.uuid4().hex})
-        head_before = await clean_workspace_head(session.workspace) if is_review else None
+        head_before = await clean_workspace_head(session.workspace)
         if is_review and not head_before:
             return {
                 "success": False,
@@ -726,7 +732,7 @@ class CodexAppServer:
         fingerprint_before = await self._workspace_fingerprint(session.workspace)
         result = await self.validator.execute(arguments, session.workspace)
         fingerprint_after = await self._workspace_fingerprint(session.workspace)
-        head_after = await clean_workspace_head(session.workspace) if is_review else None
+        head_after = await clean_workspace_head(session.workspace)
         if fingerprint_before != fingerprint_after or (is_review and head_before != head_after):
             session.validation_fingerprint = None
             self.tracker.revoke_publication(issue.id)
@@ -751,6 +757,7 @@ class CodexAppServer:
                 }
             )
             self.tracker.authorize_publication(issue.id)
+            self.tracker.accept_validation(fingerprint_after)
         return result
 
     @staticmethod

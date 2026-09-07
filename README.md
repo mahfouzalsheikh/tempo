@@ -213,8 +213,15 @@ own build, launch, and test commands. Tempo runs the sequence, stops at the firs
 always runs an optional cleanup command, and records the result.
 
 A successful run is accepted only if validation did not change tracked or untracked project files.
-The resulting workspace fingerprint authorizes GitHub writes. Any later workspace change
-invalidates that authorization and requires another validation run.
+The resulting fingerprint authorizes `github_publish`, which sends the clean local commit to a
+fixed run branch and opens or recovers its PR. Any later content or executable-mode change requires
+revalidation. `github_api` is read-only and repository scoped; `github_comment` posts source-issue
+updates. Generic API writes stay denied after validation. No-change completion must match the
+recorded task base.
+
+Existing saved tool allowlists must explicitly include `github_publish`; update custom prompts
+that request shell pushes or raw GitHub mutations. See [publication and upgrade notes](docs/PUBLICATION.md)
+for branch ownership, interruption recovery, supported Git inputs, and retained-run compatibility.
 
 After the implementation agent creates a pull request:
 

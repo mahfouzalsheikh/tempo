@@ -160,18 +160,20 @@ async def test_provider_mutations_recheck_owner_and_use_separate_publication_gat
             await store.assert_ownership(entry.run_record_id, lease_token=replacement)
 
         new = tracker.for_run(new_ownership)
-        arguments = {"method": "POST", "path": "/repos/acme/project/issues/1/comments", "body": {}}
-        assert not (await new.execute_agent_tool("github_api", arguments, entry.issue))["success"]
+        issue = Issue(id="1", identifier="GH-1", title="Comment", state="open")
+        arguments = {"body": "Progress"}
+        assert entry.issue.id not in new._publication_authorized
         new.authorize_publication(entry.issue.id)
         old.revoke_publication(entry.issue.id)
-        assert (await new.execute_agent_tool("github_api", arguments, entry.issue))["success"]
+        assert entry.issue.id in new._publication_authorized
+        assert (await new.execute_agent_tool("github_comment", arguments, issue))["success"]
         old.authorize_publication(entry.issue.id)
         with pytest.raises(LeaseLostError):
-            await old.execute_agent_tool("github_api", arguments, entry.issue)
+            await old.execute_agent_tool("github_comment", arguments, issue)
         # The same guard applies to control-plane review, merge and finalization requests.
         with pytest.raises(LeaseLostError):
             await old._request("PUT", "/repos/acme/project/pulls/1/merge", json={})
-    assert len(requests) == 1
+    assert len(requests) == 2
 
 
 async def test_heartbeat_loss_cancels_worker_without_overwriting_replacement(claimed_run, tmp_path):

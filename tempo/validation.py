@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from .config import ValidationConfig
+from .process import stop_process_group
 from .workspace import WorkspaceManager
 
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
@@ -24,6 +25,13 @@ def _fallback_workspace_paths(workspace: Path) -> list[bytes]:
         for path in workspace.rglob("*")
         if path.is_file() and ".git" not in path.relative_to(workspace).parts
     )
+
+
+def _fingerprint_header(digest, path: bytes, mode: bytes, size: int) -> None:
+    digest.update(len(path).to_bytes(8, "big"))
+    digest.update(path)
+    digest.update(mode)
+    digest.update(size.to_bytes(8, "big"))
 
 
 async def workspace_fingerprint(workspace: Path) -> str:
@@ -46,16 +54,63 @@ async def workspace_fingerprint(workspace: Path) -> str:
         paths = await asyncio.to_thread(_fallback_workspace_paths, workspace)
     digest = hashlib.sha256()
     for raw_path in paths:
-        digest.update(raw_path)
         path = workspace / os.fsdecode(raw_path)
         try:
             if path.is_symlink():
-                digest.update(os.readlink(path).encode())
+                mode, content = b"120000", os.fsencode(os.readlink(path))
             else:
-                digest.update(await asyncio.to_thread(path.read_bytes))
+                mode = b"100755" if path.stat().st_mode & 0o111 else b"100644"
+                content = await asyncio.to_thread(path.read_bytes)
         except OSError:
-            digest.update(b"<missing>")
+            mode, content = b"missing", b""
+        _fingerprint_header(digest, raw_path, mode, len(content))
+        digest.update(content)
     return digest.hexdigest()
+
+
+async def commit_fingerprint(workspace: Path, sha: str) -> str | None:
+    """Hash the actual Git blobs, independent of index flags, timestamps and replace refs."""
+    process = await asyncio.create_subprocess_exec(
+        "git", "--no-replace-objects", "ls-tree", "-rz", "--full-tree", sha,
+        cwd=workspace, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    output, _ = await process.communicate()
+    if process.returncode:
+        return None
+    entries = []
+    for entry in output.split(b"\0"):
+        if not entry:
+            continue
+        metadata, path = entry.split(b"\t", 1)
+        mode, kind, object_id = metadata.split()
+        if kind != b"blob" or mode not in {b"100644", b"100755", b"120000"}:
+            return None  # Submodules require separate source/evidence identities.
+        entries.append((path, mode, object_id))
+    process = await asyncio.create_subprocess_exec(
+        "git", "--no-replace-objects", "cat-file", "--batch", cwd=workspace,
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+    )
+    digest = hashlib.sha256()
+    try:
+        async with asyncio.timeout(120):
+            for path, mode, object_id in sorted(entries):
+                process.stdin.write(object_id + b"\n")
+                await process.stdin.drain()
+                header = (await process.stdout.readline()).split()
+                if len(header) != 3 or header[:2] != [object_id, b"blob"]:
+                    return None
+                remaining = int(header[2])
+                _fingerprint_header(digest, path, mode, remaining)
+                while remaining:
+                    chunk = await process.stdout.readexactly(min(remaining, 65536))
+                    digest.update(chunk)
+                    remaining -= len(chunk)
+                if await process.stdout.readexactly(1) != b"\n":
+                    return None
+        return digest.hexdigest()
+    finally:
+        await stop_process_group(process)
 
 
 async def workspace_publication_pending(
@@ -98,7 +153,7 @@ async def clean_workspace_head(workspace: Path) -> str | None:
     """Return the committed candidate only when the checkout is clean and stable."""
     async def git(*arguments: str) -> bytes | None:
         process = await asyncio.create_subprocess_exec(
-            "git", *arguments, cwd=workspace,
+            "git", "--no-replace-objects", *arguments, cwd=workspace,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )
         output, _ = await process.communicate()
@@ -109,6 +164,9 @@ async def clean_workspace_head(workspace: Path) -> str | None:
         return None
     status = await git("status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
     if status != b"":
+        return None
+    committed = await commit_fingerprint(workspace, before.decode())
+    if await workspace_fingerprint(workspace) != committed:
         return None
     after = await git("rev-parse", "--verify", "HEAD^{commit}")
     return before.decode("ascii") if before == after else None

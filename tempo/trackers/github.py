@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -11,6 +12,7 @@ import httpx
 
 from tempo.domain import Issue, normalize_state
 from tempo.errors import TrackerError
+from tempo.publication import prepare_publication, publication_error
 
 from .base import Tracker
 from .memory import MemoryTracker
@@ -36,7 +38,13 @@ class GitHubTracker(Tracker):
         parsed = urlparse(api_url)
         if parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1"}:
             raise TrackerError("GitHub api_url must use HTTPS", category="tracker_config")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+            raise TrackerError("Repository must be owner/name", category="tracker_config")
         self.repo = repo
+        self.publication = None
+        self._validation_fingerprint = None
+        host = "github.com" if parsed.hostname == "api.github.com" else parsed.netloc
+        self.git_remote_url = f"{parsed.scheme}://{host}/{repo}.git"
         self.api_url = api_url.rstrip("/")
         self.token = token or os.getenv(token_env_name) or None
         self.review_token = review_token or os.getenv(review_token_env_name) or None
@@ -85,6 +93,8 @@ class GitHubTracker(Tracker):
     def for_run(self, ownership_check):
         tracker = super().for_run(ownership_check)
         tracker._publication_authorized = set()
+        tracker.publication = None
+        tracker._validation_fingerprint = None
         return tracker
 
     async def _request(
@@ -105,10 +115,14 @@ class GitHubTracker(Tracker):
         if response.status_code == 429:
             raise TrackerError("GitHub rate limit exceeded", category="tracker_rate_limited")
         if response.status_code >= 400:
-            raise TrackerError(
+            error = TrackerError(
                 f"GitHub returned {response.status_code}: {response.text[:500]}",
                 category="tracker_response",
             )
+            error.status_code = response.status_code
+            raise error
+        if method.upper() == "HEAD":
+            return {"status": response.status_code}
         try:
             return response.json()
         except ValueError as exc:
@@ -190,25 +204,52 @@ class GitHubTracker(Tracker):
         except (TypeError, ValueError):
             return None
 
+    async def prepare_publication(self, workspace, run_id, state, save):
+        self.publication = await prepare_publication(self, workspace, run_id, state, save)
+
+    async def unchanged_from_base(self) -> bool:
+        return bool(self.publication) and await self.publication.unchanged_from_base()
+
     def agent_tool_specs(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": "github_api",
-                "description": (
-                    "Call the GitHub REST API using the configured repository credential."
-                ),
+                "description": "Read issues, pull requests and source in this repository.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "method": {"type": "string"},
+                        "method": {"type": "string", "enum": ["GET", "HEAD"]},
                         "path": {"type": "string"},
                         "params": {"type": "object"},
-                        "body": {},
                     },
                     "required": ["path"],
                     "additionalProperties": False,
                 },
-            }
+            },
+            {
+                "name": "github_publish",
+                "description": (
+                    "Publish the clean, validated local commit to Tempo's run branch and create "
+                    "or recover its pull request. Commit changes before calling. Tempo chooses "
+                    "the repository, branch and base; shell credentials are unnecessary."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"title": {"type": "string"}, "body": {"type": "string"}},
+                    "required": ["title"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "github_comment",
+                "description": "Post an idempotent progress comment to this run's source issue.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"body": {"type": "string"}},
+                    "required": ["body"],
+                    "additionalProperties": False,
+                },
+            },
         ]
 
     def authorize_publication(self, issue_id: str) -> None:
@@ -216,102 +257,113 @@ class GitHubTracker(Tracker):
 
     def revoke_publication(self, issue_id: str) -> None:
         self._publication_authorized.discard(issue_id)
+        self._validation_fingerprint = None
 
-    async def execute_agent_tool(
-        self, name: str, arguments: dict[str, Any], issue: Issue
-    ) -> dict[str, Any]:
-        if name != "github_api":
-            return {"success": False, "output": f"Unsupported tool: {name}", "contentItems": []}
-        path = arguments.get("path")
-        if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
-            return {
-                "success": False,
-                "output": "path must be a relative API path starting with /",
-                "contentItems": [],
-            }
-        method = str(arguments.get("method", "GET")).upper()
-        repo_prefix = f"/repos/{self.repo}/"
-        if method not in {"GET", "HEAD"} and not path.startswith(repo_prefix):
-            return {
-                "success": False,
-                "output": "GitHub mutations are restricted to the configured repository.",
-                "contentItems": [],
-            }
-        merge_pattern = rf"^/repos/{re.escape(self.repo)}/pulls/\d+/merge$"
-        branch_merge_path = f"/repos/{self.repo}/merges"
-        if (method == "PUT" and re.fullmatch(merge_pattern, path)) or (
-            method == "POST" and path.rstrip("/") == branch_merge_path
-        ):
-            return {
-                "success": False,
-                "output": (
-                    "Only Tempo's completed independent-review phase may merge a pull request."
-                ),
-                "contentItems": [],
-            }
-        if method not in {"GET", "HEAD"} and issue.id not in self._publication_authorized:
-            return {
-                "success": False,
-                "output": (
-                    "GitHub writes are locked until local project validation passes. Run the "
-                    "project_validation tool first."
-                ),
-                "contentItems": [],
-            }
-        issue_mutation = re.fullmatch(
-            rf"/repos/{re.escape(self.repo)}/issues/\d+/?", path
-        ) or re.fullmatch(rf"/repos/{re.escape(self.repo)}/issues/\d+/labels/?", path)
-        if method not in {"GET", "HEAD"} and issue_mutation:
-            return {
-                "success": False,
-                "output": (
-                    "Tempo owns issue state and dispatch labels. Create the pull request or use "
-                    "tempo_complete; direct issue mutations are not allowed."
-                ),
-                "contentItems": [],
-            }
-        body = arguments.get("body")
-        if method == "POST" and path.rstrip("/") == f"/repos/{self.repo}/pulls":
-            body = dict(body) if isinstance(body, dict) else {}
-            closing_line = f"Closes #{issue.id}"
-            description = str(body.get("body", "")).rstrip()
-            if closing_line.lower() not in description.lower():
-                body["body"] = f"{description}\n\n{closing_line}".strip()
-            head = str(body.get("head", "")).strip()
-            if head:
-                qualified_head = head if ":" in head else f"{self.repo.split('/', 1)[0]}:{head}"
-                existing = await self._request(
-                    "GET",
-                    f"/repos/{self.repo}/pulls",
-                    params={"state": "open", "head": qualified_head},
-                )
-                if isinstance(existing, list) and existing:
-                    text = json.dumps(existing[0], ensure_ascii=False)
-                    return {
-                        "success": True,
-                        "output": text,
-                        "contentItems": [{"type": "inputText", "text": text}],
-                    }
+    def accept_validation(self, fingerprint: str) -> None:
+        self._validation_fingerprint = fingerprint
+
+    @staticmethod
+    def tool_result(success, output):
+        text = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
+        return {
+            "success": success,
+            "output": text,
+            "contentItems": [{"type": "inputText", "text": text}],
+        }
+
+    async def publish_candidate(self, arguments, issue, fingerprint):
         try:
-            output = await self._request(
-                method,
-                path,
-                params=arguments.get("params"),
-                json=body,
+            if issue.id not in self._publication_authorized or not self.publication:
+                raise publication_error("Publication needs an active run and passing validation.")
+            return self.tool_result(
+                True,
+                await self.publication.publish(
+                    arguments,
+                    issue,
+                    self._validation_fingerprint or fingerprint,
+                ),
             )
-            text = json.dumps(output, ensure_ascii=False)
-            return {
-                "success": True,
-                "output": text,
-                "contentItems": [{"type": "inputText", "text": text}],
-            }
         except TrackerError as exc:
-            text = json.dumps({"error": {"message": str(exc), "category": exc.category}})
-            return {
-                "success": False,
-                "output": text,
-                "contentItems": [{"type": "inputText", "text": text}],
-            }
+            return self.tool_result(
+                False, {"error": {"message": str(exc), "category": exc.category}}
+            )
+
+    def verify_publication_event(self, event) -> bool:
+        if (
+            not self.publication
+            or event.get("tool") != "github_publish"
+            or not event.get("success")
+        ):
+            return False
+        try:
+            result = json.loads(event.get("output", ""))
+        except (ValueError, TypeError):
+            return False
+        state = self.publication.state
+        return result == {
+            **state.get("pull_request", {}),
+            "head_sha": state.get("published_sha"),
+            "branch": state["branch"],
+        }
+
+    async def execute_agent_tool(self, name, arguments, issue):
+        try:
+            await self.assert_ownership()
+            if name == "github_comment":
+                body = arguments.get("body")
+                if set(arguments) != {"body"} or not isinstance(body, str) or not body.strip():
+                    raise publication_error("github_comment requires only a nonempty body.")
+                if not str(issue.id).isdigit():
+                    raise publication_error("A GitHub source issue is required.")
+                marker = (
+                    f"<!-- tempo-comment:{issue.id}:{hashlib.sha256(body.encode()).hexdigest()} -->"
+                )
+                await self._post_comment_once(
+                    f"/repos/{self.repo}/issues/{issue.id}/comments",
+                    marker,
+                    f"{body}\n\n{marker}",
+                )
+                return self.tool_result(True, "Comment recorded.")
+            if name != "github_api":
+                raise publication_error(f"Unsupported tool: {name}")
+            path = arguments.get("path")
+            method = str(arguments.get("method", "GET")).upper()
+            if method not in {"GET", "HEAD"}:
+                raise publication_error(
+                    "github_api is read-only. Use github_publish or github_comment. "
+                    "Only Tempo's completed independent-review phase may merge a pull request."
+                )
+            # Refuse alternate spellings before the HTTP client can normalize them.
+            prefix = f"/repos/{self.repo}"
+            if (
+                not isinstance(path, str)
+                or (path != prefix and not path.startswith(prefix + "/"))
+                or any(char in path for char in "%?#\\")
+                or any(ord(char) < 33 for char in path)
+                or any(part in {"", ".", ".."} for part in path[1:].split("/"))
+                or set(arguments) - {"path", "method", "params"}
+            ):
+                raise publication_error("Use a canonical path inside the configured repository.")
+            resource = path[len(prefix) + 1 :].split("/", 1)[0]
+            if path != prefix and resource not in {
+                "issues",
+                "pulls",
+                "contents",
+                "commits",
+                "compare",
+                "branches",
+                "tags",
+                "git",
+                "readme",
+                "languages",
+            }:
+                raise publication_error("This repository resource is not exposed to agents.")
+            output = await self._request(method, path, params=arguments.get("params"))
+            return self.tool_result(True, output)
+        except TrackerError as exc:
+            return self.tool_result(
+                False, {"error": {"message": str(exc), "category": exc.category}}
+            )
 
     async def finalize_pull_request(self, issue: Issue, pull_request_number: int) -> None:
         await self.require_human_review(
@@ -366,9 +418,7 @@ class GitHubTracker(Tracker):
                 merge=current,
             )
 
-        distinct_review_identity = bool(
-            self.review_token and self.review_token != self.token
-        )
+        distinct_review_identity = bool(self.review_token and self.review_token != self.token)
         if distinct_review_identity:
             try:
                 reviews = await self._request(
@@ -389,7 +439,8 @@ class GitHubTracker(Tracker):
                         f"/repos/{self.repo}/pulls/{pull_request_number}/reviews",
                         review_identity=True,
                         json={
-                            "event": "APPROVE", "body": review_body,
+                            "event": "APPROVE",
+                            "body": review_body,
                             "commit_id": reviewed_head_sha,
                         },
                     )
@@ -435,7 +486,8 @@ class GitHubTracker(Tracker):
             if exc.category == "tracker_transport":
                 try:
                     reconciled = await self._request(
-                        "GET", f"/repos/{self.repo}/pulls/{pull_request_number}",
+                        "GET",
+                        f"/repos/{self.repo}/pulls/{pull_request_number}",
                     )
                 except TrackerError:
                     reconciled = {}
@@ -445,7 +497,10 @@ class GitHubTracker(Tracker):
                     and (reconciled.get("head") or {}).get("sha") == reviewed_head_sha
                 ):
                     return await self._finalize_merged_review(
-                        issue, pull_request_number, summary=summary, merge=reconciled,
+                        issue,
+                        pull_request_number,
+                        summary=summary,
+                        merge=reconciled,
                     )
             return await self.require_human_review(
                 issue,

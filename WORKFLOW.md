@@ -93,7 +93,7 @@ model_providers:
 tool_providers:
   engineering:
     kind: tempo
-    tools: [github_api, project_validation, tempo_complete]
+    tools: [github_api, github_publish, github_comment, project_validation, tempo_complete]
 agents:
   implementer:
     role: implementer
@@ -119,8 +119,9 @@ You are working on {{ issue.identifier }}: {{ issue.title }}.
 Work autonomously in the current issue workspace. Follow the repository's own instructions and
 tooling to build or launch the project and run its relevant tests locally. Use project_validation
 with the complete project-native validation sequence. Fix failures and repeat validation as needed.
-Only after validation passes, leave the workspace in a reviewable state, push the branch, and open
-a pull request through available provider-native tooling. Do not merge it yourself: Tempo starts a
+Commit your changes, validate them, then use github_publish with a title and body. Tempo publishes
+the exact commit to its run branch and opens or recovers the pull request. Use github_api for reads
+and github_comment for source-issue updates. Do not merge it yourself: Tempo starts a
 separate review agent and applies the configured merge policy after that review. If the requested
 work is already present and the validated project needs no change, use the tempo_complete tool with
 concrete evidence instead of repeating work.

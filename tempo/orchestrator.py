@@ -31,7 +31,7 @@ from .domain import (
 from .errors import CodexError, LeaseLostError
 from .persistence import PersistenceStore
 from .trackers.base import Tracker
-from .trackers.github import build_tracker
+from .trackers.github import GitHubTracker, build_tracker
 from .validation import workspace_fingerprint, workspace_publication_pending
 from .workflow import WorkflowStore, render_node_prompt, render_prompt
 from .workspace import WorkspaceManager
@@ -49,7 +49,9 @@ Tempo publication policy:
 - Use the project_validation tool with the complete project-native validation sequence. Tempo, not
   your narrative assessment, determines success from the commands' exit codes.
 - If validation fails, diagnose the output, fix the project, and run project_validation again.
-- After validation passes, create a pull request. The implementation agent must never merge it;
+- Commit changes and use github_publish after validation passes. It publishes the exact local
+  commit to Tempo's run branch and opens or recovers its pull request. github_api is read-only;
+  github_comment posts source-issue updates. The implementation agent must never merge the PR;
   Tempo starts an independent review agent and applies merge policy afterward.
 - Validation commands must not edit project files.
 - If the requested behavior is already present and validation passes, use tempo_complete with
@@ -67,7 +69,7 @@ Tempo independent review policy:
 - Inspect the full issue and pull-request diff plus the repository's own instructions.
 - Check correctness, regressions, security, tests, and maintainability.
 - You may fix material findings. Commit all changes before running project_validation, then
-  publish that exact commit to the pull-request branch. Validation requires a clean checkout.
+  use github_publish to publish that exact commit. Validation requires a clean checkout.
 - Never call GitHub's merge API yourself. Tempo applies merge policy after your decision.
 - Finish with tempo_review. Use approve only after unchanged local validation passes.
 - Use human_review when ambiguity, sensitive risk, repository policy, permissions, or unresolved
@@ -103,13 +105,12 @@ PUBLICATION_RECOVERY_PROMPT = (
     "gate for the current workspace. The publisher is intentionally not required to have "
     "project_validation; do not wait for that tool or repeat validation. Inspect the current "
     "branch and pull-request state, then perform only the remaining push and pull-request handoff. "
-    "Do not merge."
+    "Use github_publish with a title and body; Tempo owns the destination branch. Do not merge."
 )
 PUBLICATION_UPDATE_PROMPT = (
     "Fresh validation has passed, but the current workspace still has unpublished content. "
     "Do not seek or repeat project_validation. Commit any intended validated changes, publish the "
-    "exact current branch through the available GitHub tooling, and create or update the existing "
-    "pull request. Do not merge."
+    "exact local commit with github_publish, and reuse the run's pull request. Do not merge."
 )
 
 
@@ -550,6 +551,21 @@ class Orchestrator:
                 tracker.authorize_publication(issue.id)
             await assert_ownership()
             await workspace_manager.before_run(workspace.path)
+            if isinstance(tracker, GitHubTracker):
+                if not persistence or not entry.run_record_id:
+                    raise CodexError("GitHub publication requires a durable run.")
+
+                async def save_publication(state):
+                    await persistence.checkpoint(
+                        entry.run_record_id, "publication_state", state,
+                        idempotency_key=f"{entry.run_record_id}:publication:{uuid.uuid4().hex}",
+                        lease_token=owner_token,
+                    )
+
+                await tracker.prepare_publication(
+                    workspace.path, entry.run_record_id,
+                    await persistence.publication_state(entry.run_record_id), save_publication,
+                )
             await self._execute_workflow_graph(
                 issue,
                 attempt,
@@ -607,6 +623,11 @@ class Orchestrator:
                         entry.session.pull_request_number,
                     )
             elif entry.session.no_change_completed:
+                if not await tracker.unchanged_from_base():
+                    raise CodexError(
+                        "No-change completion does not match the recorded task base.",
+                        category="completion_required",
+                    )
                 entry.phase = "NoChangesRequired"
                 await tracker.finalize_without_changes(
                     issue,
@@ -785,6 +806,7 @@ class Orchestrator:
         current_fingerprint = await workspace_fingerprint(workspace_path)
         if current_fingerprint == fingerprint:
             tracker.authorize_publication(entry.issue.id)
+            tracker.accept_validation(fingerprint)
             return
 
         validation_node_id = context.get("node_id", "")
@@ -1014,7 +1036,8 @@ class Orchestrator:
         entry.session = live
 
         async def on_event(event: dict[str, Any]) -> None:
-            event = {**event, "node_id": node.id, "agent_role": profile.role}
+            event = {**event, "node_id": node.id, "agent_role": profile.role,
+                     "host_publication": tracker.verify_publication_event(event)}
             await self._codex_event(issue.id, event, live_session=live, expected_entry=entry)
 
         async def on_approval(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1278,6 +1301,7 @@ class Orchestrator:
         implementation_turns = entry.session.turn_count
 
         async def on_review_event(event: dict[str, Any]) -> None:
+            event = {**event, "host_publication": tracker.verify_publication_event(event)}
             usage = event.get("usage")
             if isinstance(usage, dict):
                 event = {
@@ -1597,7 +1621,20 @@ class Orchestrator:
             session.validation_status = "pending"
             session.validation_finished_at = None
             entry.phase = "ValidationRequired"
-        elif event_name == "tool_call_completed" and event.get("tool") == "github_api":
+        elif (
+            event_name == "tool_call_completed" and event.get("tool") == "github_publish"
+            and event.get("host_publication")
+        ):
+            pull_request = PersistenceStore._pull_request_from_checkpoint(event)
+            if pull_request:
+                entry.phase = "PullRequestCreated"
+                session.workspace_published = True
+                session.pull_request_created = True
+                session.pull_request_url, session.pull_request_number = pull_request
+        elif (
+            event_name == "tool_call_completed" and event.get("tool") == "github_api"
+            and not isinstance(self.tracker, GitHubTracker)
+        ):
             arguments = event.get("arguments") or {}
             method = str(arguments.get("method", "GET")).upper()
             path = str(arguments.get("path", ""))
@@ -2085,7 +2122,7 @@ class Orchestrator:
                 "max_commands": config.validation.max_commands,
                 "max_attempts_per_run": config.validation.max_attempts_per_run,
                 "max_output_chars": config.validation.max_output_chars,
-                "publication_gate": "GitHub writes locked until validation passes",
+                "publication_gate": "Commit publication requires matching validation",
                 "merge_policy": "Tempo never merges branches or pull requests",
             },
             "hooks": {

@@ -560,6 +560,17 @@ class PersistenceStore:
     def _pull_request_from_checkpoint(
         payload: dict[str, Any],
     ) -> tuple[str, int] | None:
+        if payload.get("tool") == "github_publish":
+            if not payload.get("success") or not payload.get("host_publication"):
+                return None
+            try:
+                output = json.loads(payload.get("output", ""))
+            except (ValueError, TypeError):
+                return None
+            if isinstance(output, dict) and isinstance(output.get("number"), int):
+                url = output.get("html_url")
+                return (url, output["number"]) if isinstance(url, str) and url else None
+            return None
         if payload.get("tool") != "github_api" or not payload.get("success"):
             return None
         arguments = payload.get("arguments") or {}
@@ -785,6 +796,12 @@ class PersistenceStore:
             payload = checkpoint.payload or {}
             arguments = payload.get("arguments") or {}
             if (
+                payload.get("node_id") == node_id and payload.get("tool") == "github_publish"
+                and self._pull_request_from_checkpoint(payload)
+            ):
+                workspace_published = True
+                break
+            if (
                 payload.get("node_id") == node_id
                 and payload.get("tool") == "github_api"
                 and payload.get("success")
@@ -849,6 +866,14 @@ class PersistenceStore:
                     result["review_head_sha"] = str(head_sha)
                 return result
         return None
+
+    async def publication_state(self, run_id: int) -> dict[str, Any] | None:
+        from tempo_web.models import RunCheckpoint
+
+        row = await RunCheckpoint.objects.filter(
+            run_id=run_id, run__project_id=self.project_id, kind="publication_state",
+        ).order_by("-sequence").afirst()
+        return row.payload if row else None
 
     @leased_write
     def finish_run_node(

@@ -41,6 +41,18 @@ class Tracker(ABC):
     def revoke_publication(self, issue_id: str) -> None:
         return None
 
+    def accept_validation(self, fingerprint: str) -> None:
+        return None
+
+    async def unchanged_from_base(self) -> bool:
+        return True
+
+    async def publish_candidate(self, arguments, issue, fingerprint):
+        return await self.execute_agent_tool("github_publish", arguments, issue)
+
+    def verify_publication_event(self, event) -> bool:
+        return False
+
     async def finalize_pull_request(self, issue: Issue, pull_request_number: int) -> None:
         return None
 

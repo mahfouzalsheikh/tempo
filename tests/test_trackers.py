@@ -89,9 +89,9 @@ async def test_github_pr_creation_requires_validation_and_agent_merge_is_denied(
 
     tracker.authorize_publication(issue.id)
     created = await tracker.execute_agent_tool("github_api", create, issue)
-    assert created["success"] is True
-    assert len(requests) == 1
-    assert b"Closes #1" in requests[0].content
+    assert created["success"] is False
+    assert "github_publish" in created["output"]
+    assert requests == []
 
     merged = await tracker.execute_agent_tool(
         "github_api",
@@ -100,7 +100,7 @@ async def test_github_pr_creation_requires_validation_and_agent_merge_is_denied(
     )
     assert merged["success"] is False
     assert "independent-review phase" in merged["output"]
-    assert len(requests) == 1
+    assert requests == []
     await client.aclose()
 
 
@@ -350,7 +350,7 @@ async def test_github_mutations_are_scoped_to_configured_repository():
 
 
 @pytest.mark.asyncio
-async def test_github_pr_creation_reuses_an_existing_head_branch():
+async def test_generic_api_cannot_adopt_an_agent_selected_head_branch():
     requests = []
 
     def handler(request):
@@ -387,9 +387,8 @@ async def test_github_pr_creation_reuses_an_existing_head_branch():
         issue,
     )
 
-    assert result["success"] is True
-    assert '"number": 12' in result["output"]
-    assert len(requests) == 1
+    assert result["success"] is False
+    assert requests == []
     await client.aclose()
 
 
