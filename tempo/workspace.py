@@ -11,6 +11,7 @@ import structlog
 from .config import HooksConfig
 from .domain import Workspace
 from .errors import WorkspaceError
+from .process import stop_process_group
 
 log = structlog.get_logger(__name__)
 SAFE_KEY = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -105,19 +106,22 @@ class WorkspaceManager:
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
         try:
             output, _ = await asyncio.wait_for(
                 process.communicate(), timeout=self.hooks.timeout_ms / 1000
             )
         except TimeoutError as exc:
-            process.kill()
-            await process.wait()
+            await stop_process_group(process)
             message = f"{name} hook timed out after {self.hooks.timeout_ms}ms"
             await log.awarning("workspace_hook_timeout", hook=name, workspace_path=str(cwd))
             if fatal:
                 raise WorkspaceError(message, category="hook_timeout") from exc
             return
+        except asyncio.CancelledError:
+            await stop_process_group(process)
+            raise
         if process.returncode:
             text = output.decode(errors="replace")[-2000:]
             await log.awarning(

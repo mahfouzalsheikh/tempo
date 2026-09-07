@@ -582,6 +582,31 @@ A database claim locks the run row, checks availability and concurrency, then as
 lease token for 30 seconds. The worker heartbeats every 10 seconds and extends the lease. Codex
 events also heartbeat.
 
+The claiming token travels with the worker's `RunningEntry`. Heartbeats, run/node/session events,
+validation records, approvals, checkpoints, and completion lock the parent run and verify the
+token, active status, and unexpired lease in the same transaction as their writes. A missing or
+superseded token fails with `LeaseLostError`. Never-claimed legacy records remain writable without
+a token for compatibility; once a claim exists in lease history, that exception no longer applies.
+Operator control actions use separate administrative paths.
+
+Lease loss or a failed heartbeat stops the worker. Completion callbacks cannot overwrite the new
+owner's state, and event/approval callbacks remain bound to their original in-memory entry. Graph
+cancellation cancels and awaits all active child tasks. Runtime subprocesses and workspace hooks
+start in dedicated POSIX sessions; cleanup terminates their process groups. This is best-effort
+cleanup: processes that detach into another session and independently running containers still
+require a real sandbox lifecycle.
+
+Each run uses a separate GitHub publication gate and checks its lease before non-read HTTP
+requests, including review, merge, and issue finalization. These checks reject stale requests
+before sending; they do not atomically fence GitHub or recall a request already in flight. Durable
+side-effect intents and reconciliation remain necessary for ambiguous external outcomes.
+
+Checkpoint sequence allocation and the run's latest checkpoint pointer update under the parent
+lock. Replaying an existing idempotency key preserves the latest pointer. Finishing an attempt
+that needs a retry records its next attempt/deadline and releases the lease atomically. Scheduler
+rescheduling only accepts unleased queued/retry records. Recovery rechecks each candidate under
+the same run lock and completes validation invalidation before a replacement can claim it.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Queued
@@ -888,8 +913,9 @@ then explicitly passes selected variables to services.
 
 - The tracker abstraction exists, but only GitHub and an in-memory adapter are implemented.
 - GitHub discovery polls `open` or `closed` issue lists; there is no webhook receiver.
-- Worker tasks live in the control-plane process. Database leases provide safe recovery and basic
-  multi-claimer protection, not an independently deployable worker pool.
+- Worker tasks live in the control-plane process. Database leases fence worker persistence and
+  serialize recovery, but there is no independently deployable worker pool or atomic fencing of
+  external effects. Issue workspaces are shared across attempts and are not task sandboxes.
 - Workflow nodes and conditional edges are configurable, but execution still runs inside the
   control-plane process rather than a distributed workflow engine.
 - `RunNode` preserves graph-agent thread state. The separate post-publication review still uses the

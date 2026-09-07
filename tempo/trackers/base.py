@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
+from copy import copy
 from typing import Any
 
 from tempo.domain import Issue
 
 
 class Tracker(ABC):
+    def for_run(self, ownership_check: Callable[[], Awaitable[None]]) -> Tracker:
+        """Bind a run's immutable ownership check without changing the shared adapter."""
+        tracker = copy(self)
+        tracker._ownership_check = ownership_check
+        return tracker
+
+    async def assert_ownership(self) -> None:
+        check = getattr(self, "_ownership_check", None)
+        if check:
+            await check()
+
     @abstractmethod
     async def fetch_issues_by_states(self, states: list[str]) -> list[Issue]: ...
 

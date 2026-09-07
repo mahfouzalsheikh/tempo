@@ -136,6 +136,8 @@ class RunningEntry:
     phase: str = "PreparingWorkspace"
     session: LiveSession = field(default_factory=LiveSession)
     run_record_id: int | None = None
+    lease_token: str | None = None
+    lease_lost: bool = False
     graph_nodes: dict[str, NodeExecutionState] = field(default_factory=dict)
     node_sessions: dict[str, LiveSession] = field(default_factory=dict)
     node_sessions_aggregated: bool = False

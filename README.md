@@ -131,6 +131,16 @@ pipenv run test
 pipenv run check
 ```
 
+The default tests use SQLite. To exercise PostgreSQL row locking with independent worker
+processes, run the suite against a dedicated PostgreSQL test service:
+
+```bash
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/tempo_test pipenv run test
+```
+
+The database role must be able to create and drop pytest's test database. The two process-race
+tests in `tests/test_leases.py` are skipped on SQLite.
+
 To host several projects in one process, give each workflow a unique
 `project.organization`/`project.slug`, repository, and workspace root:
 
@@ -288,6 +298,9 @@ Current limitations are deliberate:
 - Scheduling uses polling, not webhooks.
 - Workers run inside the control-plane process; leases support recovery but not an independently
   scalable worker service.
+- Worker writes check lease ownership transactionally. GitHub writes check it before sending;
+  requests already in flight still require reconciliation. Process-group cleanup does not provide
+  task sandbox isolation.
 - Workflow graphs support agent, human-gate, and join nodes with conditional edges and bounded
   parallel execution; richer event-trigger and reusable subworkflow semantics remain future work.
 - SQLite is suitable for local development and tests; Compose uses PostgreSQL for durable

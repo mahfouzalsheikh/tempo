@@ -15,6 +15,7 @@ import structlog
 from .config import ServiceConfig
 from .domain import Issue
 from .errors import CodexError
+from .process import stop_process_group
 from .trackers.base import Tracker
 from .validation import ProjectValidator, clean_workspace_head, workspace_fingerprint
 from .workspace import WorkspaceManager
@@ -82,6 +83,7 @@ class CodexAppServer:
         resume_thread_id: str | None = None,
         usage_baseline: dict[str, int] | None = None,
     ) -> CodexSession:
+        await self.tracker.assert_ownership()
         if role not in {"implementation", "review"}:
             raise CodexError(f"unsupported agent role: {role}", category="invalid_agent_role")
         self.workspace_manager.assert_contained(workspace)
@@ -107,6 +109,7 @@ class CodexAppServer:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 limit=10 * 1024 * 1024,
+                start_new_session=True,
             )
         except FileNotFoundError as exc:
             raise CodexError(
@@ -212,11 +215,12 @@ class CodexAppServer:
                     }
                 )
             return session
-        except Exception:
+        except BaseException:
             await self.stop_session(session)
             raise
 
     async def run_turn(self, session: CodexSession, prompt: str, issue: Issue) -> dict[str, Any]:
+        await self.tracker.assert_ownership()
         request_id = session.next_request_id
         session.next_request_id += 1
         sandbox_policy = self.config.turn_sandbox_policy or {
@@ -430,6 +434,7 @@ class CodexAppServer:
     async def _handle_server_request(
         self, session: CodexSession, message: dict[str, Any], issue: Issue
     ) -> None:
+        await self.tracker.assert_ownership()
         method = message.get("method")
         request_id = message["id"]
         if method == "item/tool/call":
@@ -805,13 +810,7 @@ class CodexAppServer:
         return await workspace_fingerprint(workspace)
 
     async def stop_session(self, session: CodexSession) -> None:
-        if session.process.returncode is None:
-            session.process.terminate()
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(session.process.wait(), timeout=3)
-            if session.process.returncode is None:
-                session.process.kill()
-                await session.process.wait()
+        await stop_process_group(session.process)
         session.reader_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await session.reader_task

@@ -28,7 +28,7 @@ from .domain import (
     normalize_state,
     utcnow,
 )
-from .errors import CodexError
+from .errors import CodexError, LeaseLostError
 from .persistence import PersistenceStore
 from .trackers.base import Tracker
 from .trackers.github import build_tracker
@@ -285,11 +285,10 @@ class Orchestrator:
                 run_id = await self.persistence.enqueue_issue(issue) if self.persistence else None
                 if run_id is None:
                     continue
-                if self.persistence and not await self.persistence.claim_run(
-                    run_id, self.worker_id
-                ):
+                lease_token = await self.persistence.claim_run(run_id, self.worker_id)
+                if not lease_token:
                     continue
-                self._dispatch_locked(issue, None, run_record_id=run_id)
+                self._dispatch_locked(issue, None, run_record_id=run_id, lease_token=lease_token)
 
     async def _reload_database_workflow_if_changed(self) -> bool:
         if not self.persistence:
@@ -383,6 +382,14 @@ class Orchestrator:
             self._cancel_release.add(issue_id)
         entry.task.cancel()
         if cleanup and self.workspace:
+            await asyncio.gather(entry.task, return_exceptions=True)
+            if self.persistence and entry.run_record_id:
+                try:
+                    await self.persistence.assert_ownership(
+                        entry.run_record_id, lease_token=entry.lease_token,
+                    )
+                except LeaseLostError:
+                    return
             await self.workspace.remove(entry.issue.identifier)
 
     async def _process_due_retries(self, config: ServiceConfig) -> None:
@@ -417,16 +424,19 @@ class Orchestrator:
                 continue
             async with self._lock:
                 if self._slot_available(issue, config):
+                    lease_token = None
                     if self.persistence and retry.run_record_id:
-                        if not await self.persistence.claim_run(
+                        lease_token = await self.persistence.claim_run(
                             retry.run_record_id,
                             self.worker_id,
-                        ):
+                        )
+                        if not lease_token:
                             continue
                     self._dispatch_locked(
                         issue,
                         retry.attempt,
                         run_record_id=retry.run_record_id,
+                        lease_token=lease_token,
                     )
                 else:
                     await self._schedule_retry(
@@ -481,6 +491,7 @@ class Orchestrator:
         attempt: int | None,
         *,
         run_record_id: int | None = None,
+        lease_token: str | None = None,
     ) -> None:
         task = asyncio.create_task(
             self._run_worker(issue, attempt),
@@ -491,6 +502,7 @@ class Orchestrator:
             task=task,
             attempt=attempt,
             run_record_id=run_record_id,
+            lease_token=lease_token,
         )
         self.claimed.add(issue.id)
         self.retries.pop(issue.id, None)
@@ -505,14 +517,23 @@ class Orchestrator:
         definition, config = self.store.current()
         assert self.workspace and self.tracker
         workspace_manager = self.workspace
-        tracker = self.tracker
-        workspace = await workspace_manager.create(issue.identifier)
         entry = self.running[issue.id]
-        if self.persistence:
-            entry.run_record_id = await self.persistence.start_run(entry, workspace.path)
+        persistence = self.persistence
+        owner_token = entry.lease_token
+
+        async def assert_ownership(owner=entry) -> None:
+            if owner.lease_lost:
+                raise LeaseLostError("Worker lease was lost.")
+            if persistence and owner.run_record_id:
+                await persistence.assert_ownership(
+                    owner.run_record_id, lease_token=owner_token,
+                )
+
+        tracker = self.tracker.for_run(assert_ownership)
+        workspace = None
 
         async def on_approval(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
-            return await self._wait_for_approval(issue.id, kind, payload)
+            return await self._wait_for_approval(issue.id, kind, payload, expected_entry=entry)
 
         heartbeat_task = asyncio.create_task(
             self._heartbeat_worker(entry),
@@ -520,9 +541,14 @@ class Orchestrator:
         )
 
         try:
+            await assert_ownership()
+            workspace = await workspace_manager.create(issue.identifier)
+            if persistence:
+                entry.run_record_id = await persistence.start_run(entry, workspace.path)
             tracker.revoke_publication(issue.id)
             if not config.validation.enabled:
                 tracker.authorize_publication(issue.id)
+            await assert_ownership()
             await workspace_manager.before_run(workspace.path)
             await self._execute_workflow_graph(
                 issue,
@@ -533,9 +559,8 @@ class Orchestrator:
                 workspace_manager,
                 tracker,
             )
-            entry = self.running.get(issue.id)
-            if not entry:
-                raise CodexError("run was released", category="run_released")
+            if self.running.get(issue.id) is not entry:
+                raise LeaseLostError("Run ownership changed during execution.")
             self._aggregate_node_sessions(entry)
             if not config.workflow.require_publication:
                 entry.phase = "WorkflowCompleted"
@@ -593,10 +618,18 @@ class Orchestrator:
                     category="completion_required",
                 )
         finally:
-            heartbeat_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await heartbeat_task
-            await workspace_manager.after_run(workspace.path)
+            try:
+                if workspace:
+                    try:
+                        await assert_ownership()
+                    except LeaseLostError:
+                        entry.lease_lost = True
+                    else:
+                        await workspace_manager.after_run(workspace.path)
+            finally:
+                heartbeat_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat_task
 
     async def _execute_workflow_graph(
         self,
@@ -632,7 +665,9 @@ class Orchestrator:
         self._restore_completed_node_sessions(entry)
         self._reset_incomplete_graph_nodes(entry)
         if self.persistence and entry.run_record_id:
-            await self.persistence.reset_incomplete_run_nodes(entry.run_record_id)
+            await self.persistence.reset_incomplete_run_nodes(entry.run_record_id,
+                lease_token=entry.lease_token,
+            )
 
         incoming: dict[str, list[WorkflowEdgeConfig]] = {
             node.id: [] for node in config.workflow.nodes
@@ -679,6 +714,7 @@ class Orchestrator:
                             state.node_id,
                             status="skipped",
                             output={"reason": "dependency conditions did not match"},
+                            lease_token=entry.lease_token,
                         )
                     progressed = True
             if not ready:
@@ -705,24 +741,13 @@ class Orchestrator:
                     )
                     for node in batch
                 ]
-                done, pending_tasks = await asyncio.wait(
-                    tasks,
-                    return_when=asyncio.FIRST_EXCEPTION,
-                )
-                error = next(
-                    (
-                        task.exception()
-                        for task in done
-                        if not task.cancelled() and task.exception() is not None
-                    ),
-                    None,
-                )
-                if error:
-                    for task in pending_tasks:
-                        task.cancel()
-                    await asyncio.gather(*pending_tasks, return_exceptions=True)
-                    raise error
-                await asyncio.gather(*pending_tasks)
+                try:
+                    await asyncio.gather(*tasks)
+                finally:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
         unhandled = []
         for state in entry.graph_nodes.values():
@@ -794,6 +819,7 @@ class Orchestrator:
             entry.run_record_id,
             fingerprint=fingerprint,
             node_ids=reset_nodes,
+            lease_token=entry.lease_token,
         )
 
     @staticmethod
@@ -856,7 +882,9 @@ class Orchestrator:
             state.error = None
             entry.phase = f"Node:{node.id}"
             if self.persistence and entry.run_record_id:
-                await self.persistence.start_run_node(entry.run_record_id, node.id, node_attempt)
+                await self.persistence.start_run_node(entry.run_record_id, node.id, node_attempt,
+                    lease_token=entry.lease_token,
+                )
             self._publish_live_state()
             try:
                 if node.type == "join":
@@ -864,11 +892,9 @@ class Orchestrator:
                 elif node.type == "human_gate":
                     state.status = "waiting"
                     if self.persistence and entry.run_record_id:
-                        from tempo_web.models import RunNode
-
-                        await RunNode.objects.filter(
-                            run_id=entry.run_record_id, node_key=node.id
-                        ).aupdate(status=RunNode.Status.WAITING)
+                        await self.persistence.set_run_node_waiting(entry.run_record_id, node.id,
+                            lease_token=entry.lease_token,
+                        )
                     decision = await self._wait_for_approval(
                         issue.id,
                         f"workflow_gate:{node.id}",
@@ -878,6 +904,7 @@ class Orchestrator:
                                 "node": node.id,
                             }
                         },
+                        expected_entry=entry,
                     )
                     if not decision.get("approved"):
                         raise CodexError(
@@ -905,6 +932,7 @@ class Orchestrator:
                         node.id,
                         status="succeeded",
                         output=output,
+                        lease_token=entry.lease_token,
                     )
                 self._publish_live_state()
                 return
@@ -917,7 +945,10 @@ class Orchestrator:
                         node.id,
                         status="cancelled",
                         error="node cancelled",
+                        lease_token=entry.lease_token,
                     )
+                raise
+            except LeaseLostError:
                 raise
             except Exception as exc:
                 state.error = str(exc)
@@ -934,6 +965,7 @@ class Orchestrator:
                             node.id,
                             status="failed",
                             error=str(exc),
+                            lease_token=entry.lease_token,
                         )
                     raise
                 if node_attempt < maximum_attempts:
@@ -946,6 +978,7 @@ class Orchestrator:
                         node.id,
                         status="failed",
                         error=str(exc),
+                        lease_token=entry.lease_token,
                     )
                 self._publish_live_state()
                 return
@@ -982,10 +1015,10 @@ class Orchestrator:
 
         async def on_event(event: dict[str, Any]) -> None:
             event = {**event, "node_id": node.id, "agent_role": profile.role}
-            await self._codex_event(issue.id, event, live_session=live)
+            await self._codex_event(issue.id, event, live_session=live, expected_entry=entry)
 
         async def on_approval(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
-            return await self._wait_for_approval(issue.id, kind, payload)
+            return await self._wait_for_approval(issue.id, kind, payload, expected_entry=entry)
 
         runtime = providers.create_runtime(
             config,
@@ -1004,6 +1037,7 @@ class Orchestrator:
                     entry.run_record_id,
                     node.id,
                     selected_model,
+                    lease_token=entry.lease_token,
                 )
         entry.phase = f"Launching:{node.id}"
         self._publish_live_state()
@@ -1092,7 +1126,9 @@ class Orchestrator:
                     prompt = f"Operator feedback:\n{operator_feedback}\n\n{prompt}"
                 await runtime.run_turn(runtime_session, prompt, current_issue)
                 if operator_feedback and self.persistence and entry.run_record_id:
-                    await self.persistence.set_control_state(entry.run_record_id, feedback="")
+                    await self.persistence.clear_run_feedback(entry.run_record_id,
+                        lease_token=entry.lease_token,
+                    )
                 if profile.completion == "turn":
                     break
                 if profile.completion == "validation" and live.validation_status == "passed":
@@ -1114,7 +1150,7 @@ class Orchestrator:
                 if refreshed:
                     current_issue = refreshed[0]
                     if self.persistence:
-                        await self.persistence.sync_issue(current_issue)
+                        await self.persistence.sync_run_issue(entry, current_issue)
             else:
                 raise CodexError(
                     f"agent {node.agent} exhausted {max_turns} turns before {profile.completion}",
@@ -1254,7 +1290,7 @@ class Orchestrator:
                         "total_tokens": base_total + int(usage.get("total_tokens", 0)),
                     },
                 }
-            await self._codex_event(issue.id, event)
+            await self._codex_event(issue.id, event, expected_entry=entry)
 
         review_client = CodexAppServer(
             config,
@@ -1281,9 +1317,8 @@ class Orchestrator:
                 entry.session.pull_request_url or f"pull request #{pull_request_number}"
             )
             for review_turn in range(1, config.review.max_turns + 1):
-                entry = self.running.get(issue.id)
-                if not entry:
-                    raise CodexError("run was released during review", category="run_released")
+                if self.running.get(issue.id) is not entry:
+                    raise LeaseLostError("Run ownership changed during review.")
                 entry.phase = "ReviewingPullRequest"
                 entry.session.turn_count = implementation_turns + review_turn
                 operator_feedback = self._feedback.pop(issue.id, None)
@@ -1311,7 +1346,9 @@ class Orchestrator:
                 self._publish_live_state()
                 await review_client.run_turn(review_session, prompt, issue)
                 if operator_feedback and self.persistence and entry.run_record_id:
-                    await self.persistence.set_control_state(entry.run_record_id, feedback="")
+                    await self.persistence.clear_run_feedback(entry.run_record_id,
+                        lease_token=entry.lease_token,
+                    )
                 if review_session.review_decision:
                     break
             if not review_session.review_decision:
@@ -1388,12 +1425,22 @@ class Orchestrator:
                 "summary": summary,
                 "reason": entry.session.human_review_reason,
             },
+            expected_entry=entry,
         )
 
     async def _heartbeat_worker(self, entry: RunningEntry) -> None:
-        while entry.issue.id in self.running:
-            if self.persistence and entry.run_record_id:
-                await self.persistence.heartbeat(entry.run_record_id)
+        while self.running.get(entry.issue.id) is entry:
+            try:
+                if self.persistence and entry.run_record_id:
+                    await self.persistence.heartbeat(entry.run_record_id,
+                        lease_token=entry.lease_token,
+                    )
+            except Exception as exc:
+                entry.lease_lost = True
+                if entry.task:
+                    entry.task.cancel()
+                await log.awarning("worker_lease_lost", run_id=entry.run_record_id, error=str(exc))
+                return
             await asyncio.sleep(10)
 
     async def _wait_for_approval(
@@ -1401,8 +1448,12 @@ class Orchestrator:
         issue_id: str,
         kind: str,
         payload: dict[str, Any],
+        *,
+        expected_entry: RunningEntry | None = None,
     ) -> dict[str, Any]:
         entry = self.running.get(issue_id)
+        if expected_entry is not None and entry is not expected_entry:
+            raise LeaseLostError("Run ownership changed before approval.")
         if not entry or not entry.run_record_id or not self.persistence:
             return {"approved": False, "note": "Run is no longer active."}
         request_key = hashlib.sha256(
@@ -1414,13 +1465,16 @@ class Orchestrator:
             request_key=request_key,
             kind=kind,
             details=payload,
+            lease_token=entry.lease_token,
         )
         entry.phase = "WaitingForApproval"
         self._publish_live_state()
-        while issue_id in self.running:
+        while self.running.get(issue_id) is entry:
             decision = await self.persistence.approval_decision(approval_id)
             if decision is not None:
-                await self.persistence.resume_after_approval(entry.run_record_id)
+                await self.persistence.resume_after_approval(entry.run_record_id,
+                    lease_token=entry.lease_token,
+                )
                 entry.phase = "StreamingTurn"
                 self._publish_live_state()
                 return decision
@@ -1433,8 +1487,11 @@ class Orchestrator:
         event: dict[str, Any],
         *,
         live_session: LiveSession | None = None,
+        expected_entry: RunningEntry | None = None,
     ) -> None:
         entry = self.running.get(issue_id)
+        if expected_entry is not None and entry is not expected_entry:
+            raise LeaseLostError("Run ownership changed before event delivery.")
         if not entry:
             return
         session = live_session or entry.session
@@ -1576,12 +1633,13 @@ class Orchestrator:
         if self.persistence and "delta" not in str(event_name).lower():
             await self.persistence.record_event(entry, event, live_session=session)
             if entry.run_record_id:
-                await self.persistence.heartbeat(entry.run_record_id)
+                await self.persistence.heartbeat(entry.run_record_id, lease_token=entry.lease_token)
                 if session.active_node_id:
                     await self.persistence.record_run_node_event(
                         entry.run_record_id,
                         session.active_node_id,
                         session,
+                        lease_token=entry.lease_token,
                     )
                 if event_name in {
                     "validation_completed",
@@ -1599,6 +1657,7 @@ class Orchestrator:
                         str(event_name),
                         event,
                         idempotency_key=f"{entry.run_record_id}:{event_key}",
+                        lease_token=entry.lease_token,
                     )
         if entry.node_sessions_aggregated:
             total_tokens = session.codex_total_tokens
@@ -1621,127 +1680,85 @@ class Orchestrator:
             )
 
     async def _worker_finished(self, issue_id: str, task: asyncio.Task[None]) -> None:
-        async with self._lock:
-            entry = self.running.pop(issue_id, None)
-            if not entry:
-                return
-            self._aggregate_node_sessions(entry)
-            runtime = (utcnow() - entry.started_at).total_seconds()
-            self.totals.runtime_seconds += runtime
-            self.totals.input_tokens += entry.session.codex_input_tokens
-            self.totals.output_tokens += entry.session.codex_output_tokens
-            self.totals.total_tokens += entry.session.codex_total_tokens
-            if issue_id in self._cancel_release:
-                if self.persistence:
-                    await self.persistence.finish_run(
-                        entry,
-                        status="cancelled",
-                        error="run released after tracker state changed",
-                    )
+        try:
+            async with self._lock:
+                entry = self.running.get(issue_id)
+                if not entry or (entry.task is not None and entry.task is not task):
+                    return
+                self.running.pop(issue_id)
+                error = None if task.cancelled() else task.exception()
+                operator_outcome = self._operator_outcomes.pop(issue_id, None)
+                release = issue_id in self._cancel_release
                 self._cancel_release.discard(issue_id)
-                self.claimed.discard(issue_id)
-                self.retries.pop(issue_id, None)
-                return
-            operator_outcome = self._operator_outcomes.pop(issue_id, None)
-            if operator_outcome:
-                if self.persistence:
-                    await self.persistence.finish_run(
-                        entry,
-                        status="cancelled",
-                        error=f"run {operator_outcome} by operator",
+                try:
+                    if entry.lease_lost or isinstance(error, LeaseLostError):
+                        raise LeaseLostError("Worker stopped after losing its lease.")
+                    if self.persistence and entry.run_record_id:
+                        await self.persistence.assert_ownership(
+                            entry.run_record_id, lease_token=entry.lease_token,
+                        )
+                    runtime = (utcnow() - entry.started_at).total_seconds()
+                    self.totals.runtime_seconds += runtime
+                    self.totals.input_tokens += entry.session.codex_input_tokens
+                    self.totals.output_tokens += entry.session.codex_output_tokens
+                    self.totals.total_tokens += entry.session.codex_total_tokens
+                    if release or operator_outcome:
+                        status = "paused" if operator_outcome == "paused" else "cancelled"
+                        entry.phase = status.title()
+                        if self.persistence:
+                            await self.persistence.finish_run(
+                                entry, status=status,
+                                error=(f"run {operator_outcome} by operator" if operator_outcome
+                                       else "run released after tracker state changed"),
+                            )
+                        self.claimed.discard(issue_id)
+                        self.retries.pop(issue_id, None)
+                        return
+                    _, config = self.store.current()
+                    if error is None and not task.cancelled():
+                        if self.persistence:
+                            await self.persistence.finish_run(entry, status="succeeded", error=None)
+                        self.completed.add(issue_id)
+                        self.claimed.discard(issue_id)
+                        return
+                    category = getattr(error, "category", "")
+                    error_text = str(error) if error else "worker cancelled or stalled"
+                    next_attempt = (entry.attempt or 0) + 1
+                    safety_stop = (
+                        category in {"validation_attempt_limit", "provider_usage_limit"}
+                        or next_attempt > config.agent.max_retries
                     )
-                    from tempo_web.models import AgentRun
-
-                    status = (
-                        AgentRun.Status.PAUSED
-                        if operator_outcome == "paused"
-                        else AgentRun.Status.CANCELLED
+                    if safety_stop:
+                        entry.phase = "SafetyLimitReached"
+                        if self.persistence:
+                            await self.persistence.finish_run(
+                                entry, status="cancelled" if task.cancelled() else "failed",
+                                error=error_text,
+                            )
+                        self.claimed.discard(issue_id)
+                        self.safety_blocked.add(issue_id)
+                    else:
+                        await self._schedule_retry(
+                            issue_id, entry.issue.identifier, next_attempt, error_text, config,
+                            continuation=category == "token_budget_exceeded",
+                            run_record_id=entry.run_record_id, finishing_entry=entry,
+                        )
+                    await log.aerror(
+                        "worker_failed", issue_id=issue_id,
+                        issue_identifier=entry.issue.identifier, error=error_text,
                     )
-                    await self.persistence.set_control_state(
-                        entry.run_record_id,
-                        status=status,
-                        phase=operator_outcome.title(),
-                    )
-                self.claimed.discard(issue_id)
-                self.retries.pop(issue_id, None)
-                self._publish_live_state()
-                return
-            _, config = self.store.current()
-            if task.cancelled():
-                error = "worker cancelled or stalled"
-                next_attempt = (entry.attempt or 0) + 1
-                retry_exhausted = next_attempt > config.agent.max_retries
-                if retry_exhausted:
-                    entry.phase = "SafetyLimitReached"
-                if self.persistence:
-                    await self.persistence.finish_run(
-                        entry,
-                        status="cancelled",
-                        error=error,
-                    )
-                if retry_exhausted:
+                except LeaseLostError:
+                    # The replacement owner (or operator) owns the durable disposition.
                     self.claimed.discard(issue_id)
-                    self.safety_blocked.add(issue_id)
-                else:
-                    await self._schedule_retry(
-                        issue_id,
-                        entry.issue.identifier,
-                        next_attempt,
-                        error,
-                        config,
-                        run_record_id=entry.run_record_id,
-                    )
-                return
-            error = task.exception()
-            if error is None:
-                if self.persistence:
-                    await self.persistence.finish_run(
-                        entry,
-                        status="succeeded",
-                        error=None,
-                    )
-                self.completed.add(issue_id)
-            else:
-                category = getattr(error, "category", "")
-                next_attempt = (entry.attempt or 0) + 1
-                validation_limit = category == "validation_attempt_limit"
-                provider_usage_limit = category == "provider_usage_limit"
-                token_rollover = category == "token_budget_exceeded"
-                retry_exhausted = next_attempt > config.agent.max_retries
-                safety_stop = validation_limit or provider_usage_limit or retry_exhausted
-                if safety_stop:
-                    entry.phase = "SafetyLimitReached"
-                if self.persistence:
-                    await self.persistence.finish_run(
-                        entry,
-                        status="failed",
-                        error=str(error),
-                    )
-                if safety_stop:
-                    self.claimed.discard(issue_id)
-                    self.safety_blocked.add(issue_id)
-                else:
-                    await self._schedule_retry(
-                        issue_id,
-                        entry.issue.identifier,
-                        next_attempt,
-                        str(error),
-                        config,
-                        continuation=token_rollover,
-                        run_record_id=entry.run_record_id,
-                    )
-                await log.aerror(
-                    "worker_failed",
-                    issue_id=issue_id,
-                    issue_identifier=entry.issue.identifier,
-                    error=str(error),
-                )
-        self._refresh.set()
-        self._publish_live_state()
-        if not self.running and self._retired_trackers:
-            retired, self._retired_trackers = self._retired_trackers, []
-            for tracker in retired:
-                await tracker.close()
+                    self.retries.pop(issue_id, None)
+                    await log.awarning("stale_worker_discarded", run_id=entry.run_record_id)
+        finally:
+            self._refresh.set()
+            self._publish_live_state()
+            if not self.running and self._retired_trackers:
+                retired, self._retired_trackers = self._retired_trackers, []
+                for tracker in retired:
+                    await tracker.close()
 
     async def _schedule_retry(
         self,
@@ -1753,6 +1770,7 @@ class Orchestrator:
         *,
         continuation: bool = False,
         run_record_id: int | None = None,
+        finishing_entry: RunningEntry | None = None,
     ) -> None:
         delay_ms = (
             1000
@@ -1763,6 +1781,22 @@ class Orchestrator:
             )
         )
         due_at = utcnow() + timedelta(milliseconds=delay_ms)
+        if self.persistence and run_record_id:
+            if finishing_entry:
+                finishing_entry.phase = "RetryScheduled"
+                await self.persistence.finish_run(
+                    finishing_entry, status="retry_scheduled", error=error,
+                    retry_attempt=attempt, retry_due_at=due_at,
+                )
+            else:
+                try:
+                    await self.persistence.schedule_retry(
+                        run_record_id, attempt=attempt, due_at=due_at, error=error,
+                    )
+                except LeaseLostError:
+                    self.claimed.discard(issue_id)
+                    self.retries.pop(issue_id, None)
+                    return
         self.retries[issue_id] = RetryEntry(
             issue_id=issue_id,
             identifier=identifier,
@@ -1772,13 +1806,6 @@ class Orchestrator:
             run_record_id=run_record_id,
         )
         self.claimed.add(issue_id)
-        if self.persistence and run_record_id:
-            await self.persistence.schedule_retry(
-                run_record_id,
-                attempt=attempt,
-                due_at=due_at,
-                error=error,
-            )
 
     async def control_run(
         self,

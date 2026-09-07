@@ -6,14 +6,16 @@ import json
 import re
 import uuid
 from datetime import timedelta
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from asgiref.sync import sync_to_async
 from django.db import transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Max, Q, Sum
 
 from .domain import Issue, RunningEntry, Totals, utcnow
+from .errors import LeaseLostError
 
 if TYPE_CHECKING:
     from .agent_runtime import RuntimeResumeContext
@@ -21,6 +23,22 @@ if TYPE_CHECKING:
 
 def _json_safe(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str))
+
+
+def leased_write(function):
+    """Keep ownership verification and a synchronous ORM mutation in one transaction."""
+    @sync_to_async(thread_sensitive=True)
+    @wraps(function)
+    def wrapped(self, subject, *args, lease_token=None, **kwargs):
+        entry = subject if isinstance(subject, RunningEntry) else None
+        run_id = entry.run_record_id if entry else subject
+        token = entry.lease_token if entry else lease_token
+        with transaction.atomic():
+            if run_id:
+                self._lock_owned_run(run_id, token)
+            return function(self, subject, *args, **kwargs)
+
+    return wrapped
 
 
 class PersistenceStore:
@@ -35,6 +53,56 @@ class PersistenceStore:
         self.project_id: int | None = None
         self.environment_id: int | None = None
         self.workflow_version_id: int | None = None
+
+    def _lock_owned_run(self, run_id: int, lease_token: str | None):
+        from tempo_web.models import AgentRun, WorkerLease
+
+        run = AgentRun.objects.select_for_update().get(pk=run_id)
+        if self.project_id is not None and run.project_id != self.project_id:
+            raise LeaseLostError("Run belongs to another project.")
+        # Legacy, never-claimed records remain usable for imports and local adapters.
+        # Once a run has been claimed, an omitted token never grants worker authority.
+        if (
+            not lease_token and not run.lease_token
+            and not WorkerLease.objects.filter(run=run).exists()
+        ):
+            return run
+        if (
+            not lease_token
+            or run.lease_token != lease_token
+            or run.status not in {AgentRun.Status.RUNNING, AgentRun.Status.WAITING_APPROVAL}
+            or run.lease_expires_at is None
+            or run.lease_expires_at <= utcnow()
+        ):
+            raise LeaseLostError("Worker no longer owns an active lease for this run.")
+        return run
+
+    @leased_write
+    def assert_ownership(self, run_id: int) -> None:
+        """Check ownership immediately before starting work or a provider operation."""
+
+    @leased_write
+    def clear_run_feedback(self, run_id: int) -> None:
+        from tempo_web.models import AgentRun
+
+        AgentRun.objects.filter(pk=run_id).update(feedback="")
+
+    @leased_write
+    def set_run_node_waiting(self, run_id: int, node_id: str) -> None:
+        from tempo_web.models import RunNode
+
+        RunNode.objects.filter(run_id=run_id, node_key=node_id).update(
+            status=RunNode.Status.WAITING,
+        )
+
+    @leased_write
+    def sync_run_issue(self, entry: RunningEntry, issue: Issue) -> None:
+        from tempo_web.models import TrackedIssue
+
+        TrackedIssue.objects.update_or_create(
+            project_id=self.project_id, tracker_kind=self.tracker_kind, external_id=issue.id,
+            defaults=self._issue_defaults(issue),
+        )
 
     async def initialize(self) -> None:
         from tempo_web.models import Environment, Organization, Project, Repository, WorkflowVersion
@@ -292,45 +360,48 @@ class PersistenceStore:
             ]
         )
 
-    async def reconcile_incomplete_records(self) -> None:
-        from tempo_web.models import AgentRun, ValidationAttempt
+    @sync_to_async(thread_sensitive=True)
+    def reconcile_incomplete_records(self) -> None:
+        from tempo_web.models import AgentRun, ValidationAttempt, WorkerLease
 
-        now = utcnow()
-        await (
-            AgentRun.objects.filter(
-                project_id=self.project_id,
-                status=AgentRun.Status.RUNNING,
-            )
-            .filter(Q(lease_expires_at__isnull=True) | Q(lease_expires_at__lte=now))
-            .aupdate(
-                status=AgentRun.Status.RETRY_SCHEDULED,
-                phase="Recovering",
-                available_at=now,
-                worker_id="",
-                lease_token="",
-                lease_expires_at=None,
-                error="Worker lease expired; resuming from the last durable checkpoint.",
-            )
-        )
-        await AgentRun.objects.filter(
+        candidates = list(AgentRun.objects.filter(
             project_id=self.project_id,
-            status=AgentRun.Status.WAITING_APPROVAL,
-            lease_expires_at__lte=now,
-        ).aupdate(
-            worker_id="",
-            lease_token="",
-            lease_expires_at=None,
-            heartbeat_at=None,
-            phase="WaitingForApproval",
-        )
-        await ValidationAttempt.objects.filter(
-            run__project_id=self.project_id,
-            run__status=AgentRun.Status.RETRY_SCHEDULED,
-            status=ValidationAttempt.Status.RUNNING,
-        ).aupdate(
-            status=ValidationAttempt.Status.INVALIDATED,
-            finished_at=now,
-        )
+            status__in=[
+                AgentRun.Status.RUNNING, AgentRun.Status.WAITING_APPROVAL,
+                AgentRun.Status.RETRY_SCHEDULED,
+            ],
+        ).filter(
+            Q(lease_expires_at__isnull=True) | Q(lease_expires_at__lte=utcnow()),
+        ).values_list("pk", flat=True))
+        for run_id in candidates:
+            with transaction.atomic():
+                run = AgentRun.objects.select_for_update().get(pk=run_id)
+                now = utcnow()
+                # A heartbeat or replacement claim may have won after candidate selection.
+                if run.lease_expires_at and run.lease_expires_at > now:
+                    continue
+                if run.status in {AgentRun.Status.RUNNING, AgentRun.Status.WAITING_APPROVAL}:
+                    updates = {"worker_id": "", "lease_token": "", "lease_expires_at": None}
+                    if run.status == AgentRun.Status.RUNNING:
+                        updates.update(
+                            status=AgentRun.Status.RETRY_SCHEDULED, phase="Recovering",
+                            available_at=now,
+                            error=(
+                                "Worker lease expired; resuming from the last durable checkpoint."
+                            ),
+                        )
+                    else:
+                        updates.update(heartbeat_at=None, phase="WaitingForApproval")
+                    AgentRun.objects.filter(pk=run_id).update(**updates)
+                    WorkerLease.objects.filter(run_id=run_id, released_at=None).update(
+                        released_at=now,
+                    )
+                elif run.status != AgentRun.Status.RETRY_SCHEDULED or run.lease_token:
+                    continue
+                # Hold the parent lock until cleanup completes, before any new claim can start.
+                ValidationAttempt.objects.filter(
+                    run_id=run_id, status=ValidationAttempt.Status.RUNNING,
+                ).update(status=ValidationAttempt.Status.INVALIDATED, finished_at=now)
 
     async def runtime_summary(self) -> tuple[Totals, int]:
         """Load durable headline totals without making the database the scheduler."""
@@ -398,24 +469,28 @@ class PersistenceStore:
             external_id async for external_id in rows.values_list("issue__external_id", flat=True)
         }
 
-    async def start_run(
+    async def start_run(self, entry: RunningEntry, workspace_path: Path) -> int:
+        if self.project_id is None:
+            await self.initialize()
+        return await self._start_run(entry, workspace_path)
+
+    @leased_write
+    def _start_run(
         self,
         entry: RunningEntry,
         workspace_path: Path,
     ) -> int:
         from tempo_web.models import AgentRun, AgentSession, TrackedIssue
 
-        if self.project_id is None:
-            await self.initialize()
-        issue, _ = await TrackedIssue.objects.aupdate_or_create(
+        issue, _ = TrackedIssue.objects.update_or_create(
             project_id=self.project_id,
             tracker_kind=self.tracker_kind,
             external_id=entry.issue.id,
             defaults=self._issue_defaults(entry.issue),
         )
         if entry.run_record_id:
-            run = await AgentRun.objects.aget(pk=entry.run_record_id)
-            await AgentRun.objects.filter(pk=run.pk).aupdate(
+            run = AgentRun.objects.get(pk=entry.run_record_id)
+            AgentRun.objects.filter(pk=run.pk).update(
                 status=AgentRun.Status.RUNNING,
                 phase=entry.phase,
                 workspace_path=str(workspace_path),
@@ -425,7 +500,7 @@ class PersistenceStore:
                 error="",
             )
         else:
-            run = await AgentRun.objects.acreate(
+            run = AgentRun.objects.create(
                 project_id=self.project_id,
                 environment_id=self.environment_id,
                 workflow_version_id=self.workflow_version_id,
@@ -437,14 +512,15 @@ class PersistenceStore:
                 started_at=entry.started_at,
                 heartbeat_at=utcnow(),
             )
-        await AgentSession.objects.aget_or_create(run=run)
+        AgentSession.objects.get_or_create(run=run)
         return run.pk
 
-    async def resume_context(self, run_id: int) -> dict[str, Any] | None:
+    @leased_write
+    def resume_context(self, run_id: int) -> dict[str, Any] | None:
         """Return the durable Codex thread state needed for a continuation attempt."""
         from tempo_web.models import AgentRun, AgentSession, RunCheckpoint
 
-        session = await AgentSession.objects.select_related("run").filter(run_id=run_id).afirst()
+        session = AgentSession.objects.select_related("run").filter(run_id=run_id).first()
         if not session or not session.thread_id:
             return None
         pull_request_url = session.run.pull_request_url
@@ -457,11 +533,11 @@ class PersistenceStore:
                 run_id=run_id,
                 kind="tool_call_completed",
             ).order_by("-sequence")
-            async for checkpoint in checkpoints:
+            for checkpoint in checkpoints:
                 recovered = self._pull_request_from_checkpoint(checkpoint.payload)
                 if recovered:
                     pull_request_url, pull_request_number = recovered
-                    await AgentRun.objects.filter(pk=run_id).aupdate(
+                    AgentRun.objects.filter(pk=run_id).update(
                         pull_request_url=pull_request_url
                     )
                     break
@@ -525,14 +601,15 @@ class PersistenceStore:
             )
         return None
 
-    async def initialize_run_nodes(self, entry: RunningEntry) -> None:
+    @leased_write
+    def initialize_run_nodes(self, entry: RunningEntry) -> None:
         if not entry.run_record_id or self.config is None:
             return
         from tempo_web.models import RunNode, WorkflowNodeDefinition
 
         definitions = {
             row.key: row
-            async for row in WorkflowNodeDefinition.objects.filter(
+            for row in WorkflowNodeDefinition.objects.filter(
                 workflow_version_id=self.workflow_version_id
             )
         }
@@ -541,7 +618,7 @@ class PersistenceStore:
             incoming[edge.target].append(edge.source)
         for node in self.config.workflow.nodes:
             profile = self.config.agents.get(node.agent or "")
-            row, _ = await RunNode.objects.aget_or_create(
+            row, _ = RunNode.objects.get_or_create(
                 run_id=entry.run_record_id,
                 node_key=node.id,
                 defaults={
@@ -567,10 +644,11 @@ class PersistenceStore:
             state.error = row.error or None
             state.output = row.output
 
-    async def start_run_node(self, run_id: int, node_id: str, attempt: int) -> None:
+    @leased_write
+    def start_run_node(self, run_id: int, node_id: str, attempt: int) -> None:
         from tempo_web.models import RunNode
 
-        await RunNode.objects.filter(run_id=run_id, node_key=node_id).aupdate(
+        RunNode.objects.filter(run_id=run_id, node_key=node_id).update(
             status=RunNode.Status.RUNNING,
             attempt=attempt,
             started_at=utcnow(),
@@ -578,13 +656,14 @@ class PersistenceStore:
             error="",
         )
 
-    async def reset_incomplete_run_nodes(self, run_id: int) -> None:
+    @leased_write
+    def reset_incomplete_run_nodes(self, run_id: int) -> None:
         """Clear derived terminal state before reevaluating a retried graph."""
         from tempo_web.models import RunNode
 
-        await RunNode.objects.filter(run_id=run_id).exclude(
+        RunNode.objects.filter(run_id=run_id).exclude(
             status=RunNode.Status.SUCCEEDED
-        ).aupdate(
+        ).update(
             status=RunNode.Status.PENDING,
             attempt=0,
             started_at=None,
@@ -624,7 +703,8 @@ class PersistenceStore:
             "node_id": "",
         }
 
-    async def invalidate_validation_recovery(
+    @leased_write
+    def invalidate_validation_recovery(
         self,
         run_id: int,
         *,
@@ -634,13 +714,13 @@ class PersistenceStore:
         """Invalidate stale validation and requeue its node path without losing threads."""
         from tempo_web.models import RunNode, ValidationAttempt
 
-        await ValidationAttempt.objects.filter(
+        ValidationAttempt.objects.filter(
             run_id=run_id,
             status=ValidationAttempt.Status.PASSED,
             workspace_fingerprint=fingerprint,
-        ).aupdate(status=ValidationAttempt.Status.INVALIDATED)
+        ).update(status=ValidationAttempt.Status.INVALIDATED)
         if node_ids:
-            await RunNode.objects.filter(run_id=run_id, node_key__in=node_ids).aupdate(
+            RunNode.objects.filter(run_id=run_id, node_key__in=node_ids).update(
                 status=RunNode.Status.PENDING,
                 attempt=0,
                 started_at=None,
@@ -730,10 +810,11 @@ class PersistenceStore:
             workspace_published=workspace_published,
         )
 
-    async def set_run_node_model(self, run_id: int, node_id: str, model: str) -> None:
+    @leased_write
+    def set_run_node_model(self, run_id: int, node_id: str, model: str) -> None:
         from tempo_web.models import RunNode
 
-        await RunNode.objects.filter(run_id=run_id, node_key=node_id).aupdate(model=model)
+        RunNode.objects.filter(run_id=run_id, node_key=node_id).update(model=model)
 
     async def completed_review_decision(self, run_id: int) -> dict[str, str] | None:
         """Recover a review decision recorded before post-review policy was applied."""
@@ -769,7 +850,8 @@ class PersistenceStore:
                 return result
         return None
 
-    async def finish_run_node(
+    @leased_write
+    def finish_run_node(
         self,
         run_id: int,
         node_id: str,
@@ -780,7 +862,7 @@ class PersistenceStore:
     ) -> None:
         from tempo_web.models import RunNode
 
-        await RunNode.objects.filter(run_id=run_id, node_key=node_id).aupdate(
+        RunNode.objects.filter(run_id=run_id, node_key=node_id).update(
             status=status,
             finished_at=utcnow(),
             error=error or "",
@@ -788,7 +870,8 @@ class PersistenceStore:
             checkpoint={"status": status, "finished_at": utcnow().isoformat()},
         )
 
-    async def record_run_node_event(
+    @leased_write
+    def record_run_node_event(
         self,
         run_id: int,
         node_id: str,
@@ -796,7 +879,7 @@ class PersistenceStore:
     ) -> None:
         from tempo_web.models import RunNode
 
-        await RunNode.objects.filter(run_id=run_id, node_key=node_id).aupdate(
+        RunNode.objects.filter(run_id=run_id, node_key=node_id).update(
             session_id=session.session_id or "",
             thread_id=session.thread_id or "",
             turn_count=session.turn_count,
@@ -848,12 +931,14 @@ class PersistenceStore:
         return run.pk
 
     @sync_to_async(thread_sensitive=True)
-    def claim_run(self, run_id: int, worker_id: str, *, lease_seconds: int = 30) -> bool:
+    def claim_run(self, run_id: int, worker_id: str, *, lease_seconds: int = 30) -> str | None:
         from tempo_web.models import AgentRun, Environment, Project, WorkerLease
 
-        now = utcnow()
         with transaction.atomic():
             run = AgentRun.objects.select_for_update().get(pk=run_id)
+            if self.project_id is not None and run.project_id != self.project_id:
+                raise LeaseLostError("Run belongs to another project.")
+            now = utcnow()
             claimable = run.status in {
                 AgentRun.Status.QUEUED,
                 AgentRun.Status.RETRY_SCHEDULED,
@@ -864,7 +949,7 @@ class PersistenceStore:
                 and run.lease_expires_at <= now
             )
             if not claimable and not stale:
-                return False
+                return None
             project = Project.objects.select_for_update().get(pk=run.project_id)
             environment = (
                 Environment.objects.select_for_update().get(pk=run.environment_id)
@@ -879,14 +964,15 @@ class PersistenceStore:
                 ],
             ).exclude(pk=run.pk)
             if active.count() >= project.max_concurrent_runs:
-                return False
+                return None
             if (
                 environment
                 and active.filter(environment=environment).count()
                 >= environment.max_concurrent_runs
             ):
-                return False
+                return None
             token = uuid.uuid4().hex
+            now = utcnow()
             expires_at = now + timedelta(seconds=lease_seconds)
             run.status = AgentRun.Status.RUNNING
             run.phase = "Claimed"
@@ -904,6 +990,7 @@ class PersistenceStore:
                     "lease_expires_at",
                 ]
             )
+            WorkerLease.objects.filter(run=run, released_at=None).update(released_at=now)
             WorkerLease.objects.create(
                 run=run,
                 worker_id=worker_id,
@@ -912,30 +999,32 @@ class PersistenceStore:
                 heartbeat_at=now,
                 expires_at=expires_at,
             )
-            return True
+            return token
 
-    async def heartbeat(self, run_id: int, *, lease_seconds: int = 30) -> None:
+    @leased_write
+    def heartbeat(self, run_id: int, *, lease_seconds: int = 30) -> None:
         from tempo_web.models import AgentRun, WorkerLease
 
         now = utcnow()
         expires_at = now + timedelta(seconds=lease_seconds)
-        run = await AgentRun.objects.filter(
+        run = AgentRun.objects.filter(
             pk=run_id,
             status__in=[AgentRun.Status.RUNNING, AgentRun.Status.WAITING_APPROVAL],
-        ).afirst()
+        ).first()
         if not run:
             return
-        await AgentRun.objects.filter(pk=run_id).aupdate(
+        AgentRun.objects.filter(pk=run_id).update(
             heartbeat_at=now,
             lease_expires_at=expires_at,
         )
         if run.lease_token:
-            await WorkerLease.objects.filter(token=run.lease_token, released_at=None).aupdate(
+            WorkerLease.objects.filter(token=run.lease_token, released_at=None).update(
                 heartbeat_at=now,
                 expires_at=expires_at,
             )
 
-    async def checkpoint(
+    @leased_write
+    def checkpoint(
         self,
         run_id: int,
         kind: str,
@@ -945,8 +1034,12 @@ class PersistenceStore:
     ) -> None:
         from tempo_web.models import AgentRun, RunCheckpoint
 
-        sequence = await RunCheckpoint.objects.filter(run_id=run_id).acount() + 1
-        checkpoint, _ = await RunCheckpoint.objects.aget_or_create(
+        # The parent run is locked by leased_write, serializing all checkpoint writers.
+        sequence = (
+            RunCheckpoint.objects.filter(run_id=run_id).aggregate(latest=Max("sequence"))["latest"]
+            or 0
+        ) + 1
+        checkpoint, created = RunCheckpoint.objects.get_or_create(
             idempotency_key=idempotency_key,
             defaults={
                 "run_id": run_id,
@@ -955,7 +1048,12 @@ class PersistenceStore:
                 "payload": _json_safe(payload),
             },
         )
-        await AgentRun.objects.filter(pk=run_id).aupdate(
+        if checkpoint.run_id != run_id:
+            raise ValueError("Checkpoint idempotency key belongs to another run.")
+        # Replaying an old checkpoint must not move the run's durable pointer backward.
+        if not created:
+            return
+        AgentRun.objects.filter(pk=run_id).update(
             checkpoint={
                 "sequence": checkpoint.sequence,
                 "kind": checkpoint.kind,
@@ -963,7 +1061,8 @@ class PersistenceStore:
             }
         )
 
-    async def schedule_retry(
+    @sync_to_async(thread_sensitive=True)
+    def schedule_retry(
         self,
         run_id: int,
         *,
@@ -971,23 +1070,23 @@ class PersistenceStore:
         due_at: Any,
         error: str | None,
     ) -> None:
-        from tempo_web.models import AgentRun, WorkerLease
+        from tempo_web.models import AgentRun
 
-        run = await AgentRun.objects.aget(pk=run_id)
-        await AgentRun.objects.filter(pk=run_id).aupdate(
-            status=AgentRun.Status.RETRY_SCHEDULED,
-            phase="RetryScheduled",
-            attempt=attempt,
-            available_at=due_at,
-            worker_id="",
-            lease_token="",
-            lease_expires_at=None,
-            error=error or "",
-            finished_at=None,
-        )
-        if run.lease_token:
-            await WorkerLease.objects.filter(token=run.lease_token, released_at=None).aupdate(
-                released_at=utcnow()
+        with transaction.atomic():
+            run = AgentRun.objects.select_for_update().get(pk=run_id)
+            if self.project_id is not None and run.project_id != self.project_id:
+                raise LeaseLostError("Run belongs to another project.")
+            if run.lease_token or run.status not in {
+                AgentRun.Status.QUEUED, AgentRun.Status.RETRY_SCHEDULED,
+            }:
+                raise LeaseLostError("Scheduler cannot reschedule an owned or terminal run.")
+            AgentRun.objects.filter(pk=run_id).update(
+                status=AgentRun.Status.RETRY_SCHEDULED,
+                phase="RetryScheduled",
+                attempt=attempt,
+                available_at=due_at,
+                error=error or "",
+                finished_at=None,
             )
 
     async def pending_runs(self) -> list[dict[str, Any]]:
@@ -1010,7 +1109,8 @@ class PersistenceStore:
             async for row in rows
         ]
 
-    async def create_approval(
+    @leased_write
+    def create_approval(
         self,
         run_id: int,
         *,
@@ -1020,7 +1120,7 @@ class PersistenceStore:
     ) -> int:
         from tempo_web.models import AgentRun, ApprovalRequest
 
-        approval, _ = await ApprovalRequest.objects.aget_or_create(
+        approval, _ = ApprovalRequest.objects.get_or_create(
             request_key=request_key,
             defaults={
                 "run_id": run_id,
@@ -1032,7 +1132,7 @@ class PersistenceStore:
                 ),
             },
         )
-        await AgentRun.objects.filter(pk=run_id).aupdate(
+        AgentRun.objects.filter(pk=run_id).update(
             status=AgentRun.Status.WAITING_APPROVAL,
             phase="WaitingForApproval",
         )
@@ -1050,13 +1150,14 @@ class PersistenceStore:
             "note": approval.decision_note,
         }
 
-    async def resume_after_approval(self, run_id: int) -> None:
+    @leased_write
+    def resume_after_approval(self, run_id: int) -> None:
         from tempo_web.models import AgentRun
 
-        await AgentRun.objects.filter(
+        AgentRun.objects.filter(
             pk=run_id,
             status=AgentRun.Status.WAITING_APPROVAL,
-        ).aupdate(status=AgentRun.Status.RUNNING, phase="StreamingTurn")
+        ).update(status=AgentRun.Status.RUNNING, phase="StreamingTurn")
 
     async def record_operator_action(
         self,
@@ -1156,7 +1257,8 @@ class PersistenceStore:
             defaults=self._issue_defaults(issue),
         )
 
-    async def record_event(
+    @leased_write
+    def record_event(
         self,
         entry: RunningEntry,
         event: dict[str, Any],
@@ -1168,14 +1270,14 @@ class PersistenceStore:
         from tempo_web.models import AgentRun, AgentSession, ValidationAttempt, ValidationCommand
 
         session = live_session or entry.session
-        await AgentRun.objects.filter(pk=entry.run_record_id).aupdate(
+        AgentRun.objects.filter(pk=entry.run_record_id).update(
             phase=entry.phase,
             pull_request_url=session.pull_request_url or "",
             input_tokens=session.codex_input_tokens,
             output_tokens=session.codex_output_tokens,
             total_tokens=session.codex_total_tokens,
         )
-        await AgentSession.objects.aupdate_or_create(
+        AgentSession.objects.update_or_create(
             run_id=entry.run_record_id,
             defaults={
                 "agent_role": session.agent_role,
@@ -1198,7 +1300,7 @@ class PersistenceStore:
 
         event_name = event.get("event")
         if event_name == "validation_started":
-            validation = await ValidationAttempt.objects.acreate(
+            validation = ValidationAttempt.objects.create(
                 run_id=entry.run_record_id,
                 status=ValidationAttempt.Status.RUNNING,
                 summary=str(event.get("summary", "")),
@@ -1206,10 +1308,10 @@ class PersistenceStore:
             )
             session.validation_record_id = validation.pk
         elif event_name == "validation_command_completed" and session.validation_record_id:
-            position = await ValidationCommand.objects.filter(
+            position = ValidationCommand.objects.filter(
                 validation_id=session.validation_record_id
-            ).acount()
-            await ValidationCommand.objects.acreate(
+            ).count()
+            ValidationCommand.objects.create(
                 validation_id=session.validation_record_id,
                 position=position + 1,
                 name=str(event.get("name", "")),
@@ -1226,44 +1328,52 @@ class PersistenceStore:
                 if event.get("success")
                 else ValidationAttempt.Status.FAILED
             )
-            await ValidationAttempt.objects.filter(pk=session.validation_record_id).aupdate(
+            ValidationAttempt.objects.filter(pk=session.validation_record_id).update(
                 status=status,
                 finished_at=session.validation_finished_at or utcnow(),
             )
         elif event_name == "validation_invalidated" and session.validation_record_id:
-            await ValidationAttempt.objects.filter(pk=session.validation_record_id).aupdate(
+            ValidationAttempt.objects.filter(pk=session.validation_record_id).update(
                 status=ValidationAttempt.Status.INVALIDATED,
                 finished_at=utcnow(),
             )
         elif event_name == "validation_fingerprint_recorded" and session.validation_record_id:
-            await ValidationAttempt.objects.filter(pk=session.validation_record_id).aupdate(
+            ValidationAttempt.objects.filter(pk=session.validation_record_id).update(
                 workspace_fingerprint=str(event.get("fingerprint", ""))
             )
 
-    async def finish_run(
+    @leased_write
+    def finish_run(
         self,
         entry: RunningEntry,
         *,
         status: str,
         error: str | None,
+        retry_attempt: int | None = None,
+        retry_due_at: Any = None,
     ) -> None:
         if not entry.run_record_id:
             return
         from tempo_web.models import AgentRun, ValidationAttempt, WorkerLease
 
-        await ValidationAttempt.objects.filter(
+        ValidationAttempt.objects.filter(
             run_id=entry.run_record_id,
             status=ValidationAttempt.Status.RUNNING,
-        ).aupdate(
+        ).update(
             status=ValidationAttempt.Status.INVALIDATED,
             finished_at=utcnow(),
         )
 
-        run = await AgentRun.objects.aget(pk=entry.run_record_id)
-        await AgentRun.objects.filter(pk=entry.run_record_id).aupdate(
+        run = AgentRun.objects.get(pk=entry.run_record_id)
+        updates = {}
+        if status == AgentRun.Status.RETRY_SCHEDULED:
+            if retry_attempt is None or retry_due_at is None:
+                raise ValueError("Retry completion requires an attempt and due time.")
+            updates = {"attempt": retry_attempt, "available_at": retry_due_at}
+        AgentRun.objects.filter(pk=entry.run_record_id).update(
             phase=entry.phase,
             status=status,
-            finished_at=utcnow(),
+            finished_at=None if status == AgentRun.Status.RETRY_SCHEDULED else utcnow(),
             error=error or "",
             pull_request_url=entry.session.pull_request_url or "",
             input_tokens=entry.session.codex_input_tokens,
@@ -1271,9 +1381,11 @@ class PersistenceStore:
             total_tokens=entry.session.codex_total_tokens,
             lease_expires_at=None,
             lease_token="",
+            worker_id="",
+            **updates,
         )
         if run.lease_token:
-            await WorkerLease.objects.filter(token=run.lease_token, released_at=None).aupdate(
+            WorkerLease.objects.filter(token=run.lease_token, released_at=None).update(
                 released_at=utcnow()
             )
 

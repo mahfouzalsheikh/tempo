@@ -27,3 +27,7 @@ class WorkspaceError(TempoError):
 
 class CodexError(TempoError):
     category = "codex_error"
+
+
+class LeaseLostError(TempoError):
+    category = "lease_lost"

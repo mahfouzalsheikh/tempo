@@ -20,6 +20,7 @@ from .config import (
 )
 from .domain import Issue
 from .errors import CodexError, ConfigError
+from .process import stop_process_group
 from .trackers.base import Tracker
 from .workspace import WorkspaceManager
 
@@ -179,7 +180,7 @@ class CodexAgentRuntime(AgentRuntime):
         if resume_context and resume_context.compact_before_resume and session.resumed:
             try:
                 await self.client.compact_session(session)
-            except Exception:
+            except BaseException:
                 await self.client.stop_session(session)
                 raise
         return session
@@ -236,6 +237,7 @@ class ExternalCommandRuntime(AgentRuntime):
         resume_context: RuntimeResumeContext | None = None,
     ) -> ExternalCommandSession:
         self.workspace_manager.assert_contained(workspace)
+        await self.tracker.assert_ownership()
         environment = os.environ.copy()
         for name in self.tracker.secret_environment_names() | {
             "DJANGO_SECRET_KEY",
@@ -251,36 +253,41 @@ class ExternalCommandRuntime(AgentRuntime):
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
         session = ExternalCommandSession(process=process, workspace=workspace)
         asyncio.create_task(self._drain_stderr(process))
-        result = await self._request(
-            session,
-            1,
-            "session/start",
-            {
-                "workspace": str(workspace),
-                "model_provider": self.model.provider,
-                "model": self.model.model,
-                "model_candidates": list(self.model.candidates),
-                "tools": sorted(self.enabled_tools) if self.enabled_tools is not None else None,
-                "settings": self.settings,
-                "resume": (
-                    {
-                        "thread_id": resume_context.thread_id,
-                        "usage_baseline": resume_context.usage_baseline,
-                        "compact_before_resume": resume_context.compact_before_resume,
-                    }
-                    if resume_context
-                    else None
-                ),
-            },
-        )
-        session.resumed = bool(result.get("resumed"))
-        if resume_context and not session.resumed:
-            session.resume_failure = str(
-                result.get("resume_failure") or "runtime did not confirm session continuation"
+        try:
+            result = await self._request(
+                session,
+                1,
+                "session/start",
+                {
+                    "workspace": str(workspace),
+                    "model_provider": self.model.provider,
+                    "model": self.model.model,
+                    "model_candidates": list(self.model.candidates),
+                    "tools": sorted(self.enabled_tools) if self.enabled_tools is not None else None,
+                    "settings": self.settings,
+                    "resume": (
+                        {
+                            "thread_id": resume_context.thread_id,
+                            "usage_baseline": resume_context.usage_baseline,
+                            "compact_before_resume": resume_context.compact_before_resume,
+                        }
+                        if resume_context
+                        else None
+                    ),
+                },
             )
+            session.resumed = bool(result.get("resumed"))
+            if resume_context and not session.resumed:
+                session.resume_failure = str(
+                    result.get("resume_failure") or "runtime did not confirm session continuation"
+                )
+        except BaseException:
+            await stop_process_group(process)
+            raise
         return session
 
     async def run_turn(
@@ -289,6 +296,7 @@ class ExternalCommandRuntime(AgentRuntime):
         prompt: str,
         issue: Issue,
     ) -> dict[str, Any]:
+        await self.tracker.assert_ownership()
         request_id = session.next_request_id
         session.next_request_id += 1
         result = await self._request(
@@ -310,21 +318,17 @@ class ExternalCommandRuntime(AgentRuntime):
         return result
 
     async def stop_session(self, session: ExternalCommandSession) -> None:
-        if session.process.returncode is None:
-            with contextlib.suppress(Exception):
-                await self._request(
-                    session,
-                    session.next_request_id,
-                    "session/stop",
-                    {},
-                    timeout_ms=3000,
-                )
-            session.process.terminate()
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(session.process.wait(), timeout=3)
+        try:
             if session.process.returncode is None:
-                session.process.kill()
-                await session.process.wait()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(
+                        self._request(
+                            session, session.next_request_id, "session/stop", {}, timeout_ms=3000,
+                        ),
+                        timeout=3,
+                    )
+        finally:
+            await stop_process_group(session.process)
 
     async def _request(
         self,

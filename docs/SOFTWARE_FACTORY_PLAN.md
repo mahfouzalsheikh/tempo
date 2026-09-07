@@ -2,7 +2,9 @@
 
 Assessment date: 2026-09-06. Code baseline: `45b84bd`. This is a proposed implementation plan, not a description of capabilities already delivered.
 
-Implementation progress: the plan was committed as `7f40f0f`. Phase 0 has started with commit-bound review and merge: clean-commit review validation, durable host-recorded approval identity, remote-head checks, expected-SHA merge requests, and lost-response reconciliation. Historical approvals without commit identity require fresh review. The remaining Phase 0 work and later phases are still outstanding; code findings below describe the assessment baseline.
+Implementation progress: the plan was committed as `7f40f0f`. Phase 0 started with commit-bound review and merge (`ca52725`): clean-commit review validation, durable host-recorded approval identity, remote-head checks, expected-SHA merge requests, and lost-response reconciliation. Historical approvals without commit identity require fresh review.
+
+The next Phase 0 slice implements lease ownership checks inside worker-write transactions, atomic checkpoint allocation and retry release, recovery cleanup under the run lock, and rejection of delayed callbacks from replaced workers. Per-run GitHub adapters check ownership before mutations. Lease loss cancels the worker and drains graph tasks; runtime and hook subprocesses use process-group cleanup. PostgreSQL tests use independent processes to verify checkpoint sequencing and exclusive reclaim. Provider checks cannot recall requests already in flight, and process-group cleanup is not a sandbox boundary: durable side-effect intents/reconciliation, constrained publication, and isolated task execution remain outstanding. The remaining Phase 0 work and later phases are still outstanding; code findings below describe the assessment baseline.
 
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 

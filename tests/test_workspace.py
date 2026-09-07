@@ -1,3 +1,6 @@
+import asyncio
+from pathlib import Path
+
 import pytest
 
 from tempo.config import HooksConfig
@@ -44,3 +47,33 @@ def test_containment_rejects_escape(tmp_path):
     manager = WorkspaceManager(tmp_path / "root", HooksConfig())
     with pytest.raises(WorkspaceError):
         manager.assert_contained(tmp_path / "outside")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_hook_stops_its_child_processes(tmp_path):
+    manager = WorkspaceManager(tmp_path, HooksConfig())
+    task = asyncio.create_task(manager.run_hook(
+        "before_run", 'sleep 30 & child=$!; printf "%s" "$child" > child.pid; wait',
+        tmp_path, fatal=True,
+    ))
+    pidfile = tmp_path / "child.pid"
+    try:
+        for _ in range(300):
+            try:
+                child_pid = int(await asyncio.to_thread(pidfile.read_text))
+                break
+            except (FileNotFoundError, ValueError):
+                await asyncio.sleep(0.01)
+        else:
+            pytest.fail("Hook child did not start")
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert task.cancelled()
+    state_file = Path(f"/proc/{child_pid}/stat")
+    # A killed child may briefly remain a zombie until its reaper collects it.
+    try:
+        state = await asyncio.to_thread(state_file.read_text)
+    except FileNotFoundError:
+        return
+    assert state.split()[2] == "Z"

@@ -205,7 +205,9 @@ async def test_changed_workspace_routes_recovery_back_through_verifier(tmp_path,
         async def successful_validation_context(self, _run_id):
             return {"fingerprint": "validated", "node_id": "verify"}
 
-        async def invalidate_validation_recovery(self, run_id, *, fingerprint, node_ids):
+        async def invalidate_validation_recovery(
+            self, run_id, *, fingerprint, node_ids, lease_token,
+        ):
             self.invalidated = (run_id, fingerprint, node_ids)
 
     async def changed_fingerprint(_workspace):
@@ -998,3 +1000,42 @@ async def test_review_decision_is_durable_before_tool_response(tmp_path):
     assert await orchestrator.persistence.completed_review_decision(entry.run_record_id) == {
         "decision": "approve", "summary": "Reviewed candidate.", "review_head_sha": "a" * 40,
     }
+
+
+@pytest.mark.asyncio
+async def test_cancelling_graph_stops_all_parallel_nodes(tmp_path, monkeypatch):
+    from tempo.config import WorkflowGraphConfig, WorkflowNodeConfig
+
+    orchestrator = Orchestrator(str(workflow(tmp_path)))
+    await orchestrator.store.initialize()
+    definition, config = orchestrator.store.current()
+    config.workflow = WorkflowGraphConfig(max_parallel_nodes=2, nodes=[
+        WorkflowNodeConfig(id="one", agent="implementer"),
+        WorkflowNodeConfig(id="two", agent="implementer"),
+    ])
+    issue = Issue(id="parallel", identifier="P-1", title="Parallel", state="Todo")
+    orchestrator.running[issue.id] = RunningEntry(issue=issue, task=None, attempt=1)
+    started, stopped = set(), set()
+    all_started = asyncio.Event()
+
+    async def execute_node(_issue, _attempt, _definition, _config, node, *_args):
+        started.add(node.id)
+        if len(started) == 2:
+            all_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.add(node.id)
+
+    monkeypatch.setattr(orchestrator, "_execute_workflow_node", execute_node)
+    task = asyncio.create_task(orchestrator._execute_workflow_graph(
+        issue, 1, definition, config, tmp_path,
+        WorkspaceManager(config.workspace.root, config.hooks), MemoryTracker(),
+    ))
+    try:
+        await asyncio.wait_for(all_started.wait(), timeout=2)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert task.cancelled()
+    assert stopped == {"one", "two"}

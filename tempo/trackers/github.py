@@ -82,6 +82,11 @@ class GitHubTracker(Tracker):
             self.review_token_env_name,
         }
 
+    def for_run(self, ownership_check):
+        tracker = super().for_run(ownership_check)
+        tracker._publication_authorized = set()
+        return tracker
+
     async def _request(
         self,
         method: str,
@@ -90,6 +95,8 @@ class GitHubTracker(Tracker):
         review_identity: bool = False,
         **kwargs: Any,
     ) -> Any:
+        if method.upper() not in {"GET", "HEAD"}:
+            await self.assert_ownership()
         try:
             client = self.review_client if review_identity else self.client
             response = await client.request(method, f"{self.api_url}{path}", **kwargs)
