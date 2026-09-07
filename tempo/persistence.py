@@ -242,6 +242,11 @@ class PersistenceStore:
         bound.fresh_workspace_key = run.fresh_workspace_key
         bound.workflow_version_id = run.workflow_version_id
         bound.tracker_kind = config.tracker.kind
+        bound.product_snapshot = {}
+        if run.execution_plan_id or run.product_snapshot:
+            from .product_execution import restore_product
+            bound.product_snapshot = restore_product(run)
+            bound.tracker_kind = "product"
         bound.execution_snapshot = _json_safe(run.execution_snapshot)
         return bound, definition, config, run.snapshot_digest
 
@@ -698,6 +703,9 @@ class PersistenceStore:
                 workflow_version_id=run.workflow_version_id
             )
         }
+        if run.execution_plan_id:
+            # Product nodes belong to the compiled run graph, not the project's issue graph.
+            definitions = {}
         incoming: dict[str, list[str]] = {node.id: [] for node in config.workflow.nodes}
         for edge in config.workflow.edges:
             incoming[edge.target].append(edge.source)
@@ -1369,6 +1377,8 @@ class PersistenceStore:
                 return True, existing.message
             if AgentRun.objects.filter(restarted_from=source).exists():
                 return False, "run_superseded"
+            if source.execution_plan_id:
+                return False, "revise_and_approve_product_plan_to_change_execution_settings"
             if source.status not in {"failed", "cancelled", "paused", "queued", "retry_scheduled"}:
                 return False, "stop_run_before_restart"
             if source.worker_id or source.lease_token:

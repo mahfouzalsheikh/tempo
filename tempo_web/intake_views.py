@@ -11,6 +11,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from pydantic import ValidationError
 
 from tempo.contracts.intake import Brief
+from tempo.errors import ConfigError
 from tempo.intake import (
     IntakeConflict,
     approve_plan,
@@ -188,7 +189,8 @@ def idea_detail(request, brief_id):
         context = detail(product, request.GET.get("revision"), request.GET.get("plan"))
     except ValueError as exc:
         return page(request, "error", error=error_message(exc))
-    return page(request, "detail", **context)
+    from .product_views import run_details
+    return page(request, "detail", runs=run_details(context["plan"]), **context)
 
 
 @ensure_csrf_cookie
@@ -270,6 +272,8 @@ def approve(request, brief_id):
 def serialize(product, revision_number=None, plan_number=None):
     context = detail(product, revision_number, plan_number)
     revision, plan = context["revision"], context["plan"]
+    from .product_views import run_details
+    runs = run_details(plan)
     return {
         "id": product.pk,
         "project_id": product.project_id,
@@ -281,7 +285,8 @@ def serialize(product, revision_number=None, plan_number=None):
         "plan": plan.specification,
         "plan_digest": plan.digest,
         "approved_at": plan.approved_at.isoformat() if plan.approved_at else None,
-        "execution_started": False,
+        "execution_started": bool(runs),
+        "runs": runs,
         "is_current": context["is_current"],
         "history": [
             {
@@ -338,7 +343,10 @@ def api(request, brief_id=None, action=None):
             )
         else:
             product = get_object_or_404(ProductBrief, pk=brief_id)
-            if action == "plans":
+            if action == "execute":
+                from .product_views import launch
+                launch(product, body, request.user.pk)
+            elif action == "plans":
                 revise_plan(
                     brief_id,
                     expected_plan_id=body["expected_plan_id"],
@@ -364,7 +372,7 @@ def api(request, brief_id=None, action=None):
         return JsonResponse(serialize(product), status=201 if action != "approve" else 200)
     except ObjectDoesNotExist:
         return JsonResponse({"error": "Brief or active project not found."}, status=404)
-    except (IntakeConflict, IntegrityError) as exc:
+    except (IntakeConflict, IntegrityError, ConfigError) as exc:
         return JsonResponse({"error": error_message(exc)}, status=409)
     except (ValueError, KeyError, TypeError) as exc:
         return JsonResponse({"error": error_message(exc)}, status=400)

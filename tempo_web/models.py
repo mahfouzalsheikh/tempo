@@ -344,6 +344,11 @@ class AgentRun(models.Model):
         "self", on_delete=models.PROTECT, related_name="successor", null=True, blank=True,
     )
     fresh_workspace_key = models.CharField(max_length=100, blank=True)
+    execution_plan = models.ForeignKey(
+        "ExecutionPlan", on_delete=models.PROTECT, related_name="runs", null=True, blank=True,
+    )
+    product_snapshot = models.JSONField(default=dict, blank=True)
+    product_snapshot_digest = models.CharField(max_length=64, blank=True)
     project = models.ForeignKey(
         Project,
         on_delete=models.PROTECT,

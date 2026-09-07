@@ -78,6 +78,15 @@ invoke an agent planner or dispatch coding work from a product brief. See
 [product intake](PRODUCT_INTAKE.md). Connecting approved plans to isolated task execution and
 acceptance evidence remains the next Phase 1/2 step.
 
+The next Phase 1/2 slice connects approved plans to durable candidate builds. Operators select
+saved role bindings and parallelism, then explicitly launch the approved graph. Implementation
+tasks use private repositories with serialized integration; Tempo runs mandatory project checks
+after agents and lifecycle hooks finish. Runs retain their approved contracts and configuration
+through reloads and retries. The plan UI shows task progress, stopped work, and commit-bound
+candidate evidence. See [product execution](PRODUCT_EXECUTION.md). This is a local unpublished
+candidate stage; independent criterion evidence, immutable builds, preview deployment, and
+release readiness remain outstanding.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

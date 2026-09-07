@@ -31,7 +31,8 @@ retained when editing a criterion; its meaning is scoped by the immutable brief 
 
 Unresolved questions prevent approval. Approval checks the saved brief and plan digests and
 revalidates task references and ordering. It does not queue coding agents or assert deployment
-readiness. There is no agent attempt or release evidence attached to these plans yet.
+readiness. Approved plans can subsequently start an explicit candidate build; see
+[product execution](PRODUCT_EXECUTION.md).
 
 Mutations lock the product row. Expected revision or plan identity rejects stale edits and
 approvals. Initial creation uses a UUID submission key, serialized within the project, to avoid
@@ -63,8 +64,8 @@ profiles or grant tools. Contract schema version is 1; unknown fields are reject
 
 ## What follows
 
-Connect an approved plan to task-based execution with pinned project/workflow settings,
-repository identity, agent assignments, tool grants, and enforceable work packages. Add an
+Approved plans now connect to isolated task execution and host-checked local candidates with
+pinned settings and contracts. See [candidate builds](PRODUCT_EXECUTION.md). Add an
 agent planner that inspects the repository and proposes these same validated contracts. Track
 results and acceptance evidence against the approved brief/plan identities, then build the
 supported application-to-preview release slice. Numeric budgets, project onboarding templates,

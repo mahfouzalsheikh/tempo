@@ -464,7 +464,7 @@ def control_state(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed
                     "restart_snapshot_digest": current_digests.get(row.project_id, ""),
                     "can_restart": row.status in {
                         "failed", "cancelled", "paused", "queued", "retry_scheduled",
-                    } and not row.lease_token and not row.worker_id
+                    } and not row.lease_token and not row.worker_id and not row.execution_plan_id
                     and row.project_id in current_digests,
                 }
                 for row in rows

@@ -116,5 +116,7 @@ replace evaluation with operators working on real repositories.
 The first intake workspace is now available at `/ideas/`: versioned product briefs, acceptance
 criteria and verification methods, editable starter task plans with dependency groups, exact
 revision approval, and history. See [product intake](PRODUCT_INTAKE.md). This delivers the
-planning part of stage C; agent execution, criterion evidence, and delivery views still need
-their task and release backends.
+planning part of stage C. Approved plans now have explicit candidate-build setup, profile and
+parallelism choices, setup blockers, task progress, saved-execution retries, and host-check
+evidence. See [product execution](PRODUCT_EXECUTION.md). Criterion evidence and delivery views
+still need their release backends.
