@@ -43,6 +43,10 @@ RUN useradd --create-home --uid 10001 tempo \
     && chown -R tempo:tempo /data /home/tempo \
     && chmod 0755 /usr/local/bin/tempo-entrypoint
 
+ARG TEMPO_GIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$TEMPO_GIT_SHA
+ENV TEMPO_BUILD_REVISION=$TEMPO_GIT_SHA
+
 EXPOSE 8000
 VOLUME ["/data/workspaces", "/data/database", "/home/tempo/.codex"]
 HEALTHCHECK --interval=20s --timeout=3s --start-period=10s --retries=3 \

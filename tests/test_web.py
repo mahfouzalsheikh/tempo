@@ -75,9 +75,13 @@ class FakeOrchestrator:
         return True
 
 
+@pytest.mark.django_db
 def test_health_and_state():
     set_orchestrator(FakeOrchestrator())
     client = Client()
+    client.force_login(
+        get_user_model().objects.create_user(username="reader", password="test-only")
+    )
     assert client.get("/healthz").status_code == 200
     assert client.get("/api/v1/state").status_code == 200
     assert client.get("/api/v1/admin").status_code == 200

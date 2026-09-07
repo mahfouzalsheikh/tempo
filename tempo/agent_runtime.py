@@ -224,6 +224,7 @@ class ExternalCommandRuntime(AgentRuntime):
             )
         self.command = runtime_config.command
         self.environment = dict(runtime_config.environment)
+        self.runner_secret_name = service_config.validation.runner_token[1:]
         self.settings = dict(runtime_config.settings)
         self.model = model
         self.selected_model = model.model
@@ -244,7 +245,8 @@ class ExternalCommandRuntime(AgentRuntime):
         await self.tracker.assert_ownership()
         environment = process_environment(
             self.environment,
-            forbidden=CONTROL_PLANE_SECRETS | self.tracker.secret_environment_names(),
+            forbidden=CONTROL_PLANE_SECRETS | self.tracker.secret_environment_names()
+            | {self.runner_secret_name},
         )
         process = await asyncio.create_subprocess_exec(
             "bash",

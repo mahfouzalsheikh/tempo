@@ -27,7 +27,7 @@ boundaries, read [System architecture](docs/ARCHITECTURE.md). Future work is tra
   merge, and explicit human handoff
 - JWT operator login, audited run controls, approval decisions, a live Django dashboard, JSON
   APIs, and server-sent state updates
-- A Docker Compose deployment with PostgreSQL, a credential-free validation service, and a
+- A Docker Compose deployment with PostgreSQL, an authenticated validation service, and a
   dedicated Docker daemon for validation workloads
 
 ## Quick start with Docker Compose
@@ -56,6 +56,7 @@ explicit credential grants. See [credential references and upgrade notes](docs/C
 Start the stack:
 
 ```bash
+python3 scripts/provision-runner-token.py
 docker compose up --build
 ```
 
@@ -98,6 +99,9 @@ After source changes, rebuild and health-check all services with:
 ```bash
 ./scripts/restart-tempo.sh
 ```
+
+The script provisions runner authentication, backs up PostgreSQL, preserves data volumes, and
+checks the deployed commit. See [access and deployment notes](docs/ACCESS_AND_DEPLOYMENT.md).
 
 ## Local development with Pipenv
 
@@ -295,12 +299,12 @@ The shipped settings are development-oriented. Before exposing Tempo outside a t
 
 - Set a long, random `DJANGO_SECRET_KEY`.
 - Serve it behind HTTPS and set `TEMPO_JWT_COOKIE_SECURE=true`.
-- Restrict network access to the unauthenticated read-only dashboard and state/configuration APIs
-  if their operational metadata is sensitive.
+- Operational pages and APIs require sign-in. Keep the deployment on a trusted network;
+  per-project authorization and isolated task execution remain planned work.
 - Replace the default PostgreSQL password and scope GitHub credentials to only required
   repositories and permissions.
-- Protect database and Django Admin access. Workflow versions currently persist the resolved
-  effective configuration, including provider credential values.
+- Protect database and Django Admin access. New workflow snapshots retain credential references;
+  migration 0011 redacts historical tracker credentials. Protect backups and rotate exposed keys.
 - Review the configured Codex approval policy. The checked-in workflow uses `never`, which
   auto-accepts Codex command/file approval requests for the session.
 - Treat the Compose Docker-in-Docker validation service as privileged infrastructure.

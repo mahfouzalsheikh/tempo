@@ -477,7 +477,7 @@ operation. See [controlled publication](PUBLICATION.md) for the push protocol an
 
 ### Events and live state
 
-Codex messages are normalized into events. Public activity includes agent messages, command/tool
+Codex messages are normalized into events. Operator-visible activity includes agent messages, command/tool
 events, file changes, validation output, phases, and token/rate-limit telemetry. Private reasoning
 text is deliberately omitted by `tempo.activity`.
 
@@ -746,10 +746,10 @@ restrictions still apply.
 | Method | Route | Access | Implementation behavior |
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | Public | `200 ok` when the control plane is installed, otherwise `503 starting` |
-| `GET` | `/api/v1/state` | Public | Full combined live snapshot |
-| `GET` | `/api/v1/events` | Public | Full-snapshot SSE stream |
-| `GET` | `/api/v1/admin` | Public | Redacted workflow/tracker/policy/runtime snapshot |
-| `GET` | `/api/v1/<identifier>` | Public | Returns one active/retry match; ambiguous multi-project identifiers return 404 |
+| `GET` | `/api/v1/state` | Operator | Full combined live snapshot |
+| `GET` | `/api/v1/events` | Operator | Full-snapshot SSE stream |
+| `GET` | `/api/v1/admin` | Operator | Redacted workflow/tracker/policy/runtime snapshot |
+| `GET` | `/api/v1/<identifier>` | Operator | Returns one active/retry match; ambiguous multi-project identifiers return 404 |
 | `POST` | `/api/v1/refresh` | Operator | Wakes every poll loop |
 | `GET` | `/api/v1/control` | Operator | Up to 100 paused, approval-waiting, or safety-stopped runs |
 | `POST` | `/api/v1/runs/<id>/<action>` | Operator | Applies and audits a supported action |
@@ -759,8 +759,8 @@ restrictions still apply.
 | `POST` | `/api/v1/auth/logout` | Public plus CSRF rules | Clears cookie |
 | `GET` | `/api/v1/auth/me` | Operator | Identity and authentication mechanism |
 
-The `/`, `/ops/`, and `/ops/configuration/` HTML pages are publicly renderable. Authenticated
-operator-only data and mutations are protected at their API endpoints.
+The `/`, `/ops/`, and `/ops/configuration/` HTML pages require sign-in and redirect anonymous
+visitors to login. Operational APIs return 401 before accessing data when authentication is missing.
 
 ## Authentication and security boundaries
 
@@ -776,6 +776,10 @@ Tempo authenticates active Django users. Login issues an HS256 JWT:
 API clients may use a Bearer token. Cookie-authenticated unsafe methods require Django's CSRF
 checks. Bearer-authenticated requests are not subjected to cookie CSRF. Django session
 authentication also remains available, especially for Admin.
+
+Operational pages require sign-in, APIs reject unauthenticated reads, and event streams recheck
+access on bounded reconnects. Validation endpoints authenticate the host before accepting jobs.
+See [access and deployment details](ACCESS_AND_DEPLOYMENT.md).
 
 ### Credential flow
 
@@ -813,7 +817,7 @@ a vault or a complete secret-protection boundary. See [upgrade details](CREDENTI
 - Hooks run directly in the Tempo container/process with baseline variables and explicit grants.
 - Local validation is a subprocess of Tempo with a filtered environment, not a container sandbox.
 - Compose validation uses a separate service but can access a privileged Docker-in-Docker daemon.
-- Read-only dashboards and snapshot APIs are unauthenticated.
+- Operational pages and APIs require installation-wide operator authentication; per-project roles remain planned.
 - Django currently accepts every host, has `DEBUG=false`, and assumes a reverse proxy supplies
   production TLS and network restrictions.
 

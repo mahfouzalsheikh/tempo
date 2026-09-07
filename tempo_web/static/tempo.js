@@ -96,7 +96,9 @@ function renderBrief() {
   const attention = latestAttention.length;
   const setup = projectRows().filter(project => projectSetup(project)[0] === "warning");
   let title, copy, label, href;
-  if (!stateAvailable) {
+  if (authenticated && auxiliaryStatus === "signed_out") {
+    [title, copy, label, href] = ["Your session has expired", "Sign in again to refresh this workspace and manage work.", "Sign in", "/login/?next=/"];
+  } else if (!stateAvailable) {
     [title, copy, label, href] = ["Updates are interrupted", "The last received data is shown below. Actions are paused until the connection recovers.", "View system details", "#system-details"];
   } else if (!authenticated || auxiliaryStatus === "signed_out") {
     [title, copy, label, href] = ["You’re viewing workspace activity", "Sign in to see decisions, blocked work, and the actions available to you.", "Sign in", "/login/?next=/"];
@@ -418,8 +420,12 @@ async function update() {
   try {
     render(await request("/api/v1/state"));
     await loadAuxiliary(true);
-  } catch {
+  } catch (error) {
     stateAvailable = false;
+    if (error.status === 401) {
+      auxiliaryStatus = "signed_out";
+      renderAuxiliary();
+    }
     byId("status").className = "status error";
     byId("status").innerHTML = "<i></i> Reconnecting";
     renderBrief();

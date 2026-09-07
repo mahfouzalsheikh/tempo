@@ -4,13 +4,15 @@ import asyncio
 import contextlib
 import json
 import os
+import secrets
 import signal
 from pathlib import Path
 from typing import Any
 
 import uvicorn
 
-from .credentials import process_environment
+from .errors import ConfigError
+from .validation_auth import runner_environment, runner_token
 
 ROOT = Path(os.getenv("TEMPO_WORKSPACE_ROOT", "/data/workspaces")).resolve(strict=False)
 MAX_REQUEST_BYTES = 1024 * 1024
@@ -22,30 +24,65 @@ async def application(scope: dict[str, Any], receive: Any, send: Any) -> None:
     path = scope.get("path", "")
     method = scope.get("method", "GET")
     if method == "GET" and path == "/healthz":
+        try:
+            runner_token()
+        except ConfigError:
+            await _respond(send, 503, {"status": "authentication_not_configured"})
+            return
         await _respond(send, 200, {"status": "ok"})
         return
     if method != "POST" or path not in {"/run", "/run-stream"}:
         await _respond(send, 404, {"error": "not_found"})
         return
+    try:
+        credential = runner_token()
+    except ConfigError:
+        await _respond(send, 503, {"error": "authentication_not_configured"})
+        return
+    authorization = [
+        value for key, value in scope.get("headers", []) if key.lower() == b"authorization"
+    ]
+    if len(authorization) != 1 or not secrets.compare_digest(
+        authorization[0], f"Bearer {credential}".encode(),
+    ):
+        await _respond(send, 401, {"error": "authentication_required"})
+        return
     body = bytearray()
-    while True:
-        message = await receive()
-        body.extend(message.get("body", b""))
-        if len(body) > MAX_REQUEST_BYTES:
-            await _respond(send, 413, {"error": "request_too_large"})
-            return
-        if not message.get("more_body"):
-            break
+    try:
+        async with asyncio.timeout(10):
+            while True:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    return
+                body.extend(message.get("body", b""))
+                if len(body) > MAX_REQUEST_BYTES:
+                    await _respond(send, 413, {"error": "request_too_large"})
+                    return
+                if not message.get("more_body"):
+                    break
+    except TimeoutError:
+        await _respond(send, 408, {"error": "request_timeout"})
+        return
     try:
         payload = json.loads(body)
+        if not isinstance(payload, dict) or set(payload) != {
+            "workspace", "command", "timeout_ms", "max_output_chars",
+        }:
+            raise ValueError("invalid job shape")
+        if not isinstance(payload["workspace"], str) or not isinstance(payload["command"], str):
+            raise ValueError("invalid job fields")
         workspace = Path(str(payload["workspace"])).resolve(  # noqa: ASYNC240
             strict=True
         )
         workspace.relative_to(ROOT)
-        command = str(payload["command"]).strip()
-        timeout_ms = int(payload["timeout_ms"])
-        max_output_chars = int(payload["max_output_chars"])
-        if not command or timeout_ms <= 0 or max_output_chars <= 0:
+        if workspace == ROOT or not workspace.is_dir():  # noqa: ASYNC240
+            raise ValueError("workspace must be a task directory")
+        command = payload["command"].strip()
+        timeout_ms = payload["timeout_ms"]
+        max_output_chars = payload["max_output_chars"]
+        if not command or type(timeout_ms) is not int or type(max_output_chars) is not int:
+            raise ValueError("invalid command settings")
+        if not 0 < timeout_ms <= 3_600_000 or not 0 < max_output_chars <= 1_000_000:
             raise ValueError("invalid command settings")
     except (KeyError, TypeError, ValueError, OSError):
         await _respond(send, 400, {"error": "invalid_request"})
@@ -78,7 +115,7 @@ async def run_command(
         "--noprofile", "--norc", "-c",
         command,
         cwd=workspace,
-        env=process_environment(),
+        env=runner_environment(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,
@@ -108,7 +145,7 @@ async def stream_command(command: str, workspace: Path, timeout_ms: int, max_out
         "--noprofile", "--norc", "-c",
         command,
         cwd=workspace,
-        env=process_environment(),
+        env=runner_environment(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,
@@ -156,6 +193,7 @@ async def _respond(send: Any, status: int, payload: dict[str, Any]) -> None:
             "headers": [
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(body)).encode()),
+                (b"cache-control", b"no-store"),
             ],
         }
     )

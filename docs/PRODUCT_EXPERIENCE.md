@@ -78,8 +78,8 @@ can change and lists required check names.
 
 This is an initial redesign, not the completed product experience. Dedicated run pages and
 history, a complete settings form, onboarding, product briefs, artifacts, and delivery readiness
-still need their backend contracts. Read endpoints also still require the planned authorization
-work. Browser visibility and disabled controls do not replace server-side authorization.
+still need their backend contracts. Read endpoints now require installation-wide authentication; project-level authorization remains
+planned. Browser visibility and disabled controls do not replace server-side authorization.
 
 ## Verification
 
@@ -89,8 +89,8 @@ disclosures and focus after a streamed update, safe links and escaped request co
 preview/submission, failed state and operator requests, session expiration/recovery, read-only
 access, and a 390px viewport. It never submits work or approvals to the real server.
 
-Run `.venv/bin/python manage.py runserver 127.0.0.1:8049 --noreload` in an isolated local test
-session. With Playwright and Chromium available, invoke the exported scenario:
+Run `.venv/bin/python tests/browser/serve.py` for the loopback-only template fixture server.
+This test host bypasses production authentication and never starts the scheduler. With Playwright and Chromium available, invoke the exported scenario:
 
 ```javascript
 const { chromium } = require('playwright');

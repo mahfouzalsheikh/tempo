@@ -96,7 +96,8 @@ class CodexAppServer:
             raise CodexError("agent cwd cannot be workspace root", category="invalid_workspace_cwd")
         environment = process_environment(
             self.config.environment,
-            forbidden=CONTROL_PLANE_SECRETS | self.tracker.secret_environment_names(),
+            forbidden=CONTROL_PLANE_SECRETS | self.tracker.secret_environment_names()
+            | {self.validator.config.runner_token[1:]},
         )
         try:
             process = await asyncio.create_subprocess_exec(

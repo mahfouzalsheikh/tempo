@@ -15,6 +15,7 @@ import httpx
 from .config import ValidationConfig
 from .credentials import CONTROL_PLANE_SECRETS, process_environment
 from .process import stop_process_group
+from .validation_auth import runner_token
 from .workspace import WorkspaceManager
 
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
@@ -419,10 +420,14 @@ class ProjectValidator:
         timeout_ms: int,
     ) -> tuple[int, str]:
         timeout = httpx.Timeout(timeout_ms / 1000 + 10)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        credential = runner_token(self.config.runner_token)
+        async with httpx.AsyncClient(
+            timeout=timeout, trust_env=False, follow_redirects=False,
+        ) as client:
             async with client.stream(
                 "POST",
                 f"{self.runner_url.rstrip('/')}/run-stream",
+                headers={"Authorization": f"Bearer {credential}"},
                 json={
                     "workspace": str(workspace),
                     "command": command,
@@ -431,10 +436,7 @@ class ProjectValidator:
                 },
             ) as response:
                 if response.status_code != 200:
-                    body = (await response.aread()).decode(errors="replace")
-                    raise RuntimeError(
-                        f"validation runner returned {response.status_code}: {body[:500]}"
-                    )
+                    raise RuntimeError(f"validation runner returned HTTP {response.status_code}")
                 result: dict[str, Any] | None = None
                 async for line in response.aiter_lines():
                     if not line:

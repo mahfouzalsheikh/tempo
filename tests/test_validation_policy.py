@@ -206,6 +206,7 @@ async def test_remote_runner_cannot_pass_with_malformed_results(
 ):
     validator, workspace, events = setup_validator
     validator.config.runner_url = "http://test-runner"
+    monkeypatch.setenv("TEMPO_VALIDATION_RUNNER_TOKEN", "test-runner-credential-" + "x" * 32)
     client_class = httpx.AsyncClient
 
     def client(*args, **kwargs):

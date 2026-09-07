@@ -115,12 +115,15 @@ class ValidationCheckConfig(BaseModel):
 
 
 class ValidationConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     enabled: bool = True
     policy: Literal["required", "discovered"] = "required"
     required_checks: list[ValidationCheckConfig] = Field(default_factory=list, max_length=50)
     cleanup_command: str | None = None
     runner_url: str | None = None
+    runner_token: str = Field(
+        default="$TEMPO_VALIDATION_RUNNER_TOKEN", pattern=r"^\$[A-Za-z_][A-Za-z0-9_]*$",
+    )
     command_timeout_ms: int = Field(default=1_800_000, gt=0)
     cleanup_timeout_ms: int = Field(default=120_000, gt=0)
     max_commands: int = Field(default=12, gt=0, le=50)

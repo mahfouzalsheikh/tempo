@@ -1,0 +1,74 @@
+# Access control and test deployments
+
+Operational pages (`/`, `/ops/`, and `/ops/configuration/`) now require sign-in. Anonymous page
+requests redirect to login with the original return path. Operational APIs, including state,
+configuration, issue detail, approvals, controls, and the event stream, return HTTP 401 before
+reading runtime state when no active user is authenticated. Existing session, JWT cookie, and
+Bearer authentication continue to work. Responses use `Cache-Control: no-store` and vary by
+Cookie and Authorization. Login, static assets, and the minimal health endpoint remain public.
+
+Event streams reconnect at least every five minutes to recheck access and stop at JWT expiry.
+User deactivation or session revocation can therefore take up to five minutes to close an already
+open stream. This is installation-wide operator access; per-project membership and role policy
+remain planned work. The UI reports an expired session and links back to login.
+
+## Validation runner
+
+Both `/run` and `/run-stream` require a separate Bearer credential. Authentication is checked
+before reading the body or resolving the workspace. Missing/invalid credentials return 401;
+missing server configuration makes jobs and runner health return 503. No unauthenticated
+execution compatibility mode is provided.
+
+Set `TEMPO_VALIDATION_RUNNER_TOKEN` to the same random value on the control plane and runner.
+The value must contain at least 32 non-whitespace ASCII characters. The local provisioning script
+generates a 48-byte random credential in the ignored `.env` file, retains it across deployments,
+and never prints it. Newly written files have mode 0600. Back up or rotate this credential through
+the deployment's secret-management process. Restart both services together after rotation.
+
+The host reads `validation.runner_token` as an environment reference, defaulting to
+`$TEMPO_VALIDATION_RUNNER_TOKEN`. A custom host reference can be used if the server receives the
+same value under its standard variable. The resolved value is sent only in Authorization, outside
+job payloads and saved configuration. The client disables environment proxies and redirects;
+non-success response bodies are not copied into validation history. Runtime grants cannot expose
+the standard or configured runner credential names to coding agents.
+
+Requests must contain exactly workspace, command, timeout_ms, and max_output_chars. Workspace
+must be a directory strictly beneath the runner's root. Limits are one MiB for the body, ten
+seconds to receive it, one hour per command, and one million retained output characters. The
+runner rejects type coercions, root-directory execution, and extra environment fields.
+
+Validation subprocesses do not inherit the authentication token. The remote runner explicitly
+passes its configured `DOCKER_HOST` so project checks can use the existing Docker execution
+service. Other server variables remain excluded by the environment allowlist.
+
+The shared credential authenticates the caller, not an individual leased run. Per-job capability
+tokens, network segregation, trusted validation harnesses, and task/process isolation remain
+necessary. The current private Compose network uses HTTP and a privileged Docker execution
+service. Use TLS for runner traffic crossing a trusted-host boundary. Authentication alone does
+not prevent a process with shared filesystem/process access from reaching credentials.
+
+## Commit, push, deploy
+
+Completed implementation steps are committed and pushed before deployment, following the user's
+requested workflow. The local test stack is the existing Compose project; port selection remains
+controlled by `TEMPO_PORT` in `.env`.
+
+Run `./scripts/restart-tempo.sh` from a committed checkout. It:
+
+1. Ensures a stable local runner credential is configured.
+2. Builds Tempo and the validation runner with the Git commit recorded in their image metadata.
+3. Starts existing database and execution dependencies without forcibly recreating them.
+4. Stops Tempo gracefully and writes a private PostgreSQL backup beneath `var/backups/`.
+5. Updates the two application services and waits for health checks. Startup applies migrations.
+6. Verifies the served revision matches the requested commit and anonymous state reads return 401.
+
+The script preserves named volumes. It does not run `down -v`, remove orphan services, or
+automatically restore a database. It exits on failure. If an update fails after Tempo stops, fix
+the reported startup issue or explicitly restore the previous application image. Database
+restoration is a separate operator procedure; a backup may contain historical credentials and
+must remain private. `/healthz` exposes the build revision so a tester can identify deployed code.
+
+The browser regression scenario uses `tests/browser/serve.py`, a loopback-only fixture server
+that directly renders templates without starting agents or accessing live application APIs.
+It deliberately bypasses production authentication for mocked UI scenarios. Never deploy this
+test server; use the regular Tempo entrypoint for the application.

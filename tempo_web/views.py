@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import os
 import uuid
 from pathlib import Path
 
@@ -43,7 +44,10 @@ async def static_asset(request: HttpRequest, name: str) -> HttpResponse:
 def health(request: HttpRequest) -> JsonResponse:
     orchestrator = get_orchestrator()
     return JsonResponse(
-        {"status": "ok" if orchestrator else "starting"},
+        {
+            "status": "ok" if orchestrator else "starting",
+            "revision": os.getenv("TEMPO_BUILD_REVISION", "unknown"),
+        },
         status=200 if orchestrator else 503,
     )
 
@@ -64,14 +68,21 @@ async def state_events(
     if not orchestrator:
         return JsonResponse({"error": "orchestrator_unavailable"}, status=503)
     queue = orchestrator.subscribe_events()
+    # Reconnect periodically to recheck session/user state, and never stream past JWT expiry.
+    deadline = min(
+        timezone.now().timestamp() + 300,
+        getattr(request, "tempo_access_expires_at", float("inf")),
+    )
 
     async def stream():
         try:
             initial = json.dumps(orchestrator.snapshot(), default=str, separators=(",", ":"))
             yield f"data:{initial}\n\n".encode()
-            while True:
+            while timezone.now().timestamp() < deadline:
                 try:
-                    await asyncio.wait_for(queue.get(), timeout=15)
+                    await asyncio.wait_for(
+                        queue.get(), timeout=min(15, max(0, deadline - timezone.now().timestamp())),
+                    )
                 except TimeoutError:
                     yield b":keepalive\n\n"
                     continue
@@ -85,7 +96,7 @@ async def state_events(
             orchestrator.unsubscribe_events(queue)
 
     response = StreamingHttpResponse(stream(), content_type="text/event-stream")
-    response["Cache-Control"] = "no-cache, no-transform"
+    response["Cache-Control"] = "no-store, no-transform"
     response["X-Accel-Buffering"] = "no"
     return response
 

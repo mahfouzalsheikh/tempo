@@ -70,9 +70,11 @@ receive tracker credentials for clone/fetch. Shell startup and dynamic-loader in
 are rejected even when explicitly granted. Literal occurrences of granted hook values are
 redacted from hook failure output before logging or raising an error.
 
-Validation subprocesses currently support only the baseline environment. Runtime grants do not
-propagate to local or remote validation, and the validation HTTP protocol does not carry secrets.
-Scoped validation service credentials and runner authentication remain separate work.
+Validation subprocesses use the baseline environment, with an explicit Docker endpoint on the
+remote runner. Runtime grants do not propagate to validation, and job payloads do not carry secrets.
+The runner now authenticates requests with a separate credential and explicitly passes its
+configured `DOCKER_HOST` to validation commands. See [runner authentication](ACCESS_AND_DEPLOYMENT.md).
+Per-job capabilities and additional scoped validation credentials remain planned.
 
 ## Upgrade
 
