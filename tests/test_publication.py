@@ -88,7 +88,10 @@ async def publisher(tmp_path):
         state["saved"] = copy.deepcopy(value)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        from tempo.config import ValidationConfig
+
         tracker = GitHubTracker(repo="acme/project", client=client)
+        tracker.bind_validation_policy(ValidationConfig(enabled=False))
         tracker.git_remote_url = str(remote)  # Host-owned test transport; never a tool argument.
         await tracker.prepare_publication(workspace, 7, None, save)
         issue = Issue(id="1", identifier="GH-1", title="Task", state="open")
@@ -312,6 +315,29 @@ async def test_publish_requires_validation_authority(publisher):
     assert not state["saved"].get("intent")
 
 
+async def test_publisher_requires_evidence_for_its_bound_policy(publisher):
+    from tempo.config import ValidationConfig
+
+    tracker, workspace, _, state, issue, _ = publisher
+    config = ValidationConfig(
+        required_checks=[
+            {"id": "unit", "name": "Tests", "command": "true"},
+        ]
+    )
+    tracker.bind_validation_policy(config)
+    _, fingerprint = await candidate(tracker, workspace, issue)
+    assert not (
+        await tracker.publish_candidate({"title": "No policy evidence"}, issue, fingerprint)
+    )["success"]
+    tracker.accept_validation(fingerprint, policy_digest=config.policy_digest)
+    assert (await tracker.publish_candidate({"title": "Accepted"}, issue, fingerprint))["success"]
+    assert state["saved"]["intent"]["validation_policy_digest"] == config.policy_digest
+    config.required_checks[0].command = "false"
+    assert not (await tracker.publish_candidate({"title": "Old evidence"}, issue, fingerprint))[
+        "success"
+    ]
+
+
 async def test_pending_intent_cannot_be_replaced_with_a_different_candidate(publisher, monkeypatch):
     tracker, workspace, _, state, issue, _ = publisher
     old_sha, fingerprint = await candidate(tracker, workspace, issue)
@@ -401,8 +427,11 @@ async def test_publication_intent_survives_worker_replacement(publisher):
     run_id = await store.enqueue_issue(issue)
     token = await store.claim_run(run_id, "first")
     await store.checkpoint(
-        run_id, "publication_state", state["saved"],
-        idempotency_key=uuid.uuid4().hex, lease_token=token,
+        run_id,
+        "publication_state",
+        state["saved"],
+        idempotency_key=uuid.uuid4().hex,
+        lease_token=token,
     )
     await AgentRun.objects.filter(pk=run_id).aupdate(
         lease_expires_at=utcnow() - timedelta(seconds=1),
@@ -412,7 +441,10 @@ async def test_publication_intent_survives_worker_replacement(publisher):
     assert await store.publication_state(run_id) == state["saved"]
     with pytest.raises(LeaseLostError):
         await store.checkpoint(
-            run_id, "publication_state", {"intent": "late"},
-            idempotency_key=uuid.uuid4().hex, lease_token=token,
+            run_id,
+            "publication_state",
+            {"intent": "late"},
+            idempotency_key=uuid.uuid4().hex,
+            lease_token=token,
         )
     assert await store.publication_state(run_id) == state["saved"]

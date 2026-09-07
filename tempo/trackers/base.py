@@ -41,7 +41,10 @@ class Tracker(ABC):
     def revoke_publication(self, issue_id: str) -> None:
         return None
 
-    def accept_validation(self, fingerprint: str) -> None:
+    def bind_validation_policy(self, config) -> None:
+        return None
+
+    def accept_validation(self, fingerprint: str, *, policy_digest: str | None = None) -> None:
         return None
 
     async def unchanged_from_base(self) -> bool:

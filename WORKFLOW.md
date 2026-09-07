@@ -49,6 +49,10 @@ agent:
   max_retry_backoff_ms: 300000
 validation:
   enabled: true
+  policy: required
+  # Configure this project's mandatory checks before enabling dispatch.
+  # See docs/VALIDATION_POLICY.md for a complete Tempo-repository example.
+  required_checks: []
   command_timeout_ms: 1800000
   cleanup_timeout_ms: 120000
   max_commands: 12
@@ -118,7 +122,8 @@ You are working on {{ issue.identifier }}: {{ issue.title }}.
 
 Work autonomously in the current issue workspace. Follow the repository's own instructions and
 tooling to build or launch the project and run its relevant tests locally. Use project_validation
-with the complete project-native validation sequence. Fix failures and repeat validation as needed.
+to run the required policy checks, adding focused supplemental checks when needed. In discovery
+mode, supply the complete project-native sequence. Fix failures and repeat validation as needed.
 Commit your changes, validate them, then use github_publish with a title and body. Tempo publishes
 the exact commit to its run branch and opens or recovers the pull request. Use github_api for reads
 and github_comment for source-issue updates. Do not merge it yourself: Tempo starts a

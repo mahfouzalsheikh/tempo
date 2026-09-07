@@ -689,6 +689,8 @@ class ValidationAttempt(models.Model):
     started_at = models.DateTimeField()
     finished_at = models.DateTimeField(null=True, blank=True)
     workspace_fingerprint = models.CharField(max_length=64, blank=True)
+    policy_digest = models.CharField(max_length=64, blank=True)
+    required_check_ids = models.JSONField(default=list, blank=True)
 
     class Meta:
         ordering = ["-started_at"]
@@ -704,6 +706,7 @@ class ValidationCommand(models.Model):
         related_name="commands",
     )
     position = models.PositiveIntegerField()
+    check_id = models.CharField(max_length=64, blank=True)
     name = models.CharField(max_length=255)
     command = models.TextField()
     exit_code = models.IntegerField(null=True, blank=True)

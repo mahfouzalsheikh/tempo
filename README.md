@@ -208,9 +208,13 @@ behavior and defaults of every section are described in
 
 ## Validation and publication
 
-When validation is enabled, Codex must call Tempo's `project_validation` tool with the repository's
-own build, launch, and test commands. Tempo runs the sequence, stops at the first failed command,
-always runs an optional cleanup command, and records the result.
+Enabled validation defaults to a required policy. Configure `validation.required_checks` in the
+host workflow: `project_validation` runs those checks before any agent-supplied extras. A missing
+policy stops publication runs before agent launch. Failed checks or cleanup prevent a pass.
+
+See [required validation policy](docs/VALIDATION_POLICY.md) for configuration, migration
+`0010_validation_policy_evidence`, and the explicit `policy: discovered` compatibility mode.
+Retained validation evidence and review approvals must match the current policy before reuse.
 
 A successful run is accepted only if validation did not change tracked or untracked project files.
 The resulting fingerprint authorizes `github_publish`, which sends the clean local commit to a

@@ -43,6 +43,8 @@ class GitHubTracker(Tracker):
         self.repo = repo
         self.publication = None
         self._validation_fingerprint = None
+        self._validation_policy = None
+        self._validation_policy_digest = None
         host = "github.com" if parsed.hostname == "api.github.com" else parsed.netloc
         self.git_remote_url = f"{parsed.scheme}://{host}/{repo}.git"
         self.api_url = api_url.rstrip("/")
@@ -95,6 +97,8 @@ class GitHubTracker(Tracker):
         tracker._publication_authorized = set()
         tracker.publication = None
         tracker._validation_fingerprint = None
+        tracker._validation_policy = None
+        tracker._validation_policy_digest = None
         return tracker
 
     async def _request(
@@ -208,7 +212,10 @@ class GitHubTracker(Tracker):
         self.publication = await prepare_publication(self, workspace, run_id, state, save)
 
     async def unchanged_from_base(self) -> bool:
-        return bool(self.publication) and await self.publication.unchanged_from_base()
+        return (
+            self._has_validation_authority() and bool(self.publication)
+            and await self.publication.unchanged_from_base()
+        )
 
     def agent_tool_specs(self) -> list[dict[str, Any]]:
         return [
@@ -258,9 +265,23 @@ class GitHubTracker(Tracker):
     def revoke_publication(self, issue_id: str) -> None:
         self._publication_authorized.discard(issue_id)
         self._validation_fingerprint = None
+        self._validation_policy_digest = None
 
-    def accept_validation(self, fingerprint: str) -> None:
+    def bind_validation_policy(self, config) -> None:
+        self._validation_policy = config
+
+    def accept_validation(self, fingerprint: str, *, policy_digest: str | None = None) -> None:
         self._validation_fingerprint = fingerprint
+        self._validation_policy_digest = policy_digest
+
+    def _has_validation_authority(self) -> bool:
+        policy = self._validation_policy
+        return policy is not None and (
+            not policy.enabled or (
+                not policy.missing_policy and bool(self._validation_fingerprint)
+                and self._validation_policy_digest == policy.policy_digest
+            )
+        )
 
     @staticmethod
     def tool_result(success, output):
@@ -273,7 +294,10 @@ class GitHubTracker(Tracker):
 
     async def publish_candidate(self, arguments, issue, fingerprint):
         try:
-            if issue.id not in self._publication_authorized or not self.publication:
+            if (
+                issue.id not in self._publication_authorized or not self.publication
+                or not self._has_validation_authority()
+            ):
                 raise publication_error("Publication needs an active run and passing validation.")
             return self.tool_result(
                 True,

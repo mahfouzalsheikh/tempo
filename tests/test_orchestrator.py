@@ -115,7 +115,9 @@ def recovery_workflow_config(tmp_path: Path) -> ServiceConfig:
                 "terminal_states": ["Done"],
             },
             "workspace": {"root": str(tmp_path)},
-            "validation": {"enabled": True},
+            "validation": {"enabled": True, "required_checks": [
+                {"id": "check", "name": "Check", "command": "true"},
+            ]},
             "tool_providers": {
                 "delivery": {
                     "kind": "tempo",
@@ -165,7 +167,8 @@ async def test_matching_durable_validation_restores_publication_gate(tmp_path, m
 
     class RecoveryStore:
         async def successful_validation_context(self, _run_id):
-            return {"fingerprint": "validated", "node_id": "verify"}
+            return {"fingerprint": "validated", "node_id": "verify",
+                    "policy_digest": recovery_workflow_config(tmp_path).validation.policy_digest}
 
     async def matching_fingerprint(_workspace):
         return "validated"
@@ -198,12 +201,16 @@ async def test_matching_durable_validation_restores_publication_gate(tmp_path, m
 
 
 @pytest.mark.asyncio
-async def test_changed_workspace_routes_recovery_back_through_verifier(tmp_path, monkeypatch):
+@pytest.mark.parametrize("change", ["workspace", "policy"])
+async def test_stale_validation_requeues_verifier(tmp_path, monkeypatch, change):
     class RecoveryStore:
         invalidated = None
 
         async def successful_validation_context(self, _run_id):
-            return {"fingerprint": "validated", "node_id": "verify"}
+            return {"fingerprint": "validated", "node_id": "verify", "policy_digest": (
+                recovery_workflow_config(tmp_path).validation.policy_digest
+                if change == "workspace" else "old-policy"
+            )}
 
         async def invalidate_validation_recovery(
             self, run_id, *, fingerprint, node_ids, lease_token,
@@ -211,7 +218,7 @@ async def test_changed_workspace_routes_recovery_back_through_verifier(tmp_path,
             self.invalidated = (run_id, fingerprint, node_ids)
 
     async def changed_fingerprint(_workspace):
-        return "changed"
+        return "changed" if change == "workspace" else "validated"
 
     monkeypatch.setattr(
         "tempo.orchestrator.workspace_fingerprint",

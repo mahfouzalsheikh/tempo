@@ -690,13 +690,14 @@ class PersistenceStore:
         validation = (
             await ValidationAttempt.objects.filter(
                 run_id=run_id,
-                status=ValidationAttempt.Status.PASSED,
             )
-            .exclude(workspace_fingerprint="")
-            .order_by("-finished_at", "-id")
+            .order_by("-started_at", "-id")
             .afirst()
         )
-        if not validation:
+        if (
+            not validation or validation.status != ValidationAttempt.Status.PASSED
+            or not validation.workspace_fingerprint
+        ):
             return None
         checkpoints = RunCheckpoint.objects.filter(
             run_id=run_id,
@@ -704,14 +705,21 @@ class PersistenceStore:
         ).order_by("-sequence")
         async for checkpoint in checkpoints:
             payload = checkpoint.payload or {}
+            if (
+                validation.policy_digest
+                and payload.get("validation_record_id") != validation.pk
+            ):
+                continue
             if payload.get("fingerprint") == validation.workspace_fingerprint:
                 return {
                     "fingerprint": validation.workspace_fingerprint,
                     "node_id": str(payload.get("node_id") or ""),
+                    "policy_digest": validation.policy_digest,
                 }
         return {
             "fingerprint": validation.workspace_fingerprint,
             "node_id": "",
+            "policy_digest": validation.policy_digest,
         }
 
     @leased_write
@@ -833,7 +841,9 @@ class PersistenceStore:
 
         RunNode.objects.filter(run_id=run_id, node_key=node_id).update(model=model)
 
-    async def completed_review_decision(self, run_id: int) -> dict[str, str] | None:
+    async def completed_review_decision(
+        self, run_id: int, *, policy_digest: str | None = None,
+    ) -> dict[str, str] | None:
         """Recover a review decision recorded before post-review policy was applied."""
         from tempo_web.models import RunCheckpoint
 
@@ -845,6 +855,11 @@ class PersistenceStore:
         ).order_by("-sequence")
         async for checkpoint in checkpoints:
             if checkpoint.kind == "review_invalidated":
+                return None
+            if (
+                policy_digest is not None
+                and checkpoint.payload.get("validation_policy_digest") != policy_digest
+            ):
                 return None
             arguments = (
                 checkpoint.payload if checkpoint.kind == "review_completed"
@@ -1329,6 +1344,8 @@ class PersistenceStore:
                 run_id=entry.run_record_id,
                 status=ValidationAttempt.Status.RUNNING,
                 summary=str(event.get("summary", "")),
+                policy_digest=str(event.get("policy_digest", "")),
+                required_check_ids=event.get("required_check_ids", []),
                 started_at=session.validation_started_at or utcnow(),
             )
             session.validation_record_id = validation.pk
@@ -1339,6 +1356,7 @@ class PersistenceStore:
             ValidationCommand.objects.create(
                 validation_id=session.validation_record_id,
                 position=position + 1,
+                check_id=str(event.get("check_id") or ""),
                 name=str(event.get("name", "")),
                 command=str(event.get("command", "")),
                 exit_code=event.get("exit_code"),

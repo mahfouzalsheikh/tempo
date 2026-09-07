@@ -159,7 +159,7 @@ class AgentRunAdmin(ReadOnlyRuntimeAdmin):
 class ValidationCommandInline(admin.TabularInline):
     model = ValidationCommand
     extra = 0
-    fields = ("position", "name", "command", "exit_code", "cleanup", "finished_at")
+    fields = ("position", "check_id", "name", "command", "exit_code", "cleanup", "finished_at")
     readonly_fields = fields
     can_delete = False
 
@@ -179,6 +179,8 @@ class ValidationAttemptAdmin(ReadOnlyRuntimeAdmin):
         "started_at",
         "finished_at",
         "workspace_fingerprint",
+        "policy_digest",
+        "required_check_ids",
     )
     list_select_related = ("run", "run__issue")
     inlines = (ValidationCommandInline,)
@@ -213,6 +215,7 @@ class ValidationCommandAdmin(ReadOnlyRuntimeAdmin):
     readonly_fields = (
         "validation",
         "position",
+        "check_id",
         "name",
         "command",
         "exit_code",

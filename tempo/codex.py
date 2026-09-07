@@ -36,6 +36,7 @@ class CodexSession:
     role: str = "implementation"
     validation_fingerprint: str | None = None
     validation_head_sha: str | None = None
+    validation_policy_digest: str | None = None
     completion_disposition: str | None = None
     review_decision: str | None = None
     review_summary: str | None = None
@@ -65,6 +66,7 @@ class CodexAppServer:
         self.validation_enabled = config.validation.enabled
         self.workspace_manager = workspace_manager
         self.tracker = tracker
+        tracker.bind_validation_policy(config.validation)
         self.on_event = on_event
         self.approval_callback = approval_callback
         self.enabled_tools = enabled_tools
@@ -501,7 +503,9 @@ class CodexAppServer:
                     return
                 reason = str(arguments.get("reason", "")).strip()
                 fingerprint_matches = not self.validation_enabled or (
-                    session.validation_fingerprint is not None
+                    getattr(session, "validation_policy_digest", None)
+                    == self.validator.config.policy_digest
+                    and session.validation_fingerprint is not None
                     and session.validation_fingerprint
                     == await self._workspace_fingerprint(session.workspace)
                 )
@@ -535,7 +539,9 @@ class CodexAppServer:
                     await clean_workspace_head(session.workspace) if decision == "approve" else None
                 )
                 fingerprint_matches = not self.validation_enabled or (
-                    session.validation_fingerprint is not None
+                    getattr(session, "validation_policy_digest", None)
+                    == self.validator.config.policy_digest
+                    and session.validation_fingerprint is not None
                     and session.validation_fingerprint
                     == await self._workspace_fingerprint(session.workspace)
                 )
@@ -586,6 +592,7 @@ class CodexAppServer:
                             "summary": summary,
                             "review_head_sha": head_sha,
                             "validation_fingerprint": session.validation_fingerprint,
+                            "validation_policy_digest": self.validator.config.policy_digest,
                         }
                     )
                     result = {
@@ -715,6 +722,7 @@ class CodexAppServer:
         # A new attempt revokes prior evidence even if it fails or is interrupted.
         session.validation_fingerprint = None
         session.validation_head_sha = None
+        session.validation_policy_digest = None
         self.tracker.revoke_publication(issue.id)
         is_review = getattr(session, "role", "implementation") == "review"
         if is_review:
@@ -746,18 +754,29 @@ class CodexAppServer:
                 ),
                 "contentItems": [],
             }
+        if (
+            result.get("success")
+            and result.get("policy_digest") != self.validator.config.policy_digest
+        ):
+            await self.on_event({"event": "validation_invalidated"})
+            return {"success": False, "output": "Validation policy changed; run validation again.",
+                    "contentItems": []}
         if result.get("success"):
             session.validation_fingerprint = fingerprint_after
             session.validation_head_sha = head_after
+            session.validation_policy_digest = result["policy_digest"]
             await self.on_event(
                 {
                     "event": "validation_fingerprint_recorded",
                     "fingerprint": session.validation_fingerprint,
                     "head_sha": head_after,
+                    "policy_digest": session.validation_policy_digest,
                 }
             )
             self.tracker.authorize_publication(issue.id)
-            self.tracker.accept_validation(fingerprint_after)
+            self.tracker.accept_validation(
+                fingerprint_after, policy_digest=session.validation_policy_digest,
+            )
         return result
 
     @staticmethod

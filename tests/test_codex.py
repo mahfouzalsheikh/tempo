@@ -269,7 +269,7 @@ async def test_validation_that_modifies_workspace_is_rejected(tmp_path):
                     "terminal_states": ["Done"],
                 },
                 "workspace": {"root": tmp_path / "root"},
-                "validation": {"enabled": True},
+                "validation": {"enabled": True, "policy": "discovered"},
             }
         ),
         manager,
@@ -362,7 +362,9 @@ async def test_independent_review_agent_records_typed_decision(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "change", ["none", "unstaged", "staged", "untracked", "new_commit", "failed_validation"]
+    "change", [
+        "none", "unstaged", "staged", "untracked", "new_commit", "failed_validation", "policy",
+    ]
 )
 async def test_review_approval_requires_the_successfully_validated_commit(tmp_path, change):
     manager = WorkspaceManager(tmp_path / "root", HooksConfig())
@@ -379,7 +381,7 @@ async def test_review_approval_requires_the_successfully_validated_commit(tmp_pa
                 "kind": "memory", "active_states": ["open"], "terminal_states": ["closed"],
             },
             "workspace": {"root": manager.root},
-            "validation": {"enabled": True},
+            "validation": {"enabled": True, "policy": "discovered"},
         }), manager, MemoryTracker(), on_event,
     )
     session = SimpleNamespace(
@@ -400,6 +402,8 @@ async def test_review_approval_requires_the_successfully_validated_commit(tmp_pa
     elif change == "new_commit":
         # Even a new commit with identical contents requires fresh validation.
         git(workspace, "commit", "--allow-empty", "-m", "Different candidate")
+    elif change == "policy":
+        client.validator.config.command_timeout_ms += 1
     elif change == "failed_validation":
         validation["commands"][0]["command"] = "false"
         assert not (await client._execute_project_validation(session, validation, issue))["success"]
@@ -450,6 +454,7 @@ async def test_review_validation_rejects_commit_changes_during_checks(tmp_path):
                 "kind": "memory", "active_states": ["open"], "terminal_states": ["closed"],
             },
             "workspace": {"root": manager.root},
+            "validation": {"policy": "discovered"},
         }), manager, MemoryTracker(), on_event,
     )
     session = SimpleNamespace(role="review", workspace=workspace)

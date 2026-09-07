@@ -71,8 +71,15 @@ async def workspace_fingerprint(workspace: Path) -> str:
 async def commit_fingerprint(workspace: Path, sha: str) -> str | None:
     """Hash the actual Git blobs, independent of index flags, timestamps and replace refs."""
     process = await asyncio.create_subprocess_exec(
-        "git", "--no-replace-objects", "ls-tree", "-rz", "--full-tree", sha,
-        cwd=workspace, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        "git",
+        "--no-replace-objects",
+        "ls-tree",
+        "-rz",
+        "--full-tree",
+        sha,
+        cwd=workspace,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
     )
     output, _ = await process.communicate()
     if process.returncode:
@@ -87,9 +94,15 @@ async def commit_fingerprint(workspace: Path, sha: str) -> str | None:
             return None  # Submodules require separate source/evidence identities.
         entries.append((path, mode, object_id))
     process = await asyncio.create_subprocess_exec(
-        "git", "--no-replace-objects", "cat-file", "--batch", cwd=workspace,
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+        "git",
+        "--no-replace-objects",
+        "cat-file",
+        "--batch",
+        cwd=workspace,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+        start_new_session=True,
     )
     digest = hashlib.sha256()
     try:
@@ -151,10 +164,15 @@ async def workspace_publication_pending(
 
 async def clean_workspace_head(workspace: Path) -> str | None:
     """Return the committed candidate only when the checkout is clean and stable."""
+
     async def git(*arguments: str) -> bytes | None:
         process = await asyncio.create_subprocess_exec(
-            "git", "--no-replace-objects", *arguments, cwd=workspace,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            "git",
+            "--no-replace-objects",
+            *arguments,
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         output, _ = await process.communicate()
         return output.strip() if process.returncode == 0 else None
@@ -173,7 +191,7 @@ async def clean_workspace_head(workspace: Path) -> str | None:
 
 
 class ProjectValidator:
-    """Runs agent-discovered, repository-native validation commands locally."""
+    """Runs policy-owned checks before agent-supplied supplemental commands."""
 
     def __init__(
         self,
@@ -198,11 +216,11 @@ class ProjectValidator:
         return {
             "name": "project_validation",
             "description": (
-                "Run the repository's complete, already-discovered build and test sequence. "
+                "Run the operator-configured required checks, followed by optional extra commands. "
                 "Use normal workspace shell and file tools for discovery, inspection, editing, "
                 "and focused development checks; those activities are not validation attempts. "
-                "Supply all final, non-mutating validation commands in one call. Tempo executes "
-                "every command and unlocks pull-request creation only when they all succeed."
+                "Required checks cannot be replaced or omitted. Supply extra checks if needed. "
+                "Publication requires every executed check and cleanup to succeed."
             ),
             "inputSchema": {
                 "type": "object",
@@ -213,7 +231,7 @@ class ProjectValidator:
                     },
                     "commands": {
                         "type": "array",
-                        "minItems": 1,
+                        "minItems": 0,
                         "items": {
                             "type": "object",
                             "properties": {
@@ -229,65 +247,127 @@ class ProjectValidator:
                         "description": "Optional command always run after validation.",
                     },
                 },
-                "required": ["summary", "commands"],
+                "required": ["summary"],
                 "additionalProperties": False,
             },
         }
 
     async def execute(self, arguments: dict[str, Any], workspace: Path) -> dict[str, Any]:
         self.workspace_manager.assert_contained(workspace)
-        summary = str(arguments.get("summary", "")).strip()
-        raw_commands = arguments.get("commands")
-        if not summary or not isinstance(raw_commands, list) or not raw_commands:
-            return self._tool_result(False, "summary and at least one command are required")
-        if len(raw_commands) > self.config.max_commands:
+        # Freeze the policy for this attempt, including host-selected commands and timeouts.
+        policy = self.config.model_copy(deep=True)
+        digest = policy.policy_digest
+        self.runner_url = policy.runner_url or os.getenv("TEMPO_VALIDATION_RUNNER_URL")
+        if policy.missing_policy:
             return self._tool_result(
-                False, f"validation accepts at most {self.config.max_commands} commands"
+                False,
+                "No required validation checks are configured. "
+                "An operator must configure validation.required_checks.",
             )
-        commands: list[tuple[str, str]] = []
+        if not isinstance(arguments, dict) or set(arguments) - {
+            "summary",
+            "commands",
+            "cleanup_command",
+        }:
+            return self._tool_result(
+                False, "Only summary, commands and cleanup_command are accepted"
+            )
+        summary = arguments.get("summary", "")
+        raw_commands = arguments.get("commands", [])
+        cleanup = arguments.get("cleanup_command", "")
+        if (
+            not isinstance(summary, str)
+            or not summary.strip()
+            or not isinstance(raw_commands, list)
+        ):
+            return self._tool_result(
+                False, "A text summary and an optional commands list are required"
+            )
+        if not isinstance(cleanup, str):
+            return self._tool_result(False, "cleanup_command must be text")
+        if not policy.required_checks and not raw_commands:
+            return self._tool_result(False, "Discovery mode requires at least one command")
+        if len(raw_commands) > policy.max_commands:
+            return self._tool_result(
+                False, f"validation accepts at most {policy.max_commands} extra commands"
+            )
+        commands = [
+            (check.name, check.command, check.timeout_ms or policy.command_timeout_ms, check.id)
+            for check in policy.required_checks
+        ]
         for index, row in enumerate(raw_commands, 1):
-            if not isinstance(row, dict):
-                return self._tool_result(False, f"command {index} must be an object")
-            name = str(row.get("name", "")).strip()
-            command = str(row.get("command", "")).strip()
-            if not name or not command:
-                return self._tool_result(False, f"command {index} requires name and command")
-            commands.append((name, command))
+            if not isinstance(row, dict) or set(row) != {"name", "command"}:
+                return self._tool_result(
+                    False, f"extra command {index} requires only name and command"
+                )
+            name, command = row["name"], row["command"]
+            if not all(isinstance(value, str) and value.strip() for value in (name, command)):
+                return self._tool_result(
+                    False, f"extra command {index} requires text name and command"
+                )
+            commands.append((name.strip(), command.strip(), policy.command_timeout_ms, None))
 
-        await self.on_event({"event": "validation_started", "summary": summary})
+        required_ids = [check.id for check in policy.required_checks]
+        await self.on_event(
+            {
+                "event": "validation_started",
+                "summary": summary,
+                "policy_digest": digest,
+                "required_check_ids": required_ids,
+            }
+        )
         results: list[dict[str, Any]] = []
         passed = True
         try:
-            for name, command in commands:
+            for name, command, timeout_ms, check_id in commands:
                 result = await self._run_command(
-                    name, command, workspace, self.config.command_timeout_ms
+                    name, command, workspace, timeout_ms, check_id=check_id
                 )
                 results.append(result)
                 if result["exit_code"] != 0:
                     passed = False
                     break
         finally:
-            cleanup = str(arguments.get("cleanup_command", "")).strip()
-            if cleanup:
-                results.append(
-                    await self._run_command(
-                        "Cleanup", cleanup, workspace, self.config.cleanup_timeout_ms, cleanup=True
+            # Policy cleanup remains last and cannot be replaced by model arguments.
+            try:
+                if cleanup.strip():
+                    results.append(
+                        await self._run_command(
+                            "Agent cleanup",
+                            cleanup,
+                            workspace,
+                            policy.cleanup_timeout_ms,
+                            cleanup=True,
+                        )
                     )
-                )
-
+            finally:
+                if policy.cleanup_command:
+                    results.append(
+                        await self._run_command(
+                            "Policy cleanup",
+                            policy.cleanup_command,
+                            workspace,
+                            policy.cleanup_timeout_ms,
+                            cleanup=True,
+                        )
+                    )
+        passed = passed and all(
+            type(row["exit_code"]) is int and row["exit_code"] == 0 for row in results
+        )
+        passed = passed and self.config.policy_digest == digest
+        evidence = {
+            "policy_digest": digest,
+            "required_check_ids": required_ids,
+            "commands": results,
+        }
         await self.on_event(
-            {
-                "event": "validation_completed",
-                "success": passed,
-                "summary": summary,
-                "commands": results,
-            }
+            {"event": "validation_completed", "success": passed, "summary": summary, **evidence}
         )
         details = "\n\n".join(
             f"{row['name']} (exit {row['exit_code']}):\n{row['output']}" for row in results
         )
         message = f"Local project validation {'passed' if passed else 'failed'}.\n\n{details}"
-        return self._tool_result(passed, message)
+        return {**self._tool_result(passed, message), **evidence}
 
     async def _run_command(
         self,
@@ -297,6 +377,7 @@ class ProjectValidator:
         timeout_ms: int,
         *,
         cleanup: bool = False,
+        check_id: str | None = None,
     ) -> dict[str, Any]:
         await self.on_event(
             {
@@ -304,10 +385,12 @@ class ProjectValidator:
                 "name": name,
                 "command": command,
                 "cleanup": cleanup,
+                "check_id": check_id,
             }
         )
         if self.runner_url:
-            exit_code, text = await self._run_remote(name, command, workspace, timeout_ms)
+            async with asyncio.timeout(timeout_ms / 1000 + 10):
+                exit_code, text = await self._run_remote(name, command, workspace, timeout_ms)
         else:
             exit_code, text = await self._run_local(command, workspace, timeout_ms)
         result = {
@@ -316,6 +399,7 @@ class ProjectValidator:
             "exit_code": exit_code,
             "output": text,
             "cleanup": cleanup,
+            "check_id": check_id,
         }
         await self.on_event({"event": "validation_command_completed", **result})
         return result
@@ -349,7 +433,11 @@ class ProjectValidator:
                     if not line:
                         continue
                     payload = json.loads(line)
+                    if not isinstance(payload, dict) or result is not None:
+                        raise RuntimeError("validation runner returned an invalid result stream")
                     if payload.get("type") == "output":
+                        if not isinstance(payload.get("text"), str):
+                            raise RuntimeError("validation runner output must be text")
                         await self.on_event(
                             {
                                 "event": "validation_command_output_delta",
@@ -359,9 +447,13 @@ class ProjectValidator:
                         )
                     elif payload.get("type") == "result":
                         result = payload
+                    else:
+                        raise RuntimeError("validation runner returned an unknown event")
         if not result:
             raise RuntimeError("validation runner ended without a result")
-        return int(result["exit_code"]), str(result.get("output", ""))
+        if type(result.get("exit_code")) is not int or not isinstance(result.get("output"), str):
+            raise RuntimeError("validation runner returned an invalid result")
+        return result["exit_code"], result["output"]
 
     async def _run_local(self, command: str, workspace: Path, timeout_ms: int) -> tuple[int, str]:
         environment = os.environ.copy()

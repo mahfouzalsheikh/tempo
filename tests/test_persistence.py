@@ -252,6 +252,7 @@ async def test_validation_recovery_context_invalidates_nodes_but_preserves_threa
     assert await store.successful_validation_context(entry.run_record_id) == {
         "fingerprint": fingerprint,
         "node_id": "verify",
+        "policy_digest": "",
     }
     await store.invalidate_validation_recovery(
         entry.run_record_id,

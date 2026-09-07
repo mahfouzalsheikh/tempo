@@ -468,7 +468,7 @@ instructing the agent to reconstruct from workspace, Git history, tracker state,
 | `github_api` | Implementation and review | Reads repository-scoped GitHub source, issues, PRs and refs |
 | `github_publish` | Configured publishers and review | Publishes a clean accepted commit to the durable run branch and creates/recovers its PR |
 | `github_comment` | Configured agents and review | Posts an idempotent source-issue comment |
-| `project_validation` | Both, when enabled | Runs an agent-supplied build/test sequence and records results |
+| `project_validation` | Both, when enabled | Runs host-required checks plus agent extras and records policy-bound results |
 | `tempo_complete` | Implementation only | Finishes a validated issue when no code change is required |
 | `tempo_review` | Review only | Records `approve` or `human_review`; approval requires an unchanged validated workspace |
 
@@ -513,8 +513,10 @@ cannot list files, Tempo scans non-`.git` files. Symlinks contribute their targe
 commands are therefore allowed to create ignored build products, but not to modify project files
 included by the fingerprint.
 
-Commands run with `bash -lc`, in order, and stop on the first non-zero exit. The optional cleanup
-command always runs, even after failure. A timeout kills the whole process group and reports exit
+Required policy commands run before agent-supplied extras with `bash -lc`; a failure stops the
+sequence. Agent cleanup is attempted afterward, then policy cleanup always runs last. Cleanup
+failure prevents a pass. See [required validation policy](VALIDATION_POLICY.md) for configuration,
+evidence identity, and migration details. A timeout kills the whole process group and reports exit
 code 124. Only the configured output tail is retained.
 
 Local-mode validation removes known tracker secret variables, `OPENAI_API_KEY`,
@@ -689,9 +691,9 @@ the new budget repeatedly loading oversized history. If the provider cannot resu
 recovery prompt that first inspects the retained workspace, Git history, tracker, and checkpoints
 instead of replaying the original issue prompt.
 
-Passed validation is restored as a publication gate only when its durable content fingerprint
-still matches the workspace. If the workspace changed after validation, Tempo invalidates the
-stale pass and routes the graph back through its validation node before retrying publication. Tool
+Passed validation is restored only when the latest attempt passed and its durable content
+fingerprint and policy digest match the current workspace and policy. A changed workspace or
+policy invalidates the stale pass and routes the graph back through validation before publication. Tool
 instructions are capability-aware, so a publisher without `project_validation` is never told to
 invoke it.
 

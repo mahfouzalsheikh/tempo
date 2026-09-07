@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -75,14 +77,50 @@ class AgentConfig(BaseModel):
         return result
 
 
+class ValidationCheckConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    name: str = Field(min_length=1)
+    command: str = Field(min_length=1)
+    timeout_ms: int | None = Field(default=None, gt=0)
+
+    @field_validator("name", "command")
+    @classmethod
+    def nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value.strip()
+
+
 class ValidationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     enabled: bool = True
+    policy: Literal["required", "discovered"] = "required"
+    required_checks: list[ValidationCheckConfig] = Field(default_factory=list, max_length=50)
+    cleanup_command: str | None = None
     runner_url: str | None = None
     command_timeout_ms: int = Field(default=1_800_000, gt=0)
     cleanup_timeout_ms: int = Field(default=120_000, gt=0)
     max_commands: int = Field(default=12, gt=0, le=50)
     max_attempts_per_run: int = Field(default=5, gt=0, le=50)
     max_output_chars: int = Field(default=40_000, gt=0)
+
+    @model_validator(mode="after")
+    def unique_checks(self):
+        ids = [check.id for check in self.required_checks]
+        if len(ids) != len(set(ids)):
+            raise ValueError("required validation check IDs must be unique")
+        return self
+
+    @property
+    def missing_policy(self) -> bool:
+        return self.enabled and self.policy == "required" and not self.required_checks
+
+    @property
+    def policy_digest(self) -> str:
+        payload = {"schema": 1, "config": self.model_dump(mode="json"),
+                   "runner": self.runner_url or os.getenv("TEMPO_VALIDATION_RUNNER_URL")}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 class ReviewConfig(BaseModel):

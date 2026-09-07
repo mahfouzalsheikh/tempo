@@ -46,8 +46,9 @@ VALIDATION_POLICY_PROMPT = """
 Tempo publication policy:
 - Do not create a pull request until local validation succeeds.
 - Discover how this repository is built, launched, and tested from its own documentation and files.
-- Use the project_validation tool with the complete project-native validation sequence. Tempo, not
-  your narrative assessment, determines success from the commands' exit codes.
+- Use project_validation to run the operator's required checks. Add focused supplemental commands
+  when needed. In discovery mode, supply the full project-native sequence. Tempo determines success
+  from executed checks and cleanup, not from your narrative assessment.
 - If validation fails, diagnose the output, fix the project, and run project_validation again.
 - Commit changes and use github_publish after validation passes. It publishes the exact local
   commit to Tempo's run branch and opens or recovers its pull request. github_api is read-only;
@@ -531,6 +532,7 @@ class Orchestrator:
                 )
 
         tracker = self.tracker.for_run(assert_ownership)
+        tracker.bind_validation_policy(config.validation)
         workspace = None
 
         async def on_approval(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -543,6 +545,12 @@ class Orchestrator:
 
         try:
             await assert_ownership()
+            if config.workflow.require_publication and config.validation.missing_policy:
+                raise CodexError(
+                    "Configure validation.required_checks before running publication workflows, "
+                    "or explicitly select discovery mode for migration.",
+                    category="validation_policy_missing",
+                )
             workspace = await workspace_manager.create(issue.identifier)
             if persistence:
                 entry.run_record_id = await persistence.start_run(entry, workspace.path)
@@ -588,7 +596,9 @@ class Orchestrator:
                     )
                 if config.review.enabled:
                     recovered_review = (
-                        await self.persistence.completed_review_decision(entry.run_record_id)
+                        await self.persistence.completed_review_decision(
+                            entry.run_record_id, policy_digest=config.validation.policy_digest,
+                        )
                         if self.persistence and entry.run_record_id
                         else None
                     )
@@ -797,16 +807,22 @@ class Orchestrator:
         tracker: Tracker,
     ) -> None:
         """Restore a valid publication gate or route stale work back through validation."""
-        if not config.validation.enabled or not self.persistence or not entry.run_record_id:
+        if (
+            not config.validation.enabled or config.validation.missing_policy
+            or not self.persistence or not entry.run_record_id
+        ):
             return
         context = await self.persistence.successful_validation_context(entry.run_record_id)
         if not context:
             return
         fingerprint = context["fingerprint"]
         current_fingerprint = await workspace_fingerprint(workspace_path)
-        if current_fingerprint == fingerprint:
+        if (
+            current_fingerprint == fingerprint
+            and context.get("policy_digest") == config.validation.policy_digest
+        ):
             tracker.authorize_publication(entry.issue.id)
-            tracker.accept_validation(fingerprint)
+            tracker.accept_validation(fingerprint, policy_digest=config.validation.policy_digest)
             return
 
         validation_node_id = context.get("node_id", "")
@@ -1669,6 +1685,8 @@ class Orchestrator:
         self._publish_live_state()
         if self.persistence and "delta" not in str(event_name).lower():
             await self.persistence.record_event(entry, event, live_session=session)
+            if event_name in {"validation_completed", "validation_fingerprint_recorded"}:
+                event = {**event, "validation_record_id": session.validation_record_id}
             if entry.run_record_id:
                 await self.persistence.heartbeat(entry.run_record_id, lease_token=entry.lease_token)
                 if session.active_node_id:
@@ -1762,7 +1780,10 @@ class Orchestrator:
                     error_text = str(error) if error else "worker cancelled or stalled"
                     next_attempt = (entry.attempt or 0) + 1
                     safety_stop = (
-                        category in {"validation_attempt_limit", "provider_usage_limit"}
+                        category in {
+                            "validation_attempt_limit", "provider_usage_limit",
+                            "validation_policy_missing",
+                        }
                         or next_attempt > config.agent.max_retries
                     )
                     if safety_stop:
@@ -2112,6 +2133,12 @@ class Orchestrator:
             },
             "validation": {
                 "enabled": config.validation.enabled,
+                "policy": config.validation.policy,
+                "policy_configured": not config.validation.missing_policy,
+                "required_checks": [
+                    {"id": check.id, "name": check.name}
+                    for check in config.validation.required_checks
+                ],
                 "runner": (
                     "isolated"
                     if config.validation.runner_url or os.getenv("TEMPO_VALIDATION_RUNNER_URL")

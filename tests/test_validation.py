@@ -79,7 +79,7 @@ async def test_project_validator_runs_sequence_captures_output_and_cleanup(tmp_p
         events.append(event)
 
     validator = ProjectValidator(
-        ValidationConfig(command_timeout_ms=5000),
+        ValidationConfig(policy="discovered", command_timeout_ms=5000),
         manager,
         on_event,
         {"GITHUB_TOKEN"},
@@ -118,7 +118,7 @@ async def test_project_validator_stops_after_failure_but_still_cleans_up(tmp_pat
     async def on_event(_event):
         return None
 
-    validator = ProjectValidator(ValidationConfig(), manager, on_event, set())
+    validator = ProjectValidator(ValidationConfig(policy="discovered"), manager, on_event, set())
     result = await validator.execute(
         {
             "summary": "failure",

@@ -186,6 +186,9 @@ class PublicationController:
                     "previous": previous,
                     "status": "pending",
                     "validation_fingerprint": fingerprint,
+                    "validation_policy_digest": getattr(
+                        self.tracker, "_validation_policy_digest", None,
+                    ),
                 }
                 await self.record(intent=intent)
                 try:
