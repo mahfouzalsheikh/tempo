@@ -22,6 +22,14 @@ the pinned image into the execution daemon and exercises both authenticated endp
 [validation isolation](VALIDATION_SANDBOX.md). Coding-agent and hook isolation, per-node workspaces,
 lease-scoped job capabilities, and immutable complete run snapshots remain outstanding.
 
+The next Phase 0 slice adds a workload firewall inside the execution daemon, installed before
+its API listener starts. Default and agent bridges reject daemon access, sibling containers,
+private infrastructure, metadata, and IPv6; public web and selected DNS traffic remain available.
+Firewall-aware readiness and disposable-daemon restart tests verify the boundary. Deployment now
+drains application services before execution updates and runs live connection probes. See
+[execution network policy](EXECUTION_NETWORK.md). This closes a prerequisite for containerized
+agents; coding agents and hooks have not yet moved out of the control plane.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

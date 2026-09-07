@@ -1,0 +1,4 @@
+FROM docker:27-dind
+
+COPY scripts/execution-daemon.sh /usr/local/bin/tempo-execution-daemon
+ENTRYPOINT ["sh", "/usr/local/bin/tempo-execution-daemon"]

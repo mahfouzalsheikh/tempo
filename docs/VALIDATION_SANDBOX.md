@@ -67,7 +67,8 @@ failure to confirm cleanup. Image identity and mismatch tests do not require Doc
 Coding agents and hooks still share the control-plane container; graph nodes still share issue
 workspaces. A process outside this validation boundary can mutate a mounted workspace or race
 path resolution. The runner credential is installation-wide, not bound to a leased task. The
-privileged execution daemon still shares the control-plane network. Containers share a host
+privileged execution daemon still shares the control-plane network, while a
+[workload firewall](EXECUTION_NETWORK.md) now blocks access from its job bridges. Containers share a host
 kernel; this slice does not establish hostile multitenant isolation. Workspace disk quotas,
 global job admission, trusted test harnesses, per-node workspaces, scoped job authorization,
 agent/hook isolation, and stronger execution infrastructure remain planned.

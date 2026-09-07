@@ -9,10 +9,23 @@ cd "${project_root}"
 python3 scripts/provision-runner-token.py
 echo "Building Tempo application services..."
 tempo_revision="$(git rev-parse HEAD)"
-docker compose build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" tempo validation-runner
+docker compose build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" tempo validation-runner project-runner
 
-echo "Starting execution dependencies without recreating the database..."
-docker compose up --detach --no-recreate --wait --wait-timeout 180 postgres project-runner
+echo "Starting the database without recreating it..."
+docker compose up --detach --no-recreate --wait --wait-timeout 180 postgres
+
+echo "Draining Tempo before updating execution infrastructure..."
+docker compose stop --timeout 60 tempo
+docker compose stop --timeout 60 validation-runner
+umask 077
+mkdir -p var/backups
+chmod 0700 var/backups
+backup_path="var/backups/tempo-$(date -u +%Y%m%dT%H%M%SZ)-${tempo_revision:0:12}.dump"
+docker compose exec -T postgres pg_dump --username=tempo --dbname=tempo --format=custom > "$backup_path"
+echo "Pre-deployment database backup saved to ${backup_path}"
+
+docker compose up --detach --wait --wait-timeout 180 project-runner
+docker compose exec -T project-runner sh /usr/local/bin/tempo-execution-daemon --network
 
 echo "Loading the immutable validation image into the execution daemon..."
 export TEMPO_VALIDATION_IMAGE
@@ -23,13 +36,6 @@ TEMPO_VALIDATION_IMAGE="$(docker compose exec -T project-runner docker image ins
 docker compose exec -T project-runner docker image inspect "$TEMPO_VALIDATION_IMAGE" --format '{{.Id}}'
 
 echo "Updating Tempo and the validation runner..."
-docker compose stop --timeout 60 tempo
-umask 077
-mkdir -p var/backups
-chmod 0700 var/backups
-backup_path="var/backups/tempo-$(date -u +%Y%m%dT%H%M%SZ)-${tempo_revision:0:12}.dump"
-docker compose exec -T postgres pg_dump --username=tempo --dbname=tempo --format=custom > "$backup_path"
-echo "Pre-deployment database backup saved to ${backup_path}"
 docker compose up \
   --detach \
   --wait \
@@ -61,3 +67,4 @@ print('Deployment revision and protected-read smoke check passed.')
 PY
 
 docker compose exec -T tempo python < scripts/check-validation-sandbox.py
+docker compose exec -T tempo python < scripts/check-execution-network.py

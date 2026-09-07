@@ -853,7 +853,10 @@ flowchart TB
 
 The `tempo` and `validation-runner` services use the same image. The image contains Python 3.12,
 Pipenv-installed locked dependencies, Git, SSH, Node, Codex CLI, and Docker CLI. The application
-runs as UID 10001; the Docker daemon is a separate privileged service.
+runs as UID 10001; the Docker daemon is a separate privileged service built from
+`Dockerfile.execution`. Its startup wrapper installs a workload firewall before accepting jobs;
+see [execution network policy](EXECUTION_NETWORK.md). Validation still uses `--network=none`;
+the restricted agent bridge is provisioned for future runtime isolation.
 
 Tempo imports host Codex authentication from the read-only `/run/tempo-host-codex` mount
 into a container-owned state volume. Neither the validation service nor disposable job containers

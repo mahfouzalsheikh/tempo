@@ -92,7 +92,9 @@ writes remain mediated by Tempo's provider tool.
 Validation commands run in disposable containers with a pinned image, no network or Docker
 access, resource limits, and only their task workspace mounted. Coding agents and hooks still
 share the control-plane container. See [validation isolation](docs/VALIDATION_SANDBOX.md) for
-the tested boundary and remaining work.
+the tested boundary and remaining work. The [execution network policy](docs/EXECUTION_NETWORK.md)
+also blocks job bridges from reaching the daemon and private infrastructure, as groundwork for
+isolating coding agents.
 
 After source changes, rebuild and health-check all services with:
 

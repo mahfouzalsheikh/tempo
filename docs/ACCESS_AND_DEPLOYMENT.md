@@ -46,7 +46,9 @@ is bound to the request, final result, and validation policy. See [validation is
 The shared credential authenticates the caller, not an individual leased run. Per-job capability
 tokens, control-plane network segregation, trusted validation harnesses, and isolation for
 coding agents and hooks remain necessary. The current private Compose network uses HTTP and a
-privileged Docker execution service. Use TLS for runner traffic crossing a trusted-host boundary.
+privileged Docker execution service. Workload bridge traffic is now restricted by the
+[execution network policy](EXECUTION_NETWORK.md); the control-plane network still has daemon access.
+Use TLS for runner traffic crossing a trusted-host boundary.
 Authentication alone does
 not prevent a process with shared filesystem/process access from reaching credentials.
 
@@ -59,13 +61,13 @@ controlled by `TEMPO_PORT` in `.env`.
 Run `./scripts/restart-tempo.sh` from a committed checkout. It:
 
 1. Ensures a stable local runner credential is configured.
-2. Builds Tempo and the validation runner with the Git commit recorded in their image metadata.
-3. Starts existing database and execution dependencies without forcibly recreating them.
-4. Loads the built image into the execution daemon and passes its immutable image ID to both services.
-5. Stops Tempo gracefully and writes a private PostgreSQL backup beneath `var/backups/`.
-6. Updates the two application services and waits for health checks. Startup applies migrations.
-7. Verifies the served revision matches the requested commit and anonymous state reads return 401.
-8. Executes disposable sandbox probes through both authenticated validation endpoints.
+2. Builds the application services and the execution daemon's policy image.
+3. Starts the existing database without forcibly recreating it.
+4. Stops Tempo and validation gracefully and saves a private backup beneath `var/backups/`.
+5. Updates execution infrastructure, waits for firewall-aware readiness, and provisions the agent network.
+6. Loads the validation image into the daemon and supplies its immutable ID to both application services.
+7. Starts the application services and waits for health checks. Startup applies migrations.
+8. Verifies the deployed commit, protected reads, both validation endpoints, and network isolation.
 
 The script preserves named volumes. It does not run `down -v`, remove orphan services, or
 automatically restore a database. It exits on failure. If an update fails after Tempo stops, fix

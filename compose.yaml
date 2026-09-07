@@ -87,13 +87,16 @@ services:
       - tempo-workspaces:/data/workspaces
 
   project-runner:
-    image: docker:27-dind
+    build:
+      context: .
+      dockerfile: Dockerfile.execution
     privileged: true
     environment:
       DOCKER_TLS_CERTDIR: ""
-    command: ["--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock"]
+    command:
+      ["--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock", "--dns=1.1.1.1", "--dns=8.8.8.8"]
     healthcheck:
-      test: ["CMD", "docker", "info"]
+      test: ["CMD", "sh", "/usr/local/bin/tempo-execution-daemon", "--check"]
       interval: 3s
       timeout: 3s
       retries: 20
