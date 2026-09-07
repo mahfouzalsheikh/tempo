@@ -26,6 +26,32 @@ Approved product context:
 """
 
 
+def product_gate_policy(config):
+    """Only omit gates whose every incoming edge is false for immutable product labels."""
+    labels = set(config.tracker.required_labels)
+    inactive, active = [], []
+    for node in config.workflow.nodes:
+        if node.type != "human_gate":
+            continue
+        incoming = [edge.condition.strip().lower() for edge in config.workflow.edges
+                    if edge.target == node.id]
+
+        def never_matches(condition):
+            if condition.startswith("issue.label:"):
+                label = condition.split(":", 1)[1].strip()
+                return bool(label) and label not in labels
+            if condition.startswith("not issue.label:"):
+                label = condition.split(":", 1)[1].strip()
+                return bool(label) and label in labels
+            return False
+
+        if incoming and all(never_matches(condition) for condition in incoming):
+            inactive.append({"id": node.id, "name": node.name or node.id, "conditions": incoming})
+        else:
+            active.append(node.id)
+    return {"active": active, "inactive": inactive, "labels": sorted(labels)}
+
+
 def readiness(config):
     errors = []
     if (
@@ -36,9 +62,10 @@ def readiness(config):
         errors.append("Configure enabled validation.required_checks with policy: required first.")
     if not config.hooks.after_create:
         errors.append("Configure an after_create hook that prepares a Git repository.")
-    if any(node.type == "human_gate" for node in config.workflow.nodes):
+    if product_gate_policy(config)["active"]:
         errors.append(
-            "This project has workflow approval gates; product execution cannot yet carry them."
+            "This product has applicable or unconditional project approval gates; "
+            "product execution cannot yet carry them."
         )
     if not config.tracker.active_states:
         errors.append("Configure at least one active work state.")

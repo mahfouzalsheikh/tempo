@@ -12,7 +12,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from tempo.build_profiles import MINI_APP, build_profile, with_build_checks
 from tempo.errors import ConfigError, LeaseLostError
 from tempo.intake import IntakeConflict
-from tempo.product_execution import ROLES, enqueue_product, readiness
+from tempo.product_execution import ROLES, enqueue_product, product_gate_policy, readiness
 from tempo.run_snapshot import restore_snapshot, snapshot_digest
 from tempo.runtime import get_orchestrator
 
@@ -29,6 +29,17 @@ def controller_for(product):
     raise IntakeConflict("This project's workflow is not loaded by the running service.")
 
 
+def default_profile(config, role):
+    if role in config.agents:
+        return role
+    for name, profile in config.agents.items():
+        if profile.role == role or profile.role.endswith(f"-{role}"):
+            return name
+        if role == "integrator" and "integration" in profile.role:
+            return name
+    return next(iter(config.agents))
+
+
 def setup(product, build_target=""):
     try:
         controller = controller_for(product)
@@ -41,6 +52,7 @@ def setup(product, build_target=""):
         profiles = list(config.agents)
         return {
             "blocked": readiness(config),
+            "approval_policy": product_gate_policy(config),
             "build_profile": profile,
             "build_target": build_target,
             "supported_target": MINI_APP["id"],
@@ -49,10 +61,7 @@ def setup(product, build_target=""):
             "roles": [
                 {
                     "name": role,
-                    "selected": next(
-                        (name for name, profile in config.agents.items() if profile.role == role),
-                        profiles[0],
-                    ),
+                    "selected": default_profile(config, role),
                 }
                 for role in ROLES
             ],

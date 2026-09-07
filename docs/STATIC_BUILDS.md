@@ -8,7 +8,9 @@ remains one, and integration stays exclusive.
 
 The recipe adds the mini-app's unit tests, production build, and distribution checks to any
 existing required project checks. It can supply the missing check list for a product run, but
-cannot override disabled validation, discovery policy, or existing human gates. It does not
+cannot override disabled validation, discovery policy, or applicable human gates. An issue-label
+gate is inactive only when every incoming condition is provably false for the product run's
+saved labels. Setup shows that decision; unconditional, unknown, or matching gates block launch. It does not
 change the legacy issue workflow's validation policy or automatically start GitHub work.
 
 ## Build boundary

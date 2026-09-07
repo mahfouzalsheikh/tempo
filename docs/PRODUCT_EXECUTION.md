@@ -46,8 +46,10 @@ at approval time remain separate work.
 ## Checks and evidence
 
 Execution setup requires enabled `validation.required_checks` with `policy: required`, a Git
-checkout hook, and a configured active work state. Projects with existing workflow human gates
-are blocked because those gates cannot yet be translated into a product plan. The chosen
+checkout hook, and a configured active work state. Applicable or unconditional workflow human gates
+block execution because they cannot yet be translated into a product plan. Gates whose incoming
+label conditions are all false for the product's immutable labels are shown as inactive in setup.
+Unknown conditions remain blocking. The chosen
 parallelism cannot exceed the project's configured workflow limit.
 
 After every agent stops and the `after_run` hook finishes, the controller runs the saved required

@@ -79,6 +79,7 @@
       <section class="panel"><h2>Build target</h2><div class="intake-actions"><a class="button" href="?">Checked source only</a><a class="button {% if setup.build_profile %}primary{% endif %}" href="?build_target=react-mini-app-v1">React mini-app</a></div>{% if setup.build_profile %}<p>Build the React application in <code>mini-app/</code>. Tempo prepares dependencies and assets, runs tests and a production build, and saves a downloadable ZIP with its evidence manifest. Existing project checks also apply. Preview deployment and acceptance verification follow separately.</p>{% else %}<p>Select React mini-app to add its required checks and retain the production files as a build artifact.</p>{% endif %}</section>
       <section class="panel"><h2>{{ brief.title }}</h2><p>Brief {{ revision.number }} · Plan {{ plan.number }} · {{ setup.repository }} · {{ setup.environment }}</p>
       {% for blocker in setup.blocked %}<p class="intake-error">{{ blocker }}</p>{% endfor %}
+      {% for gate in setup.approval_policy.inactive %}<p class="intake-copy">The project gate “{{ gate.name }}” does not apply to this run's saved labels ({{ setup.approval_policy.labels|join:", "|default:"none" }}).</p>{% endfor %}
       {% if not plan.approved_at %}<p class="intake-error">Approve the current plan before starting work.</p>{% endif %}
       <p class="intake-copy">Retries keep these saved settings and contracts. To use a changed brief or execution setup, create and approve a new plan revision.</p>
       <form method="post" class="intake-form">{% csrf_token %}
