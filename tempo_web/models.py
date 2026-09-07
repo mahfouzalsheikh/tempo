@@ -781,3 +781,21 @@ class ExecutionPlan(models.Model):
         ordering = ["-number"]
         constraints = [models.UniqueConstraint(fields=["brief_revision", "number"],
                                                name="tempo_unique_plan_revision")]
+
+
+class BuildArtifact(models.Model):
+    run = models.ForeignKey(AgentRun, on_delete=models.PROTECT, related_name="build_artifacts")
+    digest = models.CharField(max_length=64)
+    size = models.PositiveIntegerField()
+    data = models.BinaryField(editable=False)
+    manifest = models.JSONField()
+    manifest_digest = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=["run", "manifest_digest"], name="tempo_unique_run_build_manifest",
+        )]
+
+    def __str__(self):
+        return f"Build for run {self.run_id}: {self.digest[:12]}"

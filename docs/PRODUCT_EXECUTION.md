@@ -5,8 +5,10 @@ profile for each role and a parallel task limit, review the required checks, the
 **Build & verify candidate**. Approval itself never dispatches work. Starting a build queues
 real coding agents and consumes model tokens and compute.
 
-This stage produces a local, unpublished source candidate. It does not open a pull request,
-merge, build an immutable release artifact, provision a preview, or deploy. A successful task
+The default path produces a local, unpublished source candidate. Selecting the React mini-app
+build target additionally saves the checked production files and an evidence manifest; see
+[static builds](STATIC_BUILDS.md). Neither path opens a pull request, merges, provisions a preview,
+or deploys. A successful task
 or an agent verifier's conclusion is not independent proof of an acceptance criterion.
 
 ## Execution contract
@@ -56,8 +58,9 @@ check or changed workspace prevents a candidate checkpoint and stops automatic r
 
 A `product_candidate` checkpoint records the source SHA, workspace fingerprint, host validation
 record, policy digest, required check IDs, brief/plan digests, and execution snapshot digest.
-The UI shows this evidence only for a successful `CandidateChecksPassed` run. The source remains
-in the run workspace; this checkpoint is not a retained, immutable release artifact.
+The UI shows this evidence only for a successful `CandidateChecksPassed` run. The default source-only result remains
+in the run workspace. Selecting a build target additionally retains a digest-addressed artifact
+and links it from the checkpoint.
 
 ## Recovery and operation
 
@@ -86,6 +89,7 @@ reload, retry, host-check failure, cleanup mutation, unrelated history, forged e
 launches, authentication/CSRF, and PostgreSQL launch/edit races. Deployment checks read stored
 contracts and evidence without starting agents or creating product work.
 
-Next: independently verifiable criterion results, a trusted build artifact and release manifest,
-a supported preview deployment, and tested promotion/rollback. An agent planner that inspects
+The React mini-app now has a supported build recipe and retained artifact manifest. Next:
+independently verifiable criterion results, a supported preview deployment, and tested
+promotion/rollback. An agent planner that inspects
 the repository can propose the same typed contracts; its proposal still requires review.

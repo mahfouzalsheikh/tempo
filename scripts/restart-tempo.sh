@@ -73,3 +73,5 @@ docker compose exec -T tempo python < scripts/check-contribution-integration.py
 docker compose exec -T tempo python < scripts/check-run-snapshots.py
 
 docker compose exec -T tempo python < scripts/check-product-intake.py
+
+docker compose exec -T --user 10001:10001 tempo python < scripts/check-static-builds.py

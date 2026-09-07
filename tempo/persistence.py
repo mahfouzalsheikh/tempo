@@ -1166,6 +1166,21 @@ class PersistenceStore:
             )
 
     @leased_write
+    def save_build_artifact(self, run_id, bundle, manifest):
+        from tempo.build_artifacts import verify_artifact
+        from tempo_web.models import BuildArtifact
+
+        identity = snapshot_digest(manifest)
+        artifact, _ = BuildArtifact.objects.get_or_create(
+            run_id=run_id, manifest_digest=identity,
+            defaults={"digest": bundle["digest"], "size": bundle["size"],
+                      "data": bundle["data"], "manifest": manifest},
+        )
+        verify_artifact(artifact)
+        return {"id": artifact.pk, "sha256": artifact.digest,
+                "manifest_digest": artifact.manifest_digest, "size": artifact.size}
+
+    @leased_write
     def checkpoint(
         self,
         run_id: int,

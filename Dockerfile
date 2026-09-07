@@ -13,6 +13,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends bash ca-certificates git openssh-client \
+       fontconfig fonts-dejavu-core \
     && pip install --no-cache-dir pipenv \
     && rm -rf /var/lib/apt/lists/*
 

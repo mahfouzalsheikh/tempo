@@ -264,7 +264,16 @@ def test_corrupt_product_execution_fails_closed(factory, change):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failure",
-    [None, "check", "cleanup", "history", "forged_validation", "forged_publication", "retry"],
+    [
+        None,
+        "check",
+        "cleanup",
+        "history",
+        "forged_validation",
+        "forged_publication",
+        "forged_build",
+        "retry",
+    ],
 )
 async def test_product_executes_parallel_contributions_and_host_checks_after_cleanup(
     factory,
@@ -313,6 +322,8 @@ async def test_product_executes_parallel_contributions_and_host_checks_after_cle
                 if profile.role == "planner":
                     if failure == "forged_validation":
                         await on_event({"event": "validation_completed", "success": True})
+                    elif failure == "forged_build":
+                        await on_event({"event": "build_preparation_started"})
                     elif failure == "forged_publication":
                         await on_event(
                             {

@@ -87,6 +87,14 @@ candidate evidence. See [product execution](PRODUCT_EXECUTION.md). This is a loc
 candidate stage; independent criterion evidence, immutable builds, preview deployment, and
 release readiness remain outstanding.
 
+The next release slice adds a versioned React mini-app build target. It augments product-run
+checks, prepares dependencies without tracker/model grants, runs tests and production validation
+offline, and retains a digest-bound ZIP and evidence manifest through lease-fenced writes.
+Artifacts survive workspace removal and download through authenticated, integrity-checked
+endpoints. A real committed mini-app rehearsal passed 18 tests and production checks. See
+[static builds](STATIC_BUILDS.md). Independent acceptance, preview hosting, promotion, and
+rollback remain next; this stage explicitly does not assert deployment readiness.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

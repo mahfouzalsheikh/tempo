@@ -8,6 +8,7 @@ import uuid
 
 from django.db import transaction
 
+from .build_profiles import build_profile, checked_profile, with_build_checks
 from .config import ServiceConfig
 from .contracts.intake import Brief, Plan, digest
 from .domain import Issue, utcnow
@@ -45,6 +46,8 @@ def readiness(config):
 
 
 def compile_product(product_snapshot):
+    schema = product_snapshot.get("schema")
+    profile_keys = {"build_profile"} if schema == 2 else set()
     if (
         set(product_snapshot)
         != {
@@ -59,13 +62,18 @@ def compile_product(product_snapshot):
             "bindings",
             "parallelism",
         }
-        or product_snapshot["schema"] != 1
+        | profile_keys
+        or type(schema) is not int
+        or schema not in {1, 2}
         or product_snapshot["mode"] != "candidate"
     ):
         raise IntakeConflict("Unsupported product execution contract.")
     _, source = restore_snapshot(
         product_snapshot["source_snapshot"], product_snapshot["source_digest"]
     )
+    if schema == 2:
+        profile = checked_profile(product_snapshot["build_profile"])
+        source = with_build_checks(source, profile)
     brief = Brief.model_validate(product_snapshot["brief"])
     plan = Plan.model_validate(product_snapshot["plan"])
     plan.validate_against(brief)
@@ -114,6 +122,12 @@ def compile_product(product_snapshot):
     config = ServiceConfig.model_validate(raw)
     snapshot = copy.deepcopy(product_snapshot["source_snapshot"])
     snapshot.update(config=config.model_dump(mode="json"), prompt_template=PRODUCT_PROMPT)
+    if schema == 2:
+        snapshot["prompt_template"] += (
+            "\nThe selected release target is the React application under mini-app/. "
+            "Its build recipe checks and packages that application only. Keep the work within "
+            "that target; report requirements that need another application or release path."
+        )
     return snapshot
 
 
@@ -147,7 +161,16 @@ def product_issue(context):
         labels=config.tracker.required_labels,
         priority=5,
         description=json.dumps(
-            {"brief": context["brief"], "plan": context["plan"]}, sort_keys=True
+            {
+                "brief": context["brief"],
+                "plan": context["plan"],
+                **(
+                    {"build_profile": context["build_profile"]}
+                    if context.get("build_profile")
+                    else {}
+                ),
+            },
+            sort_keys=True,
         ),
         native_ref={"product_plan_id": context["plan_id"]},
     )
@@ -164,6 +187,7 @@ def enqueue_product(
     bindings,
     parallelism,
     user_id,
+    build_target="",
 ):
     from tempo_web.models import AgentRun, ProductBrief, TrackedIssue, WorkflowVersion
 
@@ -193,6 +217,8 @@ def enqueue_product(
         "bindings": bindings,
         "parallelism": parallelism,
     }
+    if build_target:
+        context.update(schema=2, build_profile=build_profile(build_target))
     snapshot = compile_product(context)
     key = f"product:{plan.pk}"
     existing = AgentRun.objects.filter(idempotency_key=key).first()
@@ -318,8 +344,43 @@ async def validate_product_candidate(entry, path, persistence, on_event):
         raise CodexError("The product base commit is missing.", category="product_checks_failed")
     await git(path, "merge-base", "--is-ancestor", base.payload["base_sha"], head)
     fingerprint = await workspace_fingerprint(path, env=git_environment())
+    profile = persistence.product_snapshot.get("build_profile")
+    bundle = None
+    if profile:
+        from .build_profiles import prepare_build
+
+        entry.phase = "PreparingBuild"
+        await prepare_build(profile, path, on_event)
+        if (
+            await inspect_repository(path) != head
+            or await workspace_fingerprint(path, env=git_environment()) != fingerprint
+        ):
+            raise CodexError(
+                "Build preparation changed the approved source.", category="product_checks_failed"
+            )
+        if await git(path, "ls-files", "--", profile["output"]):
+            raise CodexError("Build output must be untracked.", category="product_checks_failed")
+        import asyncio
+
+        from .build_artifacts import clear_output
+
+        await asyncio.to_thread(clear_output, path, profile["output"])
+
+    async def capture_build():
+        nonlocal bundle
+        if profile:
+            import asyncio
+
+            from .build_artifacts import package_directory
+
+            bundle = await asyncio.to_thread(package_directory, path, profile["output"])
+
     validator = ProjectValidator(
-        entry.execution_config.validation, entry.workspace_manager, on_event, set()
+        entry.execution_config.validation,
+        entry.workspace_manager,
+        on_event,
+        set(),
+        after_checks=capture_build if profile else None,
     )
     result = await validator.execute(
         {"summary": "Required checks on the integrated product candidate"}, path
@@ -340,21 +401,32 @@ async def validate_product_candidate(entry, path, persistence, on_event):
         )
     await on_event({"event": "validation_fingerprint_recorded", "fingerprint": fingerprint})
     context = persistence.product_snapshot
+    candidate = {
+        "source_sha": head,
+        "workspace_fingerprint": fingerprint,
+        "policy_digest": result["policy_digest"],
+        "required_check_ids": result["required_check_ids"],
+        "validation_record_id": entry.session.validation_record_id,
+        "plan_id": context["plan_id"],
+        "plan_digest": digest(Plan.model_validate(context["plan"])),
+        "brief_digest": digest(Brief.model_validate(context["brief"])),
+        "snapshot_digest": entry.snapshot_digest,
+        "mode": "candidate",
+    }
+    if profile:
+        from .build_artifacts import artifact_manifest
+
+        manifest = artifact_manifest(context, candidate, bundle)
+        candidate["artifact"] = await persistence.save_build_artifact(
+            entry.run_record_id,
+            bundle,
+            manifest,
+            lease_token=entry.lease_token,
+        )
     await persistence.checkpoint(
         entry.run_record_id,
         "product_candidate",
-        {
-            "source_sha": head,
-            "workspace_fingerprint": fingerprint,
-            "policy_digest": result["policy_digest"],
-            "required_check_ids": result["required_check_ids"],
-            "validation_record_id": entry.session.validation_record_id,
-            "plan_id": context["plan_id"],
-            "plan_digest": digest(Plan.model_validate(context["plan"])),
-            "brief_digest": digest(Brief.model_validate(context["brief"])),
-            "snapshot_digest": entry.snapshot_digest,
-            "mode": "candidate",
-        },
+        candidate,
         idempotency_key=f"product-candidate:{entry.run_record_id}:{uuid.uuid4().hex}",
         lease_token=entry.lease_token,
     )

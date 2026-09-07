@@ -10,6 +10,7 @@ from .models import (
     AgentSession,
     ApprovalRequest,
     BriefRevision,
+    BuildArtifact,
     CredentialReference,
     Environment,
     ExecutionPlan,
@@ -285,3 +286,10 @@ class WorkflowConfigurationAdmin(admin.ModelAdmin):
 admin.site.site_header = "Tempo administration"
 admin.site.site_title = "Tempo admin"
 admin.site.index_title = "Persistent runtime records"
+
+
+@admin.register(BuildArtifact)
+class BuildArtifactAdmin(ReadOnlyRuntimeAdmin):
+    list_display = ("id", "run", "digest", "size", "created_at")
+    fields = ("run", "digest", "size", "manifest_digest", "manifest", "created_at")
+    readonly_fields = fields

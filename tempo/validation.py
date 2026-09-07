@@ -215,10 +215,13 @@ class ProjectValidator:
         workspace_manager: WorkspaceManager,
         on_event: EventCallback,
         secret_names: set[str],
+        *,
+        after_checks=None,
     ) -> None:
         self.config = config
         self.workspace_manager = workspace_manager
         self.on_event = on_event
+        self.after_checks = after_checks
         self.secret_names = secret_names | {
             "GITHUB_TOKEN",
             "OPENAI_API_KEY",
@@ -334,6 +337,7 @@ class ProjectValidator:
         )
         results: list[dict[str, Any]] = []
         passed = True
+        capture_error = None
         try:
             for name, command, timeout_ms, check_id in commands:
                 result = await self._run_command(
@@ -343,6 +347,13 @@ class ProjectValidator:
                 if result["exit_code"] != 0:
                     passed = False
                     break
+            if passed and self.after_checks:
+                # Host-owned capture occurs after command containers stop and before cleanup.
+                try:
+                    await self.after_checks()
+                except Exception as exc:
+                    passed = False
+                    capture_error = exc
         finally:
             # Policy cleanup remains last and cannot be replaced by model arguments.
             try:
@@ -383,6 +394,8 @@ class ProjectValidator:
             f"{row['name']} (exit {row['exit_code']}):\n{row['output']}" for row in results
         )
         message = f"Local project validation {'passed' if passed else 'failed'}.\n\n{details}"
+        if capture_error:
+            raise capture_error
         return {**self._tool_result(passed, message), **evidence}
 
     async def _run_command(

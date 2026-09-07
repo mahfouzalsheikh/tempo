@@ -9,6 +9,7 @@ from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.csrf import ensure_csrf_cookie
 
+from tempo.build_profiles import MINI_APP, build_profile, with_build_checks
 from tempo.errors import ConfigError, LeaseLostError
 from tempo.intake import IntakeConflict
 from tempo.product_execution import ROLES, enqueue_product, readiness
@@ -28,15 +29,21 @@ def controller_for(product):
     raise IntakeConflict("This project's workflow is not loaded by the running service.")
 
 
-def setup(product):
+def setup(product, build_target=""):
     try:
         controller = controller_for(product)
         store = controller.persistence
         source_digest = snapshot_digest(store.execution_snapshot)
         _, config = restore_snapshot(store.execution_snapshot, source_digest)
+        profile = build_profile(build_target)
+        if profile:
+            config = with_build_checks(config, profile)
         profiles = list(config.agents)
         return {
             "blocked": readiness(config),
+            "build_profile": profile,
+            "build_target": build_target,
+            "supported_target": MINI_APP["id"],
             "configuration_digest": source_digest,
             "profiles": profiles,
             "roles": [
@@ -73,6 +80,7 @@ def launch(product, payload, user_id):
         bindings=payload["bindings"],
         parallelism=payload["parallelism"],
         user_id=user_id,
+        build_target=payload.get("build_target", ""),
     )
     async_to_sync(controller.refresh)()
     return run
@@ -86,7 +94,10 @@ def execute(request, brief_id):
         return HttpResponseNotAllowed(["GET", "POST"])
     product = get_object_or_404(ProductBrief, pk=brief_id)
     context = detail(product)
-    info = setup(product)
+    build_target = (request.POST if request.method == "POST" else request.GET).get(
+        "build_target", ""
+    )
+    info = setup(product, build_target)
     error = ""
     if request.method == "POST":
         try:
@@ -94,6 +105,7 @@ def execute(request, brief_id):
                 product,
                 {
                     "mode": request.POST.get("mode"),
+                    "build_target": build_target,
                     "expected_plan_id": int(request.POST.get("expected_plan_id", "0")),
                     "expected_plan_digest": request.POST.get("expected_plan_digest", ""),
                     "expected_configuration_digest": request.POST.get(
@@ -118,7 +130,9 @@ def execution_setup(request, brief_id):
         return JsonResponse({"error": "authentication_required"}, status=401)
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
-    return JsonResponse(setup(get_object_or_404(ProductBrief, pk=brief_id)))
+    return JsonResponse(
+        setup(get_object_or_404(ProductBrief, pk=brief_id), request.GET.get("build_target", ""))
+    )
 
 
 def control(request, brief_id, run_id, action):

@@ -373,7 +373,7 @@ class Orchestrator:
         now = utcnow()
         for issue_id, entry in list(self.running.items()):
             run_config = entry.execution_config or config
-            if entry.session.validation_status == "running":
+            if entry.session.validation_status == "running" or entry.phase == "PreparingBuild":
                 # Validation commands and cleanup have their own explicit timeouts. A quiet Docker
                 # build is not evidence that the Codex app-server has stalled.
                 continue
@@ -1286,7 +1286,7 @@ class Orchestrator:
         async def on_event(event: dict[str, Any]) -> None:
             event_name = str(event.get("event", ""))
             if product_task and (
-                event_name.startswith(("validation_", "review_"))
+                event_name.startswith(("validation_", "review_", "build_"))
                 or event_name in {"no_change_completed", "tool_call_completed"}
             ):
                 raise CodexError(

@@ -120,3 +120,7 @@ planning part of stage C. Approved plans now have explicit candidate-build setup
 parallelism choices, setup blockers, task progress, saved-execution retries, and host-check
 evidence. See [product execution](PRODUCT_EXECUTION.md). Criterion evidence and delivery views
 still need their release backends.
+
+The candidate setup now offers a React mini-app build target with its effective required checks.
+Successful plan pages expose retained build ZIP and evidence downloads, while clearly marking
+acceptance and deployment readiness as unverified. See [static builds](STATIC_BUILDS.md).

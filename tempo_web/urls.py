@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.urls import path
 
-from . import intake_views, product_views, views
+from . import artifact_views, intake_views, product_views, views
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
@@ -43,6 +43,8 @@ urlpatterns = [
     path("ideas/<int:brief_id>/edit/", intake_views.edit_brief, name="idea_edit"),
     path("ideas/<int:brief_id>/plan/", intake_views.edit_plan, name="idea_plan"),
     path("ideas/<int:brief_id>/approve/", intake_views.approve, name="idea_approve"),
+    path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/<str:kind>/",
+         artifact_views.download, name="build_artifact"),
     path("ideas/<int:brief_id>/execute/", product_views.execute, name="idea_execute"),
     path("ideas/<int:brief_id>/runs/<int:run_id>/<str:action>/", product_views.control,
          name="idea_run_control"),
