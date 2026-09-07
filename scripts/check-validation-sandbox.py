@@ -16,6 +16,7 @@ assert health["backend"] == "docker" and health["image"] == image, health
 with tempfile.TemporaryDirectory(
     prefix="sandbox-smoke-", dir=os.environ["TEMPO_WORKSPACE_ROOT"],
 ) as root:
+    os.chown(root, 10001, 10001)
     task = Path(root) / "task"
     task.mkdir()
     os.chown(task, 10001, 10001)
