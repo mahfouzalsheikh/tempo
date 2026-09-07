@@ -689,16 +689,14 @@ def build_tracker(
 ) -> Tracker:
     if kind == "memory":
         return MemoryTracker(provider.get("issues") or [])
-    token_value = provider.get("token")
-    review_token_value = provider.get("review_token")
-    token_env_name = "GITHUB_TOKEN"
-    review_token_env_name = "GITHUB_REVIEW_TOKEN"
-    if isinstance(token_value, str) and token_value.startswith("$"):
-        token_env_name = token_value[1:]
-        token_value = os.getenv(token_env_name)
-    if isinstance(review_token_value, str) and review_token_value.startswith("$"):
-        review_token_env_name = review_token_value[1:]
-        review_token_value = os.getenv(review_token_env_name)
+    from tempo.credentials import reference_name, resolve_credential
+
+    token_reference = provider.get("token") or "$GITHUB_TOKEN"
+    review_reference = provider.get("review_token") or "$GITHUB_REVIEW_TOKEN"
+    token_env_name = reference_name(token_reference)
+    review_token_env_name = reference_name(review_reference)
+    token_value = resolve_credential(token_reference, required=bool(provider.get("token")))
+    review_token_value = resolve_credential(review_reference, required=False)
     return GitHubTracker(
         repo=str(provider["repo"]),
         token=token_value,

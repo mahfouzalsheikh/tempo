@@ -10,6 +10,8 @@ from typing import Any
 
 import uvicorn
 
+from .credentials import process_environment
+
 ROOT = Path(os.getenv("TEMPO_WORKSPACE_ROOT", "/data/workspaces")).resolve(strict=False)
 MAX_REQUEST_BYTES = 1024 * 1024
 
@@ -73,9 +75,10 @@ async def run_command(
 ) -> dict[str, Any]:
     process = await asyncio.create_subprocess_exec(
         "bash",
-        "-lc",
+        "--noprofile", "--norc", "-c",
         command,
         cwd=workspace,
+        env=process_environment(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,
@@ -102,9 +105,10 @@ async def run_command(
 async def stream_command(command: str, workspace: Path, timeout_ms: int, max_output_chars: int):
     process = await asyncio.create_subprocess_exec(
         "bash",
-        "-lc",
+        "--noprofile", "--norc", "-c",
         command,
         cwd=workspace,
+        env=process_environment(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -13,6 +12,7 @@ from typing import Any
 import structlog
 
 from .config import ServiceConfig
+from .credentials import CONTROL_PLANE_SECRETS, process_environment
 from .domain import Issue
 from .errors import CodexError
 from .process import stop_process_group
@@ -94,16 +94,14 @@ class CodexAppServer:
             strict=True
         ):
             raise CodexError("agent cwd cannot be workspace root", category="invalid_workspace_cwd")
-        environment = os.environ.copy()
-        for name in self.tracker.secret_environment_names() | {
-            "DJANGO_SECRET_KEY",
-            "TEMPO_ADMIN_PASSWORD",
-        }:
-            environment.pop(name, None)
+        environment = process_environment(
+            self.config.environment,
+            forbidden=CONTROL_PLANE_SECRETS | self.tracker.secret_environment_names(),
+        )
         try:
             process = await asyncio.create_subprocess_exec(
                 "bash",
-                "-lc",
+                "--noprofile", "--norc", "-c",
                 f"exec {self.config.command}",
                 cwd=workspace,
                 env=environment,

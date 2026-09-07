@@ -49,6 +49,10 @@ The checked-in `WORKFLOW.md` points at
 `mahfouzalsheikh/drawing-algorithms`. Change its project, repository, hook URLs, labels, and
 reviewers before using Tempo for another repository.
 
+If using API-key authentication, uncomment the `codex.environment.OPENAI_API_KEY` grant in
+`WORKFLOW.md`. Runtime API keys are no longer inherited automatically. Hooks have their own
+explicit credential grants. See [credential references and upgrade notes](docs/CREDENTIALS.md).
+
 Start the stack:
 
 ```bash

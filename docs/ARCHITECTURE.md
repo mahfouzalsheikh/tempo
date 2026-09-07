@@ -171,17 +171,15 @@ An unknown variable is a prompt-rendering error. An empty prompt uses the built-
 
 ### Environment references and paths
 
-A value shaped exactly like `$NAME` is resolved from the environment for:
+`workspace.root` supports whole-value `$NAME` resolution at configuration load; `/path/$NAME`
+is not interpolated. The value must be nonempty. `~` is expanded and relative roots are resolved
+against the workflow file's directory.
 
-- `workspace.root`
-- `tracker.provider.token`
-- `tracker.provider.api_key`
-- `tracker.provider.review_token`
-
-This is whole-value resolution, not shell interpolation: `/path/$NAME` is not expanded.
-`workspace.root`, primary `token`, and `api_key` references must resolve to non-empty values. An
-empty review token is allowed. `~` is expanded. A relative workspace root is resolved relative to
-the workflow file, not the current shell directory.
+Tracker `token`, `api_key`, and `review_token` fields accept references only and remain unresolved
+in configuration snapshots. The GitHub adapter resolves its token and optional review-token
+references when constructed. An explicitly configured primary token must be nonempty; the review
+token is optional. Runtime and hook `environment` mappings also retain references and resolve them
+at process launch. See [credential boundaries and upgrade notes](CREDENTIALS.md).
 
 ### Configuration reference
 
@@ -513,15 +511,15 @@ cannot list files, Tempo scans non-`.git` files. Symlinks contribute their targe
 commands are therefore allowed to create ignored build products, but not to modify project files
 included by the fingerprint.
 
-Required policy commands run before agent-supplied extras with `bash -lc`; a failure stops the
-sequence. Agent cleanup is attempted afterward, then policy cleanup always runs last. Cleanup
+Required policy commands run before agent-supplied extras with `bash --noprofile --norc -c`;
+a failure stops the sequence. Agent cleanup is attempted afterward, then policy cleanup always runs last. Cleanup
 failure prevents a pass. See [required validation policy](VALIDATION_POLICY.md) for configuration,
 evidence identity, and migration details. A timeout kills the whole process group and reports exit
 code 124. Only the configured output tail is retained.
 
-Local-mode validation removes known tracker secret variables, `OPENAI_API_KEY`,
-`DJANGO_SECRET_KEY`, and `TEMPO_ADMIN_PASSWORD` from the child environment. Compose instead sends
-commands to the validation service. That service shares only the workspace volume and Docker host;
+Local and remote validation subprocesses receive only the baseline environment allowlist described
+in [credential boundaries](CREDENTIALS.md); coding-runtime grants do not propagate to them. Compose
+sends commands to the validation service, which shares the workspace volume and Docker host;
 it is not given the application credentials or Codex home.
 
 The validation runner checks that requested workspaces resolve beneath its configured root and
@@ -788,29 +786,31 @@ flowchart LR
     Codex["Codex child environment"]
     Tool["Host-side github_api tool"]
     Validator["Validation child or service"]
+    Config["Configuration with credential references"]
+    Hooks["Hook subprocess"]
     DB[("Database")]
 
     Env --> Tracker
     Codex --> Tool
     Tool --> Tracker
-    Env -- resolved workflow configuration --> DB
-    Env --> Validator
-    Env -- remove tracker and admin secrets --> Codex
-    Env -- remove known secrets locally; omit credentials in Compose --> Validator
+    Config -- references only --> DB
+    Env -- baseline plus explicit runtime grants --> Codex
+    Env -- baseline allowlist --> Validator
+    Env -- baseline plus explicit hook grants --> Hooks
 ```
 
-GitHub tokens, `DJANGO_SECRET_KEY`, and the bootstrap admin password are removed from Codex.
-Validation removes those plus `OPENAI_API_KEY` in local mode. The Compose validation service is
-not configured with them at all. `WorkflowVersion.config` currently stores the resolved effective
-configuration, including resolved tracker credential values. The JSON configuration API omits
-credentials and hook bodies, but database and Django Admin access can expose them and must be
-treated as secret-bearing.
+GitHub token references resolve only in the host adapter. Runtime grants cannot alias known tracker
+or control-plane credential names. `WorkflowVersion.config` retains references, and migration
+`0011_redact_workflow_credentials` removes known tracker credential literals from old snapshots.
+Hook grants support clone/fetch without inheriting the full host environment. HOME, mounted files,
+arbitrary configuration text, and process privileges still require separate isolation; this is not
+a vault or a complete secret-protection boundary. See [upgrade details](CREDENTIALS.md).
 
 ### Sandbox and execution caveats
 
 - The default turn policy gives Codex write access to its issue workspace and no network access.
 - `codex.approval_policy: never` auto-accepts Codex command/file approval requests.
-- Hooks run directly in the Tempo container/process with its environment.
+- Hooks run directly in the Tempo container/process with baseline variables and explicit grants.
 - Local validation is a subprocess of Tempo with a filtered environment, not a container sandbox.
 - Compose validation uses a separate service but can access a privileged Docker-in-Docker daemon.
 - Read-only dashboards and snapshot APIs are unauthenticated.

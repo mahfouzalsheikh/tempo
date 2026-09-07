@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
+from .credentials import process_environment
 from .errors import TrackerError
 from .process import stop_process_group
 from .validation import clean_workspace_head, workspace_fingerprint
@@ -27,7 +28,7 @@ async def git_command(cwd, *arguments, env=None, input=None, stdout=asyncio.subp
         "core.hooksPath=/dev/null",
         *arguments,
         cwd=cwd,
-        env=env,
+        env=env if env is not None else process_environment(),
         stdin=asyncio.subprocess.PIPE,
         stdout=stdout,
         stderr=asyncio.subprocess.PIPE,

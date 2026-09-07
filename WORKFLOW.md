@@ -23,6 +23,8 @@ polling:
 workspace:
   root: $TEMPO_WORKSPACE_ROOT
 hooks:
+  environment:
+    GITHUB_TOKEN: $GITHUB_TOKEN
   after_create: |
     test -n "$GITHUB_TOKEN" || {
       echo "GITHUB_TOKEN is required to clone the configured repository" >&2
@@ -76,6 +78,9 @@ review:
     findings, or repository policies that require a person.
 codex:
   command: codex app-server
+  # When authenticating with an API key, explicitly grant it to this runtime:
+  # environment:
+  #   OPENAI_API_KEY: $OPENAI_API_KEY
   approval_policy: never
   thread_sandbox: workspace-write
   # Docker is the execution boundary. Nested Linux bwrap namespaces are not

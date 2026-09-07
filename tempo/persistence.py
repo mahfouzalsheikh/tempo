@@ -263,6 +263,7 @@ class PersistenceStore:
                     "kind": config.kind,
                     "configuration": {
                         "command": config.command,
+                        "environment": _json_safe(config.environment),
                         "settings": _json_safe(config.settings),
                     },
                     "active": True,

@@ -9,6 +9,7 @@ from pathlib import Path
 import structlog
 
 from .config import HooksConfig
+from .credentials import process_environment, redact_credentials
 from .domain import Workspace
 from .errors import WorkspaceError
 from .process import stop_process_group
@@ -99,11 +100,13 @@ class WorkspaceManager:
     async def run_hook(self, name: str, script: str, cwd: Path, *, fatal: bool) -> None:
         self.assert_contained(cwd)
         await log.ainfo("workspace_hook_started", hook=name, workspace_path=str(cwd))
+        environment = process_environment(self.hooks.environment)
         process = await asyncio.create_subprocess_exec(
             "bash",
-            "-lc",
+            "--noprofile", "--norc", "-c",
             script,
             cwd=cwd,
+            env=environment,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
@@ -123,7 +126,10 @@ class WorkspaceManager:
             await stop_process_group(process)
             raise
         if process.returncode:
-            text = output.decode(errors="replace")[-2000:]
+            text = redact_credentials(
+                output.decode(errors="replace"),
+                [environment[name] for name in self.hooks.environment],
+            )[-2000:]
             await log.awarning(
                 "workspace_hook_failed",
                 hook=name,

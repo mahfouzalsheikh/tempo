@@ -5,21 +5,35 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .credentials import REFERENCE, TRACKER_CREDENTIAL_KEYS
 from .domain import normalize_state
 from .errors import ConfigError
 
 
 class TrackerConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
     kind: str
     provider: dict[str, Any] = Field(default_factory=dict)
     required_labels: list[str] = Field(default_factory=list)
     active_states: list[str]
     terminal_states: list[str]
+
+    @field_validator("provider")
+    @classmethod
+    def credentials_are_references(cls, value: dict[str, Any]) -> dict[str, Any]:
+        for key in TRACKER_CREDENTIAL_KEYS:
+            credential = value.get(key)
+            if credential is not None and credential != "" and (
+                not isinstance(credential, str) or not REFERENCE.fullmatch(credential)
+            ):
+                raise ValueError(
+                    f"tracker.provider.{key} must use a $ENVIRONMENT_VARIABLE reference"
+                )
+        return value
 
     @field_validator("kind")
     @classmethod
@@ -51,7 +65,15 @@ class WorkspaceConfig(BaseModel):
     root: Path
 
 
-class HooksConfig(BaseModel):
+class ProcessConfig(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+    environment: dict[
+        Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")],
+        Annotated[str, Field(pattern=r"^\$[A-Za-z_][A-Za-z0-9_]*$")],
+    ] = Field(default_factory=dict)
+
+
+class HooksConfig(ProcessConfig):
     after_create: str | None = None
     before_run: str | None = None
     after_run: str | None = None
@@ -152,7 +174,7 @@ class ReviewConfig(BaseModel):
         return value.strip()
 
 
-class CodexConfig(BaseModel):
+class CodexConfig(ProcessConfig):
     command: str = "codex app-server"
     approval_policy: str | dict[str, Any] = Field(
         default_factory=lambda: {
@@ -195,7 +217,7 @@ class ProjectConfig(BaseModel):
         return normalized
 
 
-class RuntimeProviderConfig(BaseModel):
+class RuntimeProviderConfig(ProcessConfig):
     """Declarative agent-runtime endpoint. Runtime implementations are registry-backed."""
 
     kind: str = "codex"
@@ -383,6 +405,7 @@ class WorkflowGraphConfig(BaseModel):
 
 
 class ServiceConfig(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
     project: ProjectConfig = Field(default_factory=ProjectConfig)
     tracker: TrackerConfig
     polling: PollingConfig = Field(default_factory=PollingConfig)
@@ -469,19 +492,6 @@ def build_config(raw: dict[str, Any], workflow_path: Path) -> ServiceConfig:
         root = workflow_path.parent / root
     workspace["root"] = root.resolve(strict=False)
     payload["workspace"] = workspace
-
-    tracker = dict(payload.get("tracker") or {})
-    provider = dict(tracker.get("provider") or {})
-    for secret_key in ("token", "api_key"):
-        if secret_key in provider:
-            provider[secret_key] = resolve_env_reference(provider[secret_key], empty_is_error=True)
-    if "review_token" in provider:
-        provider["review_token"] = resolve_env_reference(
-            provider["review_token"],
-            empty_is_error=False,
-        )
-    tracker["provider"] = provider
-    payload["tracker"] = tracker
 
     try:
         return ServiceConfig.model_validate(payload)

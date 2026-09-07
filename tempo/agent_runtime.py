@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -18,6 +17,7 @@ from .config import (
     ServiceConfig,
     ToolProviderConfig,
 )
+from .credentials import CONTROL_PLANE_SECRETS, process_environment
 from .domain import Issue
 from .errors import CodexError, ConfigError
 from .process import stop_process_group
@@ -155,6 +155,9 @@ class CodexAgentRuntime(AgentRuntime):
             overrides["command"] = runtime_config.command
         if model.model:
             overrides["model"] = model.model
+        overrides["environment"] = {
+            **service_config.codex.environment, **runtime_config.environment,
+        }
         codex_config = service_config.codex.model_copy(update=overrides)
         resolved_config = service_config.model_copy(update={"codex": codex_config})
         self.client = CodexAppServer(
@@ -220,6 +223,7 @@ class ExternalCommandRuntime(AgentRuntime):
                 f"runtime {runtime_config.kind} requires a JSONL bridge command"
             )
         self.command = runtime_config.command
+        self.environment = dict(runtime_config.environment)
         self.settings = dict(runtime_config.settings)
         self.model = model
         self.selected_model = model.model
@@ -238,15 +242,13 @@ class ExternalCommandRuntime(AgentRuntime):
     ) -> ExternalCommandSession:
         self.workspace_manager.assert_contained(workspace)
         await self.tracker.assert_ownership()
-        environment = os.environ.copy()
-        for name in self.tracker.secret_environment_names() | {
-            "DJANGO_SECRET_KEY",
-            "TEMPO_ADMIN_PASSWORD",
-        }:
-            environment.pop(name, None)
+        environment = process_environment(
+            self.environment,
+            forbidden=CONTROL_PLANE_SECRETS | self.tracker.secret_environment_names(),
+        )
         process = await asyncio.create_subprocess_exec(
             "bash",
-            "-lc",
+            "--noprofile", "--norc", "-c",
             f"exec {self.command}",
             cwd=workspace,
             env=environment,

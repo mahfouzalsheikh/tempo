@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from .config import ValidationConfig
+from .credentials import CONTROL_PLANE_SECRETS, process_environment
 from .process import stop_process_group
 from .workspace import WorkspaceManager
 
@@ -44,6 +45,7 @@ async def workspace_fingerprint(workspace: Path) -> str:
         "--exclude-standard",
         "-z",
         cwd=workspace,
+        env=process_environment(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -78,6 +80,7 @@ async def commit_fingerprint(workspace: Path, sha: str) -> str | None:
         "--full-tree",
         sha,
         cwd=workspace,
+        env=process_environment(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -99,6 +102,7 @@ async def commit_fingerprint(workspace: Path, sha: str) -> str | None:
         "cat-file",
         "--batch",
         cwd=workspace,
+        env=process_environment(),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
@@ -137,6 +141,7 @@ async def workspace_publication_pending(
         "status",
         "--porcelain",
         cwd=workspace,
+        env=process_environment(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -152,6 +157,7 @@ async def workspace_publication_pending(
             "rev-parse",
             revision,
             cwd=workspace,
+            env=process_environment(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -171,6 +177,7 @@ async def clean_workspace_head(workspace: Path) -> str | None:
             "--no-replace-objects",
             *arguments,
             cwd=workspace,
+            env=process_environment(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -456,12 +463,10 @@ class ProjectValidator:
         return result["exit_code"], result["output"]
 
     async def _run_local(self, command: str, workspace: Path, timeout_ms: int) -> tuple[int, str]:
-        environment = os.environ.copy()
-        for secret in self.secret_names:
-            environment.pop(secret, None)
+        environment = process_environment(forbidden=CONTROL_PLANE_SECRETS | self.secret_names)
         process = await asyncio.create_subprocess_exec(
             "bash",
-            "-lc",
+            "--noprofile", "--norc", "-c",
             command,
             cwd=workspace,
             env=environment,
