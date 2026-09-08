@@ -1,0 +1,9 @@
+FROM python:3.12-slim-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+RUN mkdir tempo
+COPY tempo/preview_files.py tempo/preview_server.py ./tempo/
+USER 10001:10001
+ARG TEMPO_GIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$TEMPO_GIT_SHA
+ENTRYPOINT ["python", "-m", "tempo.preview_server"]

@@ -18,6 +18,8 @@ services:
       TEMPO_WORKSPACE_ROOT: /data/workspaces
       TEMPO_RUNTIME_BACKEND: docker
       TEMPO_AGENT_STATE_ROOT: /data/agent-state
+      TEMPO_PREVIEW_ROOT: /data/previews
+      TEMPO_PREVIEW_PORT: "${TEMPO_PREVIEW_PORT:-8031}"
       TEMPO_DATABASE_PATH: /data/database/tempo.sqlite3
       DATABASE_URL: "postgresql://tempo:${TEMPO_POSTGRES_PASSWORD:-tempo-local}@postgres:5432/tempo"
       TEMPO_ADMIN_USERNAME: "${TEMPO_ADMIN_USERNAME:-}"
@@ -32,6 +34,7 @@ services:
       - tempo-workspaces:/data/workspaces
       - tempo-agent-state:/data/agent-state
       - tempo-database:/data/database
+      - tempo-previews:/data/previews
       # Import credentials as root during container startup, then run Tempo as its
       # unprivileged user with state stored in a container-owned volume. A direct
       # bind mount is not writable when the host and container UIDs differ.
@@ -44,6 +47,31 @@ services:
         condition: service_healthy
       validation-runner:
         condition: service_healthy
+
+  preview-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.preview
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 32
+    mem_limit: 256m
+    cpus: 1
+    ports:
+      - "127.0.0.1:${TEMPO_PREVIEW_PORT:-8031}:8080"
+    environment:
+      TEMPO_PREVIEW_ROOT: /data/previews
+      TEMPO_PREVIEW_PORT: "${TEMPO_PREVIEW_PORT:-8031}"
+    volumes:
+      - tempo-previews:/data/previews:ro
+    networks: [previews]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   postgres:
     image: postgres:17-bookworm
@@ -113,3 +141,8 @@ volumes:
   tempo-codex:
   tempo-postgres:
   tempo-agent-state:
+  tempo-previews:
+
+networks:
+  previews:
+    internal: true

@@ -9,7 +9,7 @@ cd "${project_root}"
 python3 scripts/provision-runner-token.py
 echo "Building Tempo application services..."
 tempo_revision="$(git rev-parse HEAD)"
-docker compose build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" tempo validation-runner project-runner
+docker compose build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" tempo validation-runner project-runner preview-server
 
 echo "Starting the database without recreating it..."
 docker compose up --detach --no-recreate --wait --wait-timeout 180 postgres
@@ -40,7 +40,7 @@ docker compose up \
   --detach \
   --wait \
   --wait-timeout 180 \
-  tempo validation-runner
+  tempo validation-runner preview-server
 
 echo
 echo "Tempo services are running:"
@@ -75,3 +75,5 @@ docker compose exec -T tempo python < scripts/check-run-snapshots.py
 docker compose exec -T tempo python < scripts/check-product-intake.py
 
 docker compose exec -T --user 10001:10001 tempo python < scripts/check-static-builds.py
+
+python3 scripts/check-previews.py

@@ -799,3 +799,15 @@ class BuildArtifact(models.Model):
 
     def __str__(self):
         return f"Build for run {self.run_id}: {self.digest[:12]}"
+
+
+class PreviewDeployment(models.Model):
+    artifact = models.OneToOneField(
+        BuildArtifact, on_delete=models.PROTECT, related_name="preview",
+    )
+    token = models.UUIDField(unique=True)
+    active = models.BooleanField(default=True)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey("auth.User", on_delete=models.PROTECT)

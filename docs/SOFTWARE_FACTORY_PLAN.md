@@ -97,6 +97,14 @@ by their configured names and roles. A real committed mini-app rehearsal passed 
 [static builds](STATIC_BUILDS.md). Independent acceptance, preview hosting, promotion, and
 rollback remain next; this stage explicitly does not assert deployment readiness.
 
+The next release slice adds local static preview deployment from retained build ZIPs.
+Operator controls recheck candidate evidence, serialize launches, revoke or renew expiring
+links, and recover missing preview files. Each preview uses a separate random localhost
+origin; a credential-free, read-only serving container has no outbound infrastructure access.
+The actual retained mini-app passed a browser image-to-SVG download rehearsal with its local
+model and WebAssembly worker. See [local previews](PREVIEWS.md). Independent acceptance,
+production promotion, rollback, public hosting, and a historical release ledger remain.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.
