@@ -169,11 +169,21 @@ def control(request, brief_id, run_id, action):
 
 
 def run_details(plan):
+    from .acceptance_views import summary as acceptance_summary
     from .preview_views import details as preview_details
 
     rows = []
     for run in plan.runs.order_by("-id"):
         candidate = run.checkpoints.filter(kind="product_candidate").order_by("-sequence").first()
+        artifact = (
+            run.build_artifacts.defer("data")
+            .filter(
+                pk=candidate.payload["artifact"]["id"],
+            )
+            .first()
+            if candidate and candidate.payload.get("artifact")
+            else None
+        )
         rows.append(
             {
                 "id": run.pk,
@@ -194,8 +204,10 @@ def run_details(plan):
                     run.node_runs.values("node_key", "name", "status", "error", "attempt")
                 ),
                 "tokens": run.total_tokens,
+                "acceptance": acceptance_summary(artifact) if artifact else None,
                 "preview": preview_details(candidate.payload["artifact"]["id"])
-                if candidate and candidate.payload.get("artifact") else None,
+                if candidate and candidate.payload.get("artifact")
+                else None,
                 "active": run.status in {"running", "waiting_approval"},
                 "resumable": run.status in {"failed", "cancelled", "paused"},
             }

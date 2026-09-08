@@ -10,11 +10,13 @@ python3 scripts/provision-runner-token.py
 echo "Building Tempo application services..."
 tempo_revision="$(git rev-parse HEAD)"
 docker compose build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" tempo validation-runner project-runner preview-server
+docker build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" -f Dockerfile.acceptance -t tempo-acceptance:latest .
 
 echo "Starting the database without recreating it..."
 docker compose up --detach --no-recreate --wait --wait-timeout 180 postgres
 
 echo "Draining Tempo before updating execution infrastructure..."
+docker compose stop --timeout 180 acceptance-worker
 docker compose stop --timeout 60 tempo
 docker compose stop --timeout 60 validation-runner
 umask 077
@@ -34,13 +36,16 @@ export TEMPO_VALIDATION_IMAGE
 docker image save tempo-validation-runner:latest | docker compose exec -T project-runner docker image load
 TEMPO_VALIDATION_IMAGE="$(docker compose exec -T project-runner docker image inspect --format '{{.Id}}' tempo-validation-runner:latest)"
 docker compose exec -T project-runner docker image inspect "$TEMPO_VALIDATION_IMAGE" --format '{{.Id}}'
+export TEMPO_ACCEPTANCE_IMAGE
+docker image save tempo-acceptance:latest | docker compose exec -T project-runner docker image load
+TEMPO_ACCEPTANCE_IMAGE="$(docker compose exec -T project-runner docker image inspect --format '{{.Id}}' tempo-acceptance:latest)"
 
 echo "Updating Tempo and the validation runner..."
 docker compose up \
   --detach \
   --wait \
   --wait-timeout 180 \
-  tempo validation-runner preview-server
+  tempo validation-runner preview-server acceptance-worker
 
 echo
 echo "Tempo services are running:"
@@ -77,3 +82,5 @@ docker compose exec -T tempo python < scripts/check-product-intake.py
 docker compose exec -T --user 10001:10001 tempo python < scripts/check-static-builds.py
 
 python3 scripts/check-previews.py
+
+docker compose exec -T acceptance-worker python < scripts/check-acceptance.py

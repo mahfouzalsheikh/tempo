@@ -20,6 +20,7 @@ services:
       TEMPO_AGENT_STATE_ROOT: /data/agent-state
       TEMPO_PREVIEW_ROOT: /data/previews
       TEMPO_PREVIEW_PORT: "${TEMPO_PREVIEW_PORT:-8031}"
+      TEMPO_ACCEPTANCE_IMAGE: "${TEMPO_ACCEPTANCE_IMAGE:-}"
       TEMPO_DATABASE_PATH: /data/database/tempo.sqlite3
       DATABASE_URL: "postgresql://tempo:${TEMPO_POSTGRES_PASSWORD:-tempo-local}@postgres:5432/tempo"
       TEMPO_ADMIN_USERNAME: "${TEMPO_ADMIN_USERNAME:-}"
@@ -76,6 +77,27 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  acceptance-worker:
+    image: tempo-tempo:latest
+    entrypoint: ["python", "/app/manage.py", "acceptance_worker"]
+    user: "10001:10001"
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql://tempo:${TEMPO_POSTGRES_PASSWORD:-tempo-local}@postgres:5432/tempo"
+      DOCKER_HOST: tcp://project-runner:2375
+      TEMPO_WORKSPACE_ROOT: /data/workspaces
+      TEMPO_ACCEPTANCE_IMAGE: "${TEMPO_ACCEPTANCE_IMAGE:-}"
+    volumes:
+      - tempo-workspaces:/data/workspaces
+    depends_on:
+      tempo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import time; from pathlib import Path; assert time.time() - Path('/tmp/acceptance-heartbeat').stat().st_mtime < 200"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
   postgres:
     image: postgres:17-bookworm

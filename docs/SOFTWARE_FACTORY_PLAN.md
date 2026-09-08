@@ -105,6 +105,14 @@ The actual retained mini-app passed a browser image-to-SVG download rehearsal wi
 model and WebAssembly worker. See [local previews](PREVIEWS.md). Independent acceptance,
 production promotion, rollback, public hosting, and a historical release ledger remain.
 
+The next release slice adds reviewed, criterion-specific browser journeys and durable
+acceptance evidence. A dedicated worker tests retained ZIPs in offline containers using a
+trusted harness, records exact artifact/check/image identities, rejects incomplete evidence,
+and fences late results. New plans require fresh evidence; failure and interrupted work stay
+visible. The real mini-app passed home-page and case-study navigation checks through this path.
+See [acceptance checks](ACCEPTANCE_CHECKS.md). Broader browser actions, QA-agent test proposals,
+production readiness evaluation, promotion, and rollback remain outstanding.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

@@ -1,0 +1,31 @@
+{% load static %}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Acceptance checks · Tempo</title><link rel="stylesheet" href="{% static 'tempo.css' %}"><link rel="stylesheet" href="{% static 'intake.css' %}"></head>
+<body><a class="skip-link" href="#main-content">Skip to acceptance checks</a><div class="app-shell">{% include "_sidebar.html" %}<main id="main-content" class="workspace intake-workspace acceptance-workspace">
+<p><a href="{% url 'idea_detail' brief_id %}#execution">← Back to idea</a></p>
+<p class="section-kicker">INDEPENDENT VERIFICATION</p><h1>Test the expected behavior</h1>
+<p>A fresh browser will exercise the saved build using the checks you review here. Each criterion starts with a clean browser session. Application test scripts and coding-agent reports are not used as acceptance evidence.</p>
+{% if error %}<p class="intake-error" role="alert">{{ error }}</p>{% endif %}
+<section class="panel"><h2>{{ info.status|capfirst }}</h2>
+<p>Build SHA-256: <code>{{ artifact.digest }}</code></p>
+{% if info.suite %}<p>Check plan #{{ info.suite.pk }} · Approved by {{ info.suite.approved_by }} on {{ info.suite.approved_at }}</p>
+<div class="intake-actions"><a class="button" href="">Refresh results</a>
+<form method="post">{% csrf_token %}<input type="hidden" name="action" value="run"><input type="hidden" name="suite_id" value="{{ info.suite.pk }}"><input type="hidden" name="suite_digest" value="{{ info.suite.digest }}"><input type="hidden" name="request_key" value="{{ request_key }}"><button type="submit" class="button primary" {% if not configured or info.status == 'queued' or info.status == 'running' %}disabled{% endif %}>Run reviewed checks</button></form></div>{% endif %}
+{% if info.status == 'queued' or info.status == 'running' %}<p>Checks are {{ info.status }}. Refresh this page to follow their progress. Browser execution is limited to two minutes.</p>{% endif %}
+{% if info.attempt.error %}<p class="intake-error">{{ info.attempt.error }}</p>{% endif %}
+{% for result in info.results %}<article class="contract-card"><h3>{{ result.id }} · {{ result.status }}</h3>{% for step in result.steps %}<p>{{ step.status }} · <code>{{ step.action|join:' ' }}</code></p>{% endfor %}{% if result.error %}<pre class="intake-copy">{{ result.error }}</pre>{% endif %}</article>{% endfor %}
+{% if info.passed %}<p><strong>All reviewed browser checks passed for this build.</strong> This establishes the behavior covered by this check plan. Production promotion, rollback, and other release gates remain separate.</p>{% endif %}
+{% if report %}<details><summary>Browser evidence report</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ report }}</pre></details>{% endif %}
+</section>
+<section class="panel"><h2>Review a browser journey for each criterion</h2>
+<p>Write one action per line. Quote visible labels and text. Every criterion needs at least one <code>expect</code> assertion. Review that the assertions actually establish its expected outcome.</p>
+<details><summary>Supported actions and example</summary><pre>open /
+fill "Item name" "Example item"
+click button "Add item"
+expect text "Example item"</pre>
+<p>Use <code>click button "Name"</code> or <code>click link "Name"</code> for accessible controls. <code>expect heading "Name"</code> checks a visible element. Supported roles: button, link, heading, textbox, checkbox, radio, tab, status.</p>
+<p>For elements with a test ID, use <code>click testid "add"</code>, <code>expect testid "result"</code>, or <code>expect testid "result" "Exact text"</code>. <code>fill "Field label" "Value"</code> uses a field’s label. Text and names match exactly.</p>
+<p>This first check runner covers local browser navigation, clicks, form entry, visibility, and text. It cannot verify uploads, downloads, external APIs, performance, or arbitrary scripts. Keep unsupported requirements explicitly outstanding; do not replace them with an unrelated text assertion.</p></details>
+<form method="post" class="intake-form">{% csrf_token %}<input type="hidden" name="action" value="approve"><input type="hidden" name="expected_suite_id" value="{{ expected_suite_id }}">{{ form.as_p }}<button class="button primary" type="submit">Approve check plan</button></form>
+<p>Approval saves an immutable check plan. Changing it requires fresh results; earlier runs remain in history.</p></section>
+{% if info.suite %}<section class="panel"><h2>Check history</h2>{% for suite in artifact.acceptance_suites.all %}<h3>Plan #{{ suite.pk }} · {{ suite.approved_at }}</h3>{% for attempt in suite.attempts.all %}<p>Run #{{ attempt.pk }} · {{ attempt.status }} · {{ attempt.created_at }}</p>{% empty %}<p>No checks run yet.</p>{% endfor %}{% endfor %}</section>{% endif %}
+</main></div></body></html>

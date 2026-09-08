@@ -36,3 +36,6 @@
 
 .intake-workspace a.button { text-decoration: none; }
 .intake-workspace .system-notice.approved { background: rgba(185,246,95,.06); border-color: #465a30; }
+
+.acceptance-workspace pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+.acceptance-workspace code { overflow-wrap: anywhere; }
