@@ -141,7 +141,8 @@ def checks(request, brief_id, run_id, artifact_id):
             "configured": configured,
             "request_key": uuid.uuid4(),
             "expected_suite_id": suite.pk if suite else 0,
-            "report": json.dumps(info["attempt"].report, indent=2) if info.get("attempt") else "",
+            "report": json.dumps(info["attempt"].report, indent=2)
+            if info.get("attempt") and info["attempt"].report else "",
         },
         status=409 if request.method == "POST" else 200,
     )

@@ -2,7 +2,7 @@ FROM mcr.microsoft.com/playwright/python:v1.62.0-noble@sha256:aa81288e738725378b
 RUN pip install --no-cache-dir playwright==1.62.0
 WORKDIR /opt/tempo-acceptance
 RUN mkdir tempo
-COPY tempo/acceptance_contract.py tempo/acceptance_harness.py tempo/preview_files.py tempo/preview_server.py ./tempo/
+COPY tempo/acceptance_contract.py tempo/acceptance_files.py tempo/acceptance_harness.py tempo/preview_files.py tempo/preview_server.py ./tempo/
 ENV PYTHONPATH=/opt/tempo-acceptance PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 ARG TEMPO_GIT_SHA=unknown
 LABEL org.opencontainers.image.revision=$TEMPO_GIT_SHA

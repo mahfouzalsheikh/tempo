@@ -1,0 +1,16 @@
+{% load static %}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Release readiness · Tempo</title><link rel="stylesheet" href="{% static 'tempo.css' %}"><link rel="stylesheet" href="{% static 'intake.css' %}"></head>
+<body><a class="skip-link" href="#main-content">Skip to release readiness</a><div class="app-shell">{% include "_sidebar.html" %}<main id="main-content" class="workspace intake-workspace acceptance-workspace">
+<p><a href="{% url 'idea_detail' brief_id %}#execution">← Back to idea</a></p>
+<p class="section-kicker">DELIVERY</p><h1>Release readiness</h1>
+<section class="panel"><h2>{% if report.ready %}Ready for deployment{% else %}Deployment blocked{% endif %}</h2>
+<p>{{ passed_count }} of {{ report.gates|length }} gates passed · {{ blocked_count }} remaining</p>
+<p>See what this build has proved and what still needs evidence. A successful coding run or browser check alone does not make a release ready.</p>
+<div class="intake-actions"><a class="button primary" href="{% url 'acceptance_checks' brief_id artifact.run_id artifact.pk %}">Review acceptance checks</a><a class="button" href="?format=json">Download readiness assessment</a><a class="button" href="">Refresh assessment</a></div>
+</section>
+<section class="panel"><h2>Release gates</h2>{% for gate in report.gates %}<article class="contract-card"><h3>{{ gate.title }} · {{ gate.status|capfirst }}</h3><p>{{ gate.detail }}</p></article>{% endfor %}</section>
+<section class="panel"><h2>Inspect this build</h2><p>Run #{{ artifact.run_id }} · Build #{{ artifact.pk }}</p><p>SHA-256: <code>{{ artifact.digest }}</code></p>{% if report.source_sha %}<p>Source commit: <code>{{ report.source_sha }}</code></p>{% endif %}
+{% if preview.active %}<p><a class="button" href="{{ preview.url }}" target="_blank" rel="noopener noreferrer">Open local preview</a> · Expires {{ preview.expires_at }}</p>{% elif preview.configured %}<p>No active local preview. Start one from the idea’s saved build.</p>{% else %}<p>Local preview hosting is not configured.</p>{% endif %}
+<p>Preview availability is shown separately from verified health evidence.</p>
+<p>Assessed {{ report.evaluated_at }}. {{ report.notice }}</p></section>
+</main></div></body></html>

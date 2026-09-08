@@ -9,7 +9,8 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
-from tempo.acceptance_contract import RUNNER, digest, verify_specification
+from tempo.acceptance_contract import digest, verify_specification
+from tempo.acceptance_files import MAX_DOWNLOAD_BYTES, fixture, svg_evidence
 from tempo.preview_files import publish
 from tempo.preview_server import PreviewHandler
 
@@ -51,8 +52,12 @@ def run(inputs):
             version = browser.version
             for check in suite["checks"]:
                 result = {"id": check["id"], "status": "passed", "steps": [], "error": ""}
-                context = browser.new_context(service_workers="block", accept_downloads=False)
-                context.set_default_timeout(5000)
+                files_enabled = suite["schema"] == 2
+                timeout = 45000 if files_enabled else 5000
+                context = browser.new_context(
+                    service_workers="block", accept_downloads=files_enabled
+                )
+                context.set_default_timeout(timeout)
                 context.route(
                     "**/*",
                     lambda route: (
@@ -76,11 +81,45 @@ def run(inputs):
                             page.get_by_label(action[1], exact=True).fill(action[2])
                         elif action[0] == "click":
                             locator(page, action[1], action[2]).click()
+                        elif action[0] == "press":
+                            target = locator(page, action[1], action[2])
+                            expect(target).to_be_visible(timeout=timeout)
+                            expect(target).to_be_enabled(timeout=timeout)
+                            target.press(action[3])
+                        elif action[0] == "upload":
+                            data, evidence = fixture(action[3])
+                            target = (
+                                page.get_by_label(action[2], exact=True)
+                                if action[1] == "label"
+                                else page.get_by_test_id(action[2])
+                            )
+                            target.set_input_files(
+                                {
+                                    "name": evidence["filename"],
+                                    "mimeType": "image/png",
+                                    "buffer": data,
+                                }
+                            )
+                            step["file"] = evidence
+                        elif action[0] == "download":
+                            with page.expect_download(timeout=timeout) as pending:
+                                locator(page, action[1], action[2]).click()
+                            download = pending.value
+                            try:
+                                path = download.path()
+                                if path is None or path.stat().st_size > MAX_DOWNLOAD_BYTES:
+                                    raise ValueError("SVG download exceeds 16 MiB or is missing")
+                                with path.open("rb") as stream:
+                                    data = stream.read(MAX_DOWNLOAD_BYTES + 1)
+                                evidence = svg_evidence(data, download.suggested_filename)
+                            finally:
+                                download.delete()
+                            step["file"] = evidence
                         else:
                             target = locator(page, action[1], action[2])
-                            expect(target).to_be_visible(timeout=5000)
+                            expect(target).to_be_visible(timeout=timeout)
                             if len(action) == 4:
-                                expect(target).to_have_text(action[3], timeout=5000)
+                                expect(target).to_have_text(action[3], timeout=timeout)
                         step["status"] = "passed"
                 except Exception as error:
                     result.update(status="failed", error=str(error)[:2000])
@@ -93,8 +132,8 @@ def run(inputs):
         server.server_close()
         thread.join()
     return {
-        "schema": 1,
-        "runner": RUNNER,
+        "schema": suite["schema"],
+        "runner": suite["runner"],
         "suite_digest": digest(suite),
         "artifact_digest": inputs["artifact_digest"],
         "browser": version,

@@ -96,7 +96,26 @@ with tempfile.TemporaryDirectory(prefix="acceptance-probe-", dir=root) as tempor
 <button onclick="saveItem()">
 Add item</button><p data-testid="result" id="result">Empty</p>
 <p id="network">Checking network</p>
+<label>Photo<input type="file" id="photo"
+onchange="document.getElementById('upload').textContent=this.files[0].name"></label>
+<p id="upload">No photo</p>
+<label><input type="radio"
+onchange="document.getElementById('style').textContent='Style chosen'">Example style</label>
+<p id="style">Unset</p>
+<label>Detail<input type="range" min="0" max="10" value="5"
+oninput="document.getElementById('detail').textContent='Detail '+this.value"></label>
+<p id="detail">Detail 5</p>
+<button onclick="saveSvg(false)">Download SVG</button>
+<button onclick="saveSvg(true)">Download invalid SVG</button>
 <script>
+function saveSvg(invalid){
+const svg=invalid?'not SVG':
+'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">' +
+'<circle cx="48" cy="48" r="30"/></svg>';
+const a=document.createElement('a');
+a.href=URL.createObjectURL(new Blob([svg], {type:'image/svg+xml'}));
+a.download='drawing.svg';a.click();
+}
 function saveItem(){
 result.textContent=document.getElementById('name').value;
 localStorage.setItem('saved', result.textContent);
@@ -119,9 +138,17 @@ results.every(Boolean)?'Network blocked':'Network open';
         "AC-2": 'expect text "Network blocked"\nexpect testid "result" "Empty"',
     }
     (directory / "artifact.zip").write_bytes(bundle["data"])
-    for passing in (True, False):
+    for version, passing in ((1, True), (1, False), (2, True), (2, False)):
         if not passing:
             instructions["AC-1"] = 'expect text "Deliberately missing acceptance text"'
+        if version == 2:
+            name = "Download SVG" if passing else "Download invalid SVG"
+            instructions["AC-1"] = (
+                'click text "Example style"\nexpect text "Style chosen"\n'
+                'press slider "Detail" Home\nexpect text "Detail 0"\n'
+                'upload label "Photo" png-circle-v1\nexpect text "circle.png"\n'
+                f'download button "{name}" svg-v1'
+            )
         suite = specification("a" * 64, criteria, instructions)
         (directory / "checks.json").write_text(
             json.dumps(
@@ -135,7 +162,10 @@ results.every(Boolean)?'Network blocked':'Network open';
                 }
             )
         )
-        report = asyncio.run(exercise(image, directory, inspect=passing))
+        report = asyncio.run(exercise(image, directory, inspect=version == 1 and passing))
         assert verify_report(report, suite, bundle["digest"]) is passing
         assert report["results"][1]["status"] == "passed", "Browser state leaked between criteria"
-print("Offline browser interactions, fresh criterion contexts, and failing assertions verified.")
+print(
+    "Offline browser interactions, fresh contexts, PNG uploads, SVG byte validation, "
+    "and failing assertions verified for both runner versions."
+)

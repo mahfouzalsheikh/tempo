@@ -113,6 +113,17 @@ visible. The real mini-app passed home-page and case-study navigation checks thr
 See [acceptance checks](ACCEPTANCE_CHECKS.md). Broader browser actions, QA-agent test proposals,
 production readiness evaluation, promotion, and rollback remain outstanding.
 
+The next release slice adds version 2 browser journeys with fixed PNG uploads, visible-label
+clicks, slider keyboard controls, and bounded SVG download validation. Reports retain upload
+and download identities while published version 1 plans remain unchanged. The retained React
+mini-app passed an offline image-to-SVG journey using its local model and WebAssembly worker.
+A release-readiness page now evaluates build integrity, current approved scope, and the latest
+reviewed acceptance results, explains outstanding gates, and exports a digest-bound assessment.
+See [acceptance checks](ACCEPTANCE_CHECKS.md) and [release readiness](RELEASE_READINESS.md).
+Persisted preview health evidence, a deployment target/configuration contract, promotion,
+rollback rehearsal, and QA-agent test proposals remain outstanding. This assessment does not
+authorize deployment or imply that the factory is complete.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

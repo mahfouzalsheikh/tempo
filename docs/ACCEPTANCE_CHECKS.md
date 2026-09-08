@@ -9,8 +9,9 @@ and run history. The idea page summarizes the latest reviewed plan's result.
 This establishes the behavior exercised by the reviewed assertions. It does not establish
 that arbitrary prose requirements have been completely tested. The operator must review the
 coverage; a successful heading assertion is insufficient evidence for an upload requirement.
-Automatic QA-agent proposals, broader browser actions, performance/API checks, and production
-release readiness are subsequent work. The original build manifest remains immutable, including
+Automatic QA-agent proposals, performance/API checks, and production promotion remain subsequent
+work. A [readiness assessment](RELEASE_READINESS.md) now shows remaining deployment gates.
+The original build manifest remains immutable, including
 its original unverified acceptance entries; browser evidence lives in separate records.
 
 ## A small, reviewable check language
@@ -32,13 +33,69 @@ and status roles with exact names. `expect text "Value"` requires visible exact 
 `click testid "id"` and `expect testid "id"` select an application's test ID;
 `expect testid "id" "Exact text"` also checks its text. Ambiguous or missing elements fail.
 
-The current language does not support uploads, downloads, external APIs, performance
-assertions, or arbitrary scripting. Unsupported requirements remain outstanding. Each
+Version 1 does not support uploads or downloads. External APIs, performance assertions, and
+arbitrary scripting remain unsupported in both versions. Each
 criterion gets a clean context at the application root, with no inherited cookies or storage.
 Assertions wait up to five seconds; the entire browser job has a two-minute watchdog.
 
 Treat the published parser and report schema as versioned contracts. Extend them with a new
 runner version when semantics change; do not silently reinterpret existing approved plans.
+
+### Uploads and downloads (version 2)
+
+Plans containing file actions, text clicks, or slider keys select `browser-acceptance-v2`.
+Its other actions keep the same
+selectors and assertions. Text clicks support visible labels around styled inputs without forcing
+clicks through overlapping elements. Version 2 uses a 45-second action timeout to accommodate local image processing.
+The entire job still has a two-minute watchdog. Version 1 saved plans, digests, reports, and
+five-second assertion timeouts remain unchanged.
+
+`press slider "Detail" Home` uses the keyboard to adjust a visible, enabled slider. Allowed
+keys are Home, End, ArrowLeft, ArrowRight, ArrowUp, and ArrowDown. Text clicks and slider keys
+use ordinary browser interactions; no forced clicks, arbitrary selectors, or scripts are
+accepted. Assertions still need to establish the expected outcome after interaction.
+
+```text
+upload label "Photo" png-circle-v1
+expect text "Ready"
+download button "Download SVG" svg-v1
+```
+
+Upload targets are `label` or `testid`, identifying a file input. `png-circle-v1` is a fixed
+96×96 RGB PNG, a black circle on white paper. The harness constructs identical bytes without
+reading user paths or fetching URLs. Its name, size, media type, fixture ID, and SHA-256 are
+recorded and checked against the trusted fixture contract before a pass is accepted.
+
+Download targets are `button`, `link`, or `testid`. The action waits for a real browser download,
+reads at most 16 MiB plus one byte, and applies the `svg-v1` validator to those bytes. It requires
+a `.svg` filename, UTF-8 SVG root, finite nonempty viewBox, and vector elements. It accepts a
+narrow subset of SVG elements/attributes, rejecting declarations, entities, processing
+instructions, active content, embedded images, CSS, and resource references. Depth and element
+counts are bounded. This is a structure check, not proof of visual fidelity, accessible artwork,
+or that the result represents the uploaded image. Review coverage accordingly.
+
+Evidence records the filename, size, inferred media type, SHA-256, validator version, and vector
+element count. It does not retain downloaded bytes: the harness deletes them after checking,
+and the job's private temporary filesystem is removed with the container. Reports containing
+missing or malformed file evidence cannot pass. A rejected download produces a failed step;
+deadline or worker interruption cannot produce a pass.
+
+The retained React mini-app from source commit `5b11540` passed this actual offline journey:
+
+```text
+upload label "Choose a photoDrop or browse · JPG, PNG, WEBP · max 15 MB" png-circle-v1
+expect text "Subject ready"
+click text "Circle Shape Art"
+press slider "Detail" Home
+click button "Generate SVG"
+download button "Download SVG SVG ready" svg-v1
+```
+
+The upload label's adjacent text is intentionally concatenated, matching the app's DOM label.
+Minimum detail keeps this bounded rehearsal below the validator's 50,000-element limit; the
+default-detail drawing exceeded it and correctly failed. The successful result was 188,584
+bytes with 3,960 vector elements. This tests a retained build from existing committed source,
+not a newly agent-generated product or comprehensive visual-quality acceptance.
 
 ## Evidence and recovery
 
@@ -90,7 +147,8 @@ application runs from the retained ZIP through Tempo's static preview handler wi
 response policy as local previews. A local serving copy is created inside the job's temporary
 filesystem. The live preview does not have to be started or renewed before running checks.
 Browser routing also rejects external origins, and service workers are disabled. Browser
-downloads are not accepted by this profile.
+downloads are accepted only by version 2. Temporary downloads share the job's bounded 512 MiB
+temporary filesystem; a failing or oversized download does not produce successful evidence.
 
 ## Validation and deployment
 
@@ -104,5 +162,6 @@ The deployment script builds and loads the acceptance image, drains the worker b
 replacing execution infrastructure, starts it after Tempo's migrations/health check, and
 runs `scripts/check-acceptance.py`. Its disposable fixture tests actual form entry, clicks,
 fresh contexts, blocked external browser requests, and deliberately failing assertions.
+It also exercises PNG uploads, valid SVG downloads, and invalid downloaded bytes under version 2.
 It creates no production product, model call, or acceptance record. Existing backup behavior
 preserves the database and all recorded check evidence. A heartbeat reports worker health.

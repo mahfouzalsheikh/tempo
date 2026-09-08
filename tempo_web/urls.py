@@ -1,7 +1,15 @@
 from django.contrib import admin
 from django.urls import path
 
-from . import acceptance_views, artifact_views, intake_views, preview_views, product_views, views
+from . import (
+    acceptance_views,
+    artifact_views,
+    intake_views,
+    preview_views,
+    product_views,
+    release_views,
+    views,
+)
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
@@ -45,6 +53,8 @@ urlpatterns = [
     path("ideas/<int:brief_id>/approve/", intake_views.approve, name="idea_approve"),
     path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/acceptance/",
          acceptance_views.checks, name="acceptance_checks"),
+    path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/readiness/",
+         release_views.readiness, name="release_readiness"),
     path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/<str:kind>/",
          artifact_views.download, name="build_artifact"),
     path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/preview/<str:action>/",
