@@ -160,6 +160,14 @@ before unblocking the target. See [staging publication](STAGING_PUBLICATION.md).
 retained-build-to-local-staging path. The fresh-brief autonomous demonstration, QA-agent proposals,
 managed skill/MCP capabilities, and broader production-operation work remain outstanding.
 
+The first fresh product-agent pilot now has a saved, reviewed mini-app brief, two independent
+implementation tasks, and predetermined browser journeys. Its actual launch stopped at checkout
+because GitHub rejected the configured credential; no model turn or build ran. The saved run is
+stopped pending credential repair. Candidate progress now appears first on the idea page and
+updates automatically with revision-scoped, read-only requests. See [the pilot record](FIRST_AGENT_PILOT.md).
+Successful live agent execution and the resulting release remain unproved; the earlier retained-build
+publication fixture must not be counted as that demonstration.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

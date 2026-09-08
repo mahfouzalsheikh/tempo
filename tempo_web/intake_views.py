@@ -192,8 +192,25 @@ def idea_detail(request, brief_id):
         context = detail(product, request.GET.get("revision"), request.GET.get("plan"))
     except ValueError as exc:
         return page(request, "error", error=error_message(exc))
-    from .product_views import run_details
-    return page(request, "detail", runs=run_details(context["plan"]), **context)
+    from .product_views import progress_context
+    return page(request, "detail", **progress_context(context["plan"]), **context)
+
+
+def progress(request, brief_id):
+    if response := signed_in(request):
+        return response
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    product = get_object_or_404(ProductBrief, pk=brief_id)
+    try:
+        revision, plan = int(request.GET["revision"]), int(request.GET["plan"])
+        context = detail(product, revision, plan)
+    except (ValueError, KeyError):
+        return JsonResponse({"error": "invalid_progress_revision"}, status=400)
+    from .product_views import progress_context
+    return render(
+        request, "_product_execution.html", {**context, **progress_context(context["plan"])},
+    )
 
 
 @ensure_csrf_cookie

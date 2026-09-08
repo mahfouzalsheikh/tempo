@@ -50,6 +50,7 @@ urlpatterns = [
     path("ideas/", intake_views.ideas, name="ideas"),
     path("ideas/new/", intake_views.edit_brief, name="idea_new"),
     path("ideas/<int:brief_id>/", intake_views.idea_detail, name="idea_detail"),
+    path("ideas/<int:brief_id>/progress/", intake_views.progress, name="idea_progress"),
     path("ideas/<int:brief_id>/edit/", intake_views.edit_brief, name="idea_edit"),
     path("ideas/<int:brief_id>/plan/", intake_views.edit_plan, name="idea_plan"),
     path("ideas/<int:brief_id>/approve/", intake_views.approve, name="idea_approve"),

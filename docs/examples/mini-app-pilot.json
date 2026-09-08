@@ -1,0 +1,99 @@
+{
+  "brief": {
+    "schema_version": 1,
+    "title": "React mini-app: drawing preparation help",
+    "goal": "Help first-time visitors choose a photograph and drawing style, then prepare their first SVG with a simple checklist.",
+    "users": "People trying the browser-only photo-to-SVG mini-app for the first time.",
+    "scope": "Add a Drawing preparation help section to the existing mini-app home page after GeneratorStudio and before Examples. Include drawing tips and a session-only three-item checklist. Preserve the existing image-to-SVG workflow.",
+    "exclusions": "No backend, accounts, persistence, new dependencies, external requests, analytics, cloud deployment, or changes outside mini-app/. Do not modify generator algorithms, model assets, lockfiles, or existing deployment scripts.",
+    "constraints": "Use the existing React/TypeScript setup and visual language. Accessible labelled controls, visible focus, keyboard operation, responsive at 390px, no horizontal overflow. Follow repository AGENTS.md. Keep styles in focused CSS files. Commit each task contribution in the provided checkout. Tempo runs the official mini-app test/build recipe after all tasks; do not weaken checks or claim release readiness. Never push or deploy from a coding task.",
+    "target": "React mini-app retained static build and Tempo local staging.",
+    "open_questions": "",
+    "criteria": [
+      {
+        "id": "AC-TIPS",
+        "outcome": "Visitors can open drawing tips and see specific advice for choosing a photograph and a style.",
+        "verification": "At /, find heading Drawing preparation help. Click button Choosing a photo and observe text Use a clear, well-lit photo with one main subject. Click button Choosing a style and observe text Start with Circle Shape Art for bold outlines; try Spiral FM Art for continuous lines."
+      },
+      {
+        "id": "AC-CHECKLIST",
+        "outcome": "Visitors can mark three preparation steps, see progress, and reset their checklist.",
+        "verification": "At /, preparation-progress reads 0 of 3 ready. Check Photo selected, Style selected, and Detail reviewed; progress reads 3 of 3 ready. Click Reset checklist; progress reads 0 of 3 ready. Reload starts empty. Existing studio remains available."
+      }
+    ]
+  },
+  "plan": {
+    "schema_version": 1,
+    "brief_digest": "82ec29d1e4a1769af2280b8629c9f1fd391104a4c3a6b2a3d452d7941b5e117b",
+    "tasks": [
+      {
+        "id": "design",
+        "title": "Confirm help section interfaces and file ownership",
+        "role": "planner",
+        "instructions": "Inspect the mini-app and AGENTS.md, then record concise decisions in mini-app/docs/drawing-help-design.md and commit. Shared interfaces: named exports DrawingTips from src/components/DrawingTips.tsx and PreparationChecklist from src/components/PreparationChecklist.tsx, no required props. Each component imports its own focused CSS. Implementers own only their component, CSS, and focused tests. Integrator owns App.tsx wiring and shared section markup. Do not implement either component, install dependencies, or change other files. The approved brief resolves scope; report only concrete blockers.",
+        "criteria": [
+          "AC-TIPS",
+          "AC-CHECKLIST"
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "tips",
+        "title": "Build accessible drawing tips",
+        "role": "implementer",
+        "instructions": "Implement named export DrawingTips with buttons Choosing a photo and Choosing a style and the exact advice in AC-TIPS. Use aria-expanded and aria-controls with keyboard-accessible buttons. Own only mini-app/src/components/DrawingTips.tsx, mini-app/src/styles/drawing-tips.css, and corresponding focused test files. No App.tsx or shared-style edits. Add useful tests if the existing harness supports component tests without new dependencies. Commit a clean contribution.",
+        "criteria": [
+          "AC-TIPS"
+        ],
+        "depends_on": [
+          "design"
+        ]
+      },
+      {
+        "id": "checklist",
+        "title": "Build resettable preparation checklist",
+        "role": "implementer",
+        "instructions": "Implement named export PreparationChecklist with labelled checkboxes Photo selected, Style selected, Detail reviewed, a live progress element data-testid=preparation-progress with exact text N of 3 ready, and button Reset checklist. Session-only React state; reset unchecks all; reload starts at zero. Own only mini-app/src/components/PreparationChecklist.tsx, mini-app/src/styles/preparation-checklist.css, and corresponding focused tests. No App.tsx or shared-style edits. No new dependencies. Commit a clean contribution.",
+        "criteria": [
+          "AC-CHECKLIST"
+        ],
+        "depends_on": [
+          "design"
+        ]
+      },
+      {
+        "id": "integrate",
+        "title": "Integrate help components into the home page",
+        "role": "integrator",
+        "instructions": "Tempo imports the committed private contributions before this task. Integrate both named exports in mini-app/src/app/App.tsx after GeneratorStudio, before Examples, in a section with heading Drawing preparation help. Add focused section CSS only if needed. Preserve the studio and existing sections and mobile layout. Inspect both contributions, resolve real integration issues, run checks available without new dependencies, and commit any changes. Do not launch cloud deployment. Official dependency preparation and required checks run after your graph completes.",
+        "criteria": [
+          "AC-TIPS",
+          "AC-CHECKLIST"
+        ],
+        "depends_on": [
+          "tips",
+          "checklist"
+        ]
+      },
+      {
+        "id": "verify",
+        "title": "Review integrated help behavior and regressions",
+        "role": "verifier",
+        "instructions": "Independently review the integrated commit against both criteria, accessibility, and the unchanged photo-to-SVG workflow. Run useful available checks. Record findings and exact source commit in mini-app/docs/drawing-help-verification.md and commit this report only. Do not edit implementation or weaken checks. If a requirement is unmet, report the concrete failure; independent Tempo browser checks will decide acceptance.",
+        "criteria": [
+          "AC-TIPS",
+          "AC-CHECKLIST"
+        ],
+        "depends_on": [
+          "integrate"
+        ]
+      }
+    ]
+  },
+  "parallelism": 2,
+  "build_target": "react-mini-app-v1",
+  "checks": {
+    "AC-TIPS": "open /\nexpect heading \"Drawing preparation help\"\nclick button \"Choosing a photo\"\nexpect text \"Use a clear, well-lit photo with one main subject.\"\nclick button \"Choosing a style\"\nexpect text \"Start with Circle Shape Art for bold outlines; try Spiral FM Art for continuous lines.\"",
+    "AC-CHECKLIST": "open /\nexpect testid preparation-progress \"0 of 3 ready\"\nclick checkbox \"Photo selected\"\nclick checkbox \"Style selected\"\nclick checkbox \"Detail reviewed\"\nexpect testid preparation-progress \"3 of 3 ready\"\nclick button \"Reset checklist\"\nexpect testid preparation-progress \"0 of 3 ready\"\nclick checkbox \"Photo selected\"\nexpect testid preparation-progress \"1 of 3 ready\"\nopen /\nexpect testid preparation-progress \"0 of 3 ready\"\nexpect heading \"Turn a photograph into a line worth keeping.\""
+  }
+}

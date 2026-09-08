@@ -210,6 +210,19 @@ def run_details(plan):
                 else None,
                 "active": run.status in {"running", "waiting_approval"},
                 "resumable": run.status in {"failed", "cancelled", "paused"},
+                "access_error": run.error.startswith("after_create hook exited")
+                and "Authentication failed for" in run.error,
             }
         )
     return rows
+
+
+def progress_context(plan):
+    rows = run_details(plan)
+    return {
+        "runs": rows,
+        "progress_poll": any(
+            row["status"] in {"queued", "running", "waiting_approval", "retry_scheduled"}
+            for row in rows
+        ),
+    }

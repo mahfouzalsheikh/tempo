@@ -66,8 +66,10 @@ and links it from the checkpoint.
 
 ## Recovery and operation
 
-The plan page shows queued/running/stopped state, individual task status, errors, token usage,
-and candidate evidence. Refresh status to fetch durable progress. Pause, cancel, and retry use
+The plan page puts queued/running/stopped state, individual task status, errors, token usage,
+and candidate evidence above the brief. Pending work refreshes automatically while the tab is
+visible, preserving focused controls and selected text. Failed updates retain the last status;
+terminal work stops polling. **Refresh status** also works without JavaScript. Pause, cancel, and retry use
 the existing lease-fenced run controls. Retry preserves the run's contracts and workspace;
 completed task checkpoints can be reused. The persisted required-check attempt count remains
 bounded by the saved run limit across retries. Retrying failed final checks does not automatically
@@ -78,6 +80,9 @@ for product runs so it cannot discard their approved contract.
 All endpoints require installation-wide operator authentication and cookie-authenticated
 mutations require CSRF. Project-level roles and lifetime product cost accounting remain future
 work. Existing issue-to-PR runs continue through their original execution path.
+
+The [first live pilot](FIRST_AGENT_PILOT.md) records the reviewed mini-app contract and its
+observed repository-access blocker. It has not yet demonstrated successful model execution.
 
 | Endpoint | Behavior |
 | --- | --- |
