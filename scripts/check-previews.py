@@ -87,10 +87,16 @@ try:
             text=True,
         )
     )[0]
-    assert len(network["Containers"]) == 1
+    worker_id = compose("ps", "-q", "acceptance-worker")
+    assert set(network["Containers"]) == {preview_id, worker_id}
 
     targets = [("1.1.1.1", 443)]
-    for service, target_port in (("tempo", 8000), ("postgres", 5432), ("project-runner", 2375)):
+    for service, target_port in (
+        ("tempo", 8000),
+        ("postgres", 5432),
+        ("project-runner", 2375),
+        ("acceptance-worker", 8000),
+    ):
         identifier = compose("ps", "-q", service)
         document = json.loads(
             subprocess.check_output(["docker", "inspect", identifier], text=True)
@@ -143,6 +149,32 @@ else:
     raise AssertionError('Preview server can use outbound DNS')
 """,
     )
+    compose(
+        "exec",
+        "-T",
+        "acceptance-worker",
+        "python",
+        "-",
+        source=f"TOKEN = {token!r}\n"
+        + """
+import os
+from tempo.preview_files import metadata
+from tempo.preview_probe import probe, expected_report
+root=os.environ['TEMPO_PREVIEW_ROOT']
+document=metadata(root,TOKEN)
+files=list(document['files'].values())
+result=probe('preview-server',8080,int(os.environ['TEMPO_PREVIEW_PORT']),TOKEN,files)
+assert result == expected_report(files)
+try:
+    from pathlib import Path
+    Path(root,'health-write-probe').write_text('unexpected')
+except OSError:
+    pass
+else:
+    raise AssertionError('Health worker can write preview storage')
+print('Deployed preview HTTP health route and read-only worker storage verified.')
+""",
+    )
 finally:
     compose(
         "exec",
@@ -160,4 +192,7 @@ remove(os.environ['TEMPO_PREVIEW_ROOT'], {token!r})
     )
 
 assert request()[0] == 404, "Revoked preview remains accessible"
-print("Preview artifact, browser policy, revocation, read-only storage, and network probes passed.")
+print(
+    "Preview HTTP health, artifact, browser policy, revocation, read-only storage, "
+    "and network probes passed."
+)

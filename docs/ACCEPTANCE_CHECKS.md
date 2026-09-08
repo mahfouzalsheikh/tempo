@@ -130,6 +130,9 @@ mutations, and excluded from caches. Per-project authorization is still a broade
 
 `acceptance-worker` runs the trusted Django queue consumer, with database and execution-daemon
 access but no model or tracker credential grants. It never runs the application's scripts.
+It also runs trusted [preview health probes](RELEASE_READINESS.md), with a read-only published
+preview volume and access to the preview ingress network. These grants belong to the worker;
+they are not passed into browser acceptance jobs.
 Each job creates a private input directory beneath `/data/workspaces/.acceptance`, mounted
 read-only as `/input` in a disposable container. No source checkout, sibling workspace,
 database, Docker endpoint, or operator home is mounted into that container.

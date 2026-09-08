@@ -51,7 +51,8 @@ deployment record is not a complete historical release/event ledger.
 ## Isolation and browser behavior
 
 `preview-server` uses a minimal Python image, an unprivileged user, a read-only root and
-preview volume, dropped capabilities, process/memory/CPU limits, and its own Docker network.
+preview volume, dropped capabilities, process/memory/CPU limits, and a dedicated ingress network
+shared only with the trusted health-check worker.
 The entrypoint first installs IPv4/IPv6 firewall rules inside the container's network
 namespace, then drops its UID and every capability, including the bounding set. Startup
 fails before serving if firewall setup fails. Only replies and IPv4 loopback connections
@@ -85,10 +86,12 @@ archive validation, route serving, corruption, and browser response policy.
 `scripts/restart-tempo.sh` builds and deploys the fifth service, preserves its volume, and
 runs `scripts/check-previews.py`. That probe publishes a temporary dependency-free ZIP,
 checks actual serving and revocation, verifies the read-only mount and limited container
-configuration, and attempts forbidden network connections. It cleans up its own files and
+configuration, and attempts forbidden network connections, including to the health worker.
+It also verifies the health worker's HTTP route and read-only preview mount. It cleans up its own files and
 creates no product, run, deployment record, or model request. The normal deployment backup
 includes preview database records; preview files are recoverable from retained artifacts.
 
-Next release work is independent criterion verification, a reviewed production deployment
-target, artifact promotion, and rollback. Public preview hosting needs a separate domain,
+Independent [browser acceptance](ACCEPTANCE_CHECKS.md) and short-lived
+[preview health evidence](RELEASE_READINESS.md) are now available. Next release work is a
+reviewed production deployment target, artifact promotion, and rollback. Public preview hosting needs a separate domain,
 TLS, access policy, and an explicit network/application contract.

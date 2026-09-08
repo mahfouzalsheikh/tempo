@@ -88,8 +88,12 @@ services:
       DOCKER_HOST: tcp://project-runner:2375
       TEMPO_WORKSPACE_ROOT: /data/workspaces
       TEMPO_ACCEPTANCE_IMAGE: "${TEMPO_ACCEPTANCE_IMAGE:-}"
+      TEMPO_PREVIEW_ROOT: /data/previews
+      TEMPO_PREVIEW_PORT: "${TEMPO_PREVIEW_PORT:-8031}"
     volumes:
       - tempo-workspaces:/data/workspaces
+      - tempo-previews:/data/previews:ro
+    networks: [default, preview-ingress]
     depends_on:
       tempo:
         condition: service_healthy

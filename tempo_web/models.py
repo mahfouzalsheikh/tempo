@@ -822,6 +822,23 @@ class AcceptanceSuite(models.Model):
     approved_at = models.DateTimeField(auto_now_add=True)
 
 
+class PreviewHealthAttempt(models.Model):
+    deployment = models.ForeignKey(PreviewDeployment, on_delete=models.PROTECT,
+                                   related_name="health_attempts")
+    request_key = models.UUIDField(unique=True)
+    requested_by = models.ForeignKey("auth.User", on_delete=models.PROTECT)
+    status = models.CharField(max_length=20, default="queued", db_index=True)
+    identity = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True)
+    finished_at = models.DateTimeField(null=True)
+    deadline = models.DateTimeField(null=True)
+    lease_token = models.UUIDField(null=True)
+    report = models.JSONField(default=dict)
+    report_digest = models.CharField(max_length=64, blank=True)
+    error = models.TextField(blank=True)
+
+
 class AcceptanceAttempt(models.Model):
     suite = models.ForeignKey(AcceptanceSuite, on_delete=models.PROTECT, related_name="attempts")
     request_key = models.UUIDField(unique=True)

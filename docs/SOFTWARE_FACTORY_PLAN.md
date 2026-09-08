@@ -124,6 +124,15 @@ Persisted preview health evidence, a deployment target/configuration contract, p
 rollback rehearsal, and QA-agent test proposals remain outstanding. This assessment does not
 authorize deployment or imply that the factory is complete.
 
+The next release slice adds durable HTTP health checks for deployed previews. The trusted
+worker fetches the root and every saved file, verifies byte identities and browser policy,
+and records short-lived evidence bound to the current preview generation. Stop, renewal,
+expiry, changed publication, newer checks, and stale leases invalidate readiness. The UI
+offers explicit checks and history; version 2 readiness exports include the verified report.
+See [release readiness](RELEASE_READINESS.md). A named production deployment target,
+configuration contract, promotion/recovery ledger, rollback rehearsal, and QA-agent proposals
+remain outstanding.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

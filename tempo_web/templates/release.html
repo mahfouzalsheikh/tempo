@@ -9,6 +9,13 @@
 <div class="intake-actions"><a class="button primary" href="{% url 'acceptance_checks' brief_id artifact.run_id artifact.pk %}">Review acceptance checks</a><a class="button" href="?format=json">Download readiness assessment</a><a class="button" href="">Refresh assessment</a></div>
 </section>
 <section class="panel"><h2>Release gates</h2>{% for gate in report.gates %}<article class="contract-card"><h3>{{ gate.title }} · {{ gate.status|capfirst }}</h3><p>{{ gate.detail }}</p></article>{% endfor %}</section>
+<section class="panel"><h2>Check the deployed preview</h2><p>{{ health.status|capfirst }}</p>
+<p>Tempo fetches the root page and every file from the preview service. It verifies the saved file bytes and browser security headers. This checks serving health; browser behavior and public access remain separate.</p>
+{% if health.can_check %}<form method="post" action="{% url 'preview_health_check' brief_id artifact.run_id artifact.pk %}">{% csrf_token %}<input type="hidden" name="generation" value="{{ health.generation }}"><input type="hidden" name="request_key" value="{{ request_key }}"><button class="button primary" {% if health.status == 'queued' or health.status == 'running' %}disabled{% endif %}>Check preview health</button></form>{% else %}<p>Start a preview from this idea’s saved build, then refresh this page.</p>{% endif %}
+{% if health.attempt %}<p>Check #{{ health.attempt.pk }} · {{ health.attempt.created_at }}{% if health.valid_until %} · Valid until {{ health.valid_until }}{% endif %}</p>{% if health.attempt.error %}<p class="intake-error">{{ health.attempt.error }}</p>{% endif %}{% endif %}
+{% if health.status == 'queued' or health.status == 'running' %}<p>Refresh the assessment to see the result. The worker checks one preview at a time.</p>{% endif %}
+{% if health_history %}<details><summary>Recent preview health checks</summary>{% for attempt in health_history %}<p>Check #{{ attempt.pk }} · {{ attempt.status }} · {{ attempt.created_at }}</p>{% endfor %}</details>{% endif %}
+</section>
 <section class="panel"><h2>Inspect this build</h2><p>Run #{{ artifact.run_id }} · Build #{{ artifact.pk }}</p><p>SHA-256: <code>{{ artifact.digest }}</code></p>{% if report.source_sha %}<p>Source commit: <code>{{ report.source_sha }}</code></p>{% endif %}
 {% if preview.active %}<p><a class="button" href="{{ preview.url }}" target="_blank" rel="noopener noreferrer">Open local preview</a> · Expires {{ preview.expires_at }}</p>{% elif preview.configured %}<p>No active local preview. Start one from the idea’s saved build.</p>{% else %}<p>Local preview hosting is not configured.</p>{% endif %}
 <p>Preview availability is shown separately from verified health evidence.</p>

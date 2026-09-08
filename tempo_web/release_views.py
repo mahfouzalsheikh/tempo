@@ -1,16 +1,19 @@
 """Current release assessment, separate from immutable historical build evidence."""
 
+import uuid
+
 from django.http import HttpResponseNotAllowed, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
+from tempo import preview_health
 from tempo.acceptance_contract import digest
 from tempo.errors import CodexError, ConfigError
 
 from .acceptance_views import summary
 from .artifact_views import verified_candidate_artifact
 from .intake_views import signed_in
-from .models import BuildArtifact
+from .models import BuildArtifact, PreviewDeployment, PreviewHealthAttempt
 from .preview_views import details as preview_details
 
 
@@ -77,12 +80,15 @@ def evaluate(artifact):
         if passed
         else f"{acceptance['status'].capitalize()}. Open acceptance checks to continue.",
     )
+    health = preview_health.summary(artifact)
     gate(
         "preview_health",
         "Preview health evidence",
-        False,
-        "Preview health verification is not available yet. This gate needs a recorded "
-        "health check against the deployed build. Opening a link does not satisfy it.",
+        valid and health["passed"],
+        "The root page and every saved file matched over HTTP, with the expected browser "
+        "security headers. Evidence expires after five minutes."
+        if valid and health["passed"]
+        else health["status"].capitalize(),
     )
     gate(
         "target",
@@ -99,8 +105,8 @@ def evaluate(artifact):
     )
     suite, attempt = acceptance.get("suite"), acceptance.get("attempt")
     return {
-        "schema": 1,
-        "evaluator": "release-readiness-v1",
+        "schema": 2,
+        "evaluator": "release-readiness-v2",
         "evaluated_at": timezone.now().isoformat(),
         "ready": all(item["status"] == "passed" for item in gates),
         "artifact_id": artifact.pk,
@@ -110,6 +116,14 @@ def evaluate(artifact):
         "snapshot_digest": artifact.run.snapshot_digest,
         "plan_id": plan.pk if plan else None,
         "latest_plan_id": latest_plan.pk if latest_plan else None,
+        "preview_health": {
+            "status": health["status"],
+            "passed": valid and health["passed"],
+            "attempt_id": health["attempt"].pk if health["attempt"] else None,
+            "valid_until": health["valid_until"].isoformat() if health.get("valid_until") else None,
+            "report_digest": health["attempt"].report_digest if health["passed"] else None,
+            "report": health.get("report") if valid else None,
+        },
         "acceptance": {
             "suite_id": suite.pk if suite else None,
             "suite_digest": suite.digest if suite else None,
@@ -158,7 +172,43 @@ def readiness(request, brief_id, run_id, artifact_id):
             "artifact": artifact,
             "report": report,
             "preview": preview,
+            "health": preview_health.summary(artifact),
+            "request_key": uuid.uuid4(),
+            "health_history": PreviewHealthAttempt.objects.filter(
+                deployment__artifact=artifact
+            ).order_by("-id")[:10],
             "passed_count": sum(gate["status"] == "passed" for gate in report["gates"]),
             "blocked_count": sum(gate["status"] != "passed" for gate in report["gates"]),
         },
     )
+
+
+def check_preview(request, brief_id, run_id, artifact_id):
+    if response := signed_in(request):
+        return response
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    artifact = get_object_or_404(
+        BuildArtifact,
+        pk=artifact_id,
+        run_id=run_id,
+        run__execution_plan__brief_revision__brief_id=brief_id,
+    )
+    try:
+        preview_health.enqueue(
+            artifact.pk,
+            request.POST.get("generation", ""),
+            uuid.UUID(request.POST.get("request_key", "")),
+            request.user.pk,
+        )
+    except (ValueError, KeyError, TypeError, OSError, CodexError, ConfigError):
+        return JsonResponse(
+            {
+                "error": "Preview check could not start. Refresh readiness, then "
+                "start or renew the preview and try again."
+            },
+            status=409,
+        )
+    except PreviewDeployment.DoesNotExist:
+        return JsonResponse({"error": "Start a preview before checking its health."}, status=409)
+    return redirect("release_readiness", brief_id=brief_id, run_id=run_id, artifact_id=artifact_id)

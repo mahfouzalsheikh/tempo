@@ -55,6 +55,8 @@ urlpatterns = [
          acceptance_views.checks, name="acceptance_checks"),
     path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/readiness/",
          release_views.readiness, name="release_readiness"),
+    path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/health/",
+         release_views.check_preview, name="preview_health_check"),
     path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/<str:kind>/",
          artifact_views.download, name="build_artifact"),
     path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/preview/<str:action>/",
