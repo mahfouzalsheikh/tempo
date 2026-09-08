@@ -1,253 +1,128 @@
 **Tempo: plan for a reliable software factory**
 
-Assessment date: 2026-09-06. Code baseline: `45b84bd`. This is a proposed implementation plan, not a description of capabilities already delivered.
+Updated: **2026-09-08**. Reviewed implementation baseline: **`fe26221`**.
+The original assessment was made on 2026-09-06 at `45b84bd`; the plan was first committed as
+`7f40f0f`. This document now records current delivery status and the remaining roadmap.
+Historical findings and incremental progress notes remain available in Git history.
 
-Implementation progress: the plan was committed as `7f40f0f`. Phase 0 started with commit-bound review and merge (`ca52725`): clean-commit review validation, durable host-recorded approval identity, remote-head checks, expected-SHA merge requests, and lost-response reconciliation. Historical approvals without commit identity require fresh review.
+**End goal:** take an idea through requirements, planning, coordinated coding agents,
+integration, independent verification, and packaging to an immutable software release that is
+ready for a named deployment environment. Support both existing repositories and new applications,
+with governed tools, skills, and MCP connections. Preserve the existing issue-to-PR workflow.
 
-The second Phase 0 slice (`89b2d93`) implements lease ownership checks inside worker-write transactions, atomic checkpoint allocation and retry release, recovery cleanup under the run lock, and rejection of delayed callbacks from replaced workers. Per-run GitHub adapters check ownership before mutations. Lease loss cancels the worker and drains graph tasks; runtime and hook subprocesses use process-group cleanup. PostgreSQL tests use independent processes to verify checkpoint sequencing and exclusive reclaim. Process-group cleanup is not a sandbox boundary; isolated task execution remains outstanding.
+**Current assessment:** a functioning, supervised factory prototype for bounded enhancements
+to an existing React application. The first live pilot reached local staging with operator
+assistance. We have not yet demonstrated repeatable delivery without manual code repair,
+new-application creation, or general public production deployment. A completion percentage would
+suggest a level of measurement we do not have; the gates below define progress instead.
 
-The third slice introduces `github_publish` for clean accepted commits on a durable run branch, repository-scoped read tools, a separate comment tool, expected-SHA pushes, and publication intents with push/PR reconciliation. No-change completion compares with the recorded task base. Candidate verification checks actual Git blobs and file modes, so index flags cannot hide a different checkout. See [controlled publication and upgrade notes](PUBLICATION.md). A general side-effect ledger, secret references, and isolation remain outstanding. Code findings below describe the assessment baseline; the remaining Phase 0 work and later phases are not complete.
+**Next milestone:** repeat the React mini-app enhancement path with no operator source edits,
+using the factory's repair workflow if needed, and retain the full acceptance and release evidence.
+Brief, plan, repair, and release approvals may remain human decisions and must be reported as
+interventions. Passing this milestone would establish supervised delivery without manual coding;
+it would not establish unattended autonomous operation.
 
-The fourth Phase 0 slice adds required validation policy: host-configured check IDs/commands, supplemental agent checks, mandatory cleanup outcomes, persisted policy identities, and revalidation when policy changes. Enabled publication workflows without required checks stop before agent launch unless discovery mode is explicitly configured. Migration `0010_validation_policy_evidence` adds policy/check evidence fields. See [validation policy and upgrade notes](VALIDATION_POLICY.md). This establishes required-command enforcement; independent trusted harnesses, runner authentication, report validation, and sandbox/secret isolation remain outstanding.
+**1. Current scope and evidence**
 
-The fifth Phase 0 slice retains tracker credential references in saved configuration and resolves them at the host adapter boundary. Subprocess environments use an allowlist, with explicit reference grants for coding runtimes and hooks; runtime grants cannot alias known control-plane or tracker credentials. Validation commands and Git inspection no longer inherit the server environment. Migration `0011_redact_workflow_credentials` redacts historical tracker credential literals. See [credential boundaries and upgrade notes](CREDENTIALS.md). Filesystem/process isolation, a vault-backed credential broker, protected reads, and runner authentication remain outstanding.
+The user-selected first target is the **React mini-app**, built with `react-mini-app-v1` and
+published through the named local static staging adapter. It is an existing application, not a
+new repository. The supported path is:
 
-The next Phase 0 slice protects operational reads with installation-wide authentication and authenticates validation jobs before reading their payloads. Runner credentials stay out of command environments and job records. The deployment script provisions its local secret, saves a private database backup, preserves dependency containers, and verifies the deployed commit. See [access and deployment notes](ACCESS_AND_DEPLOYMENT.md). Per-project roles, per-job capabilities, and isolated execution remain outstanding. Completed steps are now committed, pushed, and deployed for testing as requested.
+```text
+Versioned brief → approved task graph → isolated implementation agents
+→ serialized integration → required checks → retained build ZIP
+→ reviewed browser acceptance → preview health → reviewed staging target
+→ rollback rehearsal → publication and verified health
+```
 
-The next Phase 0 slice moves validation commands into disposable containers. Each command uses an
-immutable image bound to validation evidence, its own workspace mount, no network or Docker access,
-unprivileged project code, resource limits, and bounded cleanup. Docker probes cover sibling and
-credential access, network denial, simultaneous jobs, timeout, and cancellation. Deployment loads
-the pinned image into the execution daemon and exercises both authenticated endpoints. See
-[validation isolation](VALIDATION_SANDBOX.md). Coding-agent and hook isolation, per-node workspaces,
-lease-scoped job capabilities, and immutable complete run snapshots remain outstanding.
+The first live pilot, brief #1 / plan #2 / run #7, supplies the strongest end-to-end evidence:
 
-The next Phase 0 slice adds a workload firewall inside the execution daemon, installed before
-its API listener starts. Default and agent bridges reject daemon access, sibling containers,
-private infrastructure, metadata, and IPv6; public web and selected DNS traffic remain available.
-Firewall-aware readiness and disposable-daemon restart tests verify the boundary. Deployment now
-drains application services before execution updates and runs live connection probes. See
-[execution network policy](EXECUTION_NETWORK.md). This closes a prerequisite for containerized
-agents; coding agents and hooks have not yet moved out of the control plane.
+- Five native agents ran; two implementers overlapped in separate repositories, followed by
+  integration and verification.
+- Agents implemented drawing advice and a resettable preparation checklist. The final candidate
+  passed 27 application tests, two asset-preparation tests, production build checks, and two
+  reviewed browser criteria, including the existing image-to-SVG flow.
+- A retained build passed preview health and rollback rehearsal. It was published, rolled back,
+  and republished to local staging. The current publication is release #2 of build #1.
+- The run required a credential update, operator build-script repairs, and a temporary switch to
+  its saved validation image. A planner profile also prohibited the file edit its task requested.
+  It is an **assisted success**, not evidence that every task instruction was fulfilled.
+- Reported usage was 1,489,526 model tokens, including input/context. This is not a dollar cost,
+  and one pilot is not a measured factory success rate.
 
-The next Phase 0 slice moves Codex implementation/review sessions, external JSONL runtimes,
-and lifecycle hooks into disposable containers on the restricted execution network. Each agent
-node has a private persistent home; model login and selected model settings are seeded without
-importing ambient host connectors. Stable reservations prevent duplicate use of a home, while
-immutable container IDs protect replacement sessions from delayed cleanup. Runtime, resume,
-credential, cleanup, and real Codex initialization probes cover the new boundary. Host Git checks
-also disable repository fsmonitor commands and hooks. See [runtime isolation](RUNTIME_ISOLATION.md).
-Parallel graph nodes still share issue workspaces; isolated contributions and integration,
-immutable complete run snapshots, scoped capability provisioning, and release artifacts remain.
+See [the pilot record](FIRST_AGENT_PILOT.md), [its machine-readable receipt](examples/mini-app-pilot-result.json),
+and [the reviewed brief and task plan](examples/mini-app-pilot.json).
+The [idea and evidence](http://localhost:8001/ideas/1/) and
+[local staging application](http://5c96e222bd9e46cbb267bab9669934ad.localhost:8032/)
+are accessible from the deployment host.
 
-The next slice adds explicit isolated contributor nodes with independent repositories, clean
-base-relative commit handoffs, and serialized integration. Integration-checkout nodes now run
-exclusively. Accepted and integrating commits have durable recovery checkpoints; conflicts stop
-without changing the shared checkout, and downstream validation must check the combined result.
-Configuration and live run views explain workspace modes and show integrated commit identities.
-Git and Docker probes cover concurrent writers, conflicts, lease loss, metadata redirection, and
-interrupted checkpoint recovery. See [contribution integration](CONTRIBUTION_INTEGRATION.md).
-This delivers part of Phase 2; fresh repositories per retry, automatic conflict repair,
-runtime-neutral review, complete immutable run snapshots, scoped capability provisioning,
-and release artifacts remain outstanding.
+Subsequent reliability steps are delivered, with different levels of evidence:
 
-The next slice records complete execution configuration snapshots when runs are queued: parsed
-configuration, the main prompt, runtime/validation defaults, and portable model settings. Workers,
-node records, review, safety limits, hooks, and durable retries use saved inputs while new runs use
-new configuration. Independent run copies and digest/schema checks prevent catalog edits or
-corruption from silently changing execution. Migration `0012_execution_snapshots` retains older
-records without inventing missing history; legacy runs require explicit migration. Reload, retry,
-concurrency, and deployment checks cover the boundary. See [run snapshots](RUN_SNAPSHOTS.md).
-Explicit run migrations, tool/skill package identities, release artifacts, and capability
-provisioning remain outstanding.
-
-The next recovery slice adds explicit fresh restarts for legacy and stopped runs. A restart
-atomically records a successor with the current configuration, its own checkout and agent state,
-and empty validation/publication evidence. The old run remains auditable and cannot be requeued;
-pending approvals are cancelled. The dashboard exposes legacy/failed work and confirms the
-configuration identity before restarting. PostgreSQL tests cover competing restarts and worker
-claims. See [run restarts](RUN_RESTARTS.md). This is a new execution, not an in-place historical
-snapshot migration. Product intake and a complete brief-to-preview release slice remain next.
-
-The first product-intake slice adds versioned briefs, acceptance criteria with verification
-methods, typed task contracts, and reviewable execution plans. The Ideas & plans UI creates
-and edits briefs, generates a deterministic starter plan, displays dependency groups, and
-records approval for an exact revision. Edits append new unapproved revisions; structural
-validation rejects cycles, missing coverage, and premature verification. This does not yet
-invoke an agent planner or dispatch coding work from a product brief. See
-[product intake](PRODUCT_INTAKE.md). Connecting approved plans to isolated task execution and
-acceptance evidence remains the next Phase 1/2 step.
-
-The next Phase 1/2 slice connects approved plans to durable candidate builds. Operators select
-saved role bindings and parallelism, then explicitly launch the approved graph. Implementation
-tasks use private repositories with serialized integration; Tempo runs mandatory project checks
-after agents and lifecycle hooks finish. Runs retain their approved contracts and configuration
-through reloads and retries. The plan UI shows task progress, stopped work, and commit-bound
-candidate evidence. See [product execution](PRODUCT_EXECUTION.md). This is a local unpublished
-candidate stage; independent criterion evidence, immutable builds, preview deployment, and
-release readiness remain outstanding.
-
-The next release slice adds a versioned React mini-app build target. It augments product-run
-checks, prepares dependencies without tracker/model grants, runs tests and production validation
-offline, and retains a digest-bound ZIP and evidence manifest through lease-fenced writes.
-Artifacts survive workspace removal and download through authenticated, integrity-checked
-endpoints. Setup preserves applicable approval gates, identifies label-conditioned gates that
-are provably inactive for the saved product labels, and selects existing specialist profiles
-by their configured names and roles. A real committed mini-app rehearsal passed 18 tests and production checks. See
-[static builds](STATIC_BUILDS.md). Independent acceptance, preview hosting, promotion, and
-rollback remain next; this stage explicitly does not assert deployment readiness.
-
-The next release slice adds local static preview deployment from retained build ZIPs.
-Operator controls recheck candidate evidence, serialize launches, revoke or renew expiring
-links, and recover missing preview files. Each preview uses a separate random localhost
-origin; a credential-free, read-only serving container has no outbound infrastructure access.
-The actual retained mini-app passed a browser image-to-SVG download rehearsal with its local
-model and WebAssembly worker. See [local previews](PREVIEWS.md). Independent acceptance,
-production promotion, rollback, public hosting, and a historical release ledger remain.
-
-The next release slice adds reviewed, criterion-specific browser journeys and durable
-acceptance evidence. A dedicated worker tests retained ZIPs in offline containers using a
-trusted harness, records exact artifact/check/image identities, rejects incomplete evidence,
-and fences late results. New plans require fresh evidence; failure and interrupted work stay
-visible. The real mini-app passed home-page and case-study navigation checks through this path.
-See [acceptance checks](ACCEPTANCE_CHECKS.md). Broader browser actions, QA-agent test proposals,
-production readiness evaluation, promotion, and rollback remain outstanding.
-
-The next release slice adds version 2 browser journeys with fixed PNG uploads, visible-label
-clicks, slider keyboard controls, and bounded SVG download validation. Reports retain upload
-and download identities while published version 1 plans remain unchanged. The retained React
-mini-app passed an offline image-to-SVG journey using its local model and WebAssembly worker.
-A release-readiness page now evaluates build integrity, current approved scope, and the latest
-reviewed acceptance results, explains outstanding gates, and exports a digest-bound assessment.
-See [acceptance checks](ACCEPTANCE_CHECKS.md) and [release readiness](RELEASE_READINESS.md).
-Persisted preview health evidence, a deployment target/configuration contract, promotion,
-rollback rehearsal, and QA-agent test proposals remain outstanding. This assessment does not
-authorize deployment or imply that the factory is complete.
-
-The next release slice adds durable HTTP health checks for deployed previews. The trusted
-worker fetches the root and every saved file, verifies byte identities and browser policy,
-and records short-lived evidence bound to the current preview generation. Stop, renewal,
-expiry, changed publication, newer checks, and stale leases invalidate readiness. The UI
-offers explicit checks and history; version 2 readiness exports include the verified report.
-See [release readiness](RELEASE_READINESS.md). A named production deployment target,
-configuration contract, promotion/recovery ledger, rollback rehearsal, and QA-agent proposals
-remain outstanding.
-
-The next release slice adds reviewed configuration for named local staging targets and the
-`local-static-v1` adapter. Exact build, target, static runtime requirements, serving policy,
-and rollback policy are frozen in append-only approvals. Version 3 readiness can pass the
-configuration gate. A separate credential-free container serves immutable bundles through
-atomic target pointers, with stale-operation fencing and restoration of a previous bundle.
-See [local staging](LOCAL_STAGING.md). Durable promotion/history, evidence rechecks at activation,
-crash recovery, recorded rollback rehearsal, and QA-agent proposals remain outstanding. The
-adapter is not yet exposed as a publishing action; the factory is not complete.
-
-The next release slice implements durable rollback rehearsals using private copies of named
-staging targets. A dedicated worker verifies the candidate over HTTP, restores the prior bundle
-or withdraws a first release, verifies recovery, and records success only after cleanup. Row locks,
-leases, deterministic effect identities, and cleanup recovery fence interrupted workers. Version 4
-readiness includes verified receipts and can pass all six gates for local staging. A cross-image
-rehearsal also exposed and fixed OS-dependent MIME classification. See
-[recorded rollback rehearsal](ROLLBACK_REHEARSAL.md). Publishing, promotion history/recovery,
-post-promotion health, and QA-agent proposals remain outstanding; this is the first coordinator
-operation, not a completed promotion workflow or a completed software factory.
-
-The next release slice connects retained builds to named local staging publication. Durable
-intent, exact evidence identities, an HTTP preflight, final gate/lease checks at the pointer switch,
-post-publication health, and release history now support the publishing UI. Explicit rollback and
-interrupted-publication recovery restore only recognized target state and require verified health
-before unblocking the target. See [staging publication](STAGING_PUBLICATION.md). This closes the
-retained-build-to-local-staging path. The fresh-brief autonomous demonstration, QA-agent proposals,
-managed skill/MCP capabilities, and broader production-operation work remain outstanding.
-
-The first fresh product-agent pilot has now run five native tasks, including two simultaneous
-implementation agents in private checkouts. The resulting mini-app enhancement passed required
-tests/build checks, reviewed browser journeys, preview health, and rollback rehearsal; it was
-published, rolled back, and republished to local staging. This was an assisted result: repository
-credentials and the saved validation image needed repair, and an operator corrected a build
-script that changed a tracked image. The planner's read-only profile also conflicted with its
-requested design-document task. See [the pilot record and evidence](FIRST_AGENT_PILOT.md).
-The trial produced fixes for graph-wide usage reporting and replayed task completion times.
-Stopped builds now support a reviewed agent repair with explicit allowed paths, one model turn,
-retained failure history, and fresh required checks. Repair receipts follow the candidate into
-its build evidence; checked/published candidates cannot be changed in place. See
-[the repair workflow](PRODUCT_EXECUTION.md#reviewed-build-repairs).
-The validation runner now supports current and retained image IDs concurrently, using permissions
-collected from verified saved contracts. It blocks missing images and preserves original snapshot
-and validation identities. Deployment probes exercise both images without dispatching product work.
-Plan/profile compatibility, autonomous repair decisions, and a fresh unassisted live benchmark
-remain necessary before claiming autonomous delivery. The existing application's
-local staging result is not a new-repository or public production deployment demonstration.
-
-Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
-
-Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.
-
-**1. Scope and evidence**
-
-This assessment covers the configuration and workflow loaders, orchestration, runtime adapters, persistence and models, GitHub integration, workspace and validation execution, web authentication and control APIs, dashboard client code, migrations, deployment files, documentation, and deterministic tests. No live GitHub mutation, paid model run, or deployment was performed. Distributed-worker and infrastructure failure scenarios below are code-derived risks requiring targeted reproduction, not claims of observed production incidents.
-
-Checks run against the existing checkout:
-
-| Check | Result |
+| Change | Evidence and limit |
 | --- | --- |
-| `.venv/bin/ruff check .` | Passed |
-| `.venv/bin/pytest -q` | 93 passed in 6.41 seconds |
-| `.venv/bin/python manage.py check` | No issues |
-| `.venv/bin/python manage.py makemigrations --check --dry-run` | No changes detected |
+| Graph usage and replay timing (`e349cbc`) | Corrected graph-wide token reporting and preserved completed-task timestamps on replay; the pilot record identifies its original contribution checkpoints. |
+| Reviewed agent repair (`03e7a01`) | Automated execution and PostgreSQL tests cover one scoped repair turn, clean commit/path enforcement, fresh checks, interrupted work, duplicate requests, and retained history. It has not yet completed a new live product-agent pilot. |
+| Retained validation images (`fe26221`) | The deployed runner executed overlapping sandbox jobs on the new image and the pilot's original image, with exact result identities and isolation checks. This was a compatibility probe, not a new application delivery. |
+| Latest feature verification | Full suite: 652 passed, 24 environment-dependent skips; focused image/snapshot/authentication checks: 62 passed, four Docker skips; all seven real Docker sandbox tests passed. These counts describe that change's validation, not universal reliability. |
+| Deployment operation | Commit, push, backup, deployment, and live smoke checks completed; all eight services were healthy and the pilot's retained artifact/publication evidence remained valid. |
 
-These establish a healthy deterministic baseline. They do not establish production isolation, live protocol compatibility, PostgreSQL failover correctness, browser usability, or generated-product quality. No tracked GitHub Actions workflow was found.
+“Ready for deployment” means the required evidence passes for the exact artifact and named
+environment. An agent's completion message, a successful coding turn, or a green run alone is
+insufficient. Current readiness is scoped to local static staging; it does not certify a database
+application, a cloud deployment, or arbitrary production infrastructure.
 
-Assumed first market: a private, single-organization installation building small web applications and services in GitHub repositories, with one supported deployment target and a limited catalog of approved technology stacks. Support both existing repositories and new projects from maintained templates. Expand into arbitrary stacks, public multitenancy, mobile distribution, and complex multi-repository products after this path is reliable.
+**2. Delivered capabilities and their boundaries**
 
-“Ready for deployment” means all release gates have passed for a named environment and immutable artifact. Production promotion can subsequently be automatic or operator-triggered according to project policy; deployment readiness must not depend on an agent's self-assessment.
-
-**2. What to retain and what to correct**
-
-Keep Django, PostgreSQL, the workflow configuration validation, project/environment records, run and node histories, retries, operator controls, and Codex App Server integration. These are useful assets. Keep the host-controlled publication boundary and the principle that final verification must match the published code.
-
-The implementation is ahead of parts of its documentation. `ProviderRegistry` already supports Codex and an external JSONL bridge; the graph executor supports agent, human-gate, and join nodes. Conversely, registered provider names and configurable specialist prompts do not establish full runtime parity or safe collaboration. The default `WORKFLOW.md` still runs one implementation graph node, followed by a special review path outside the graph.
-
-| Area | Existing implementation | Gap to close |
+| Area | Delivered | Remaining boundary or extension |
 | --- | --- | --- |
-| Intake | GitHub issue polling and labels | Product briefs, requirements, decisions, milestones, and acceptance criteria |
-| Execution | Durable runs, leases, retries, node state | Fenced ownership, atomic transitions, independent workers, complete side-effect reconciliation |
-| Agent teams | Configurable profiles and bounded DAG execution | Isolated writable workspaces, contracts, task dependencies, integration ownership |
-| Handoffs | Node output JSON containing session metadata and a short message summary | Schema-validated deliverables with immutable artifact references and provenance |
-| Tools | Host-provided GitHub and validation tools | A general authorization and execution broker with MCP adapters |
-| Skills | Role prompts and whatever the runtime environment happens to provide | Pinned, tested, explicitly assigned skill packages |
-| Verification | Agent-supplied commands, output capture, workspace fingerprint | Required checks owned by policy, exact source/build identity, acceptance coverage |
-| Review | Separate Codex review thread with possible fixes | Runtime-neutral review nodes and decisions bound to the final commit |
-| Delivery | PR, merge, no-change completion, human handoff | Build artifact, preview, environment checks, release manifest, rollback plan |
-| Operations | Dashboard, SSE, token totals, audited interventions | Project authorization, correlated traces, cost controls, actionable release views |
+| Intake and plans | Versioned briefs, stable criteria, typed tasks/dependencies, deterministic starter plans, exact-revision approval | Agent-led discovery/planning, task/profile compatibility, new-project templates, and controlled scope replanning |
+| Agent teams | Configurable roles, bounded DAG execution, separate implementer checkouts and homes, serialized integration | General typed deliverable enforcement, runtime-neutral independent review, richer conflict repair, and broader concurrency benchmarks |
+| Required checks and builds | Host-owned check policy, source/commit verification, immutable run snapshots, retained React build ZIPs and manifests | Broader stack profiles, structured report validation, dependency inventories/attestations, and automatic CI regression lanes |
+| Repair and recovery | Lease-fenced writes, durable retries, explicit fresh restart for eligible issue runs, reviewed product repair with bounded requests | Live repair demonstration, automated diagnosis/repair decisions, explicit historical schema migrations, and lifetime product budgets |
+| Execution isolation | Disposable runtime/hook/validation containers, scoped environments, restricted networks, resource limits, cleanup and stale-owner tests | Lease-bound broker credentials, disk quotas, stronger infrastructure separation, and hostile multitenant guarantees |
+| Validation image compatibility | Concurrent use of approved immutable IDs collected from verified snapshots | Images must remain installed; archival, garbage collection, and revocation administration are not automatic |
+| Acceptance and previews | Reviewed browser journeys, offline verification, retained evidence, expiring isolated previews, HTTP health checks | QA-agent check proposals, broader accessibility/security/performance profiles, and API/service acceptance |
+| Release | Six-gate local readiness, reviewed targets, immutable bundles, publication history, rollback rehearsal and recovery | Public production targets, application services, runtime secrets/configuration, database migrations, and production monitoring |
+| Tools and skills | Constrained native GitHub/validation operations and restricted product-agent tool access | General capability broker, governed MCP adapters, pinned skill packages, and runtime conformance |
+| Operator experience | Clearer work/decision views, brief/plan setup, live build progress, repair controls, acceptance and release evidence | Guided second-repository onboarding, full accessibility/operator evaluation, large-history usability, and project roles |
+| Economics and evaluation | Run/node token reporting, attempt limits, fault fixtures, one assisted live pilot | Dollar/compute/tool cost accounting, lifetime reservations, intervention metrics, repeated benchmarks, and measured revision promotion |
 
-**3. Highest-priority findings in the current code**
+Installation-wide authentication, credential references, authenticated runner endpoints,
+commit-bound GitHub review/merge, constrained publication, atomic checkpoints, and stale-worker
+rejection are implemented. They should remain regression requirements, not be reopened as if
+nothing had been delivered. A general external-effect broker and distributed production proof
+are still broader than the operations already covered.
 
-These should become a small, explicit hardening backlog before increasing write concurrency or connector authority.
+Implementation references: [product intake](PRODUCT_INTAKE.md), [product execution and repair](PRODUCT_EXECUTION.md),
+[contribution integration](CONTRIBUTION_INTEGRATION.md), [run snapshots](RUN_SNAPSHOTS.md),
+[publication](PUBLICATION.md), [credential boundaries](CREDENTIALS.md),
+[runtime isolation](RUNTIME_ISOLATION.md), [network policy](EXECUTION_NETWORK.md),
+[validation isolation and images](VALIDATION_SANDBOX.md), [static builds](STATIC_BUILDS.md),
+[acceptance](ACCEPTANCE_CHECKS.md), [previews](PREVIEWS.md), [readiness](RELEASE_READINESS.md),
+[staging publication](STAGING_PUBLICATION.md), and [access/deployment](ACCESS_AND_DEPLOYMENT.md).
 
-| Priority | Code evidence | Consequence and required change |
+**3. Gaps that currently limit the end goal**
+
+These are the current gaps; the original line-numbered baseline findings are historical.
+
+| Priority | Gap | Required proof or next change |
 | --- | --- | --- |
-| P0 | `tempo/persistence.py:901`: heartbeat accepts only a run ID and reads the current lease token from the database | A previous worker is not required to prove ownership before extending the new owner's lease. Pass the worker's lease token/epoch through every write, heartbeat, tool authorization, and completion. Reject stale owners and stop their sandboxes. |
-| P0 | `tempo/trackers/github.py:404`: merge body contains `merge_method`, without an expected head SHA | A changed PR head is not explicitly bound to the reviewed commit. Persist source/tree identity with validation and review, recheck remotely, and pass the reviewed SHA to merge. |
-| P0 | `tempo/trackers/github.py:213`: generic repository-scoped REST mutations become available after an issue-level publication flag | Validation does not constrain all API payloads to validated content or a run-owned branch. Replace broad mutation authority with typed publish operations, branch restrictions, payload validation, and operation-specific policy. Keep read access scoped too. |
-| P0 | `tempo/orchestrator.py:699` and `:1013`: parallel nodes receive the same `workspace_path` | Writers can change each other's checkout, Git index, dependencies, and validation inputs. Use a separate worktree/clone and sandbox for each writable task attempt, followed by serialized integration. |
-| P0 | `tempo/config.py:424` resolves secrets; `tempo/persistence.py:123` persists the full effective configuration | Resolved provider credentials enter workflow history. Persist credential references; resolve secrets at the execution boundary. Inventory and migrate existing records and establish rotation procedures. |
-| P0 | `tempo/codex.py:93`, `compose.yaml`, `tempo/validation_server.py:17` | Agents are child processes of the control plane; filtering selected environment variables is incomplete isolation. Compose provides shared workspace volumes and access to a privileged, unauthenticated Docker daemon; validation RPC has no caller authorization. Move workloads into separately authenticated, restricted execution infrastructure. |
-| P1 | `tempo/persistence.py:922`: checkpoint sequence uses `count() + 1` before creation | Concurrent producers can allocate the same sequence. Allocate sequence numbers and update run state atomically; handle duplicate operation IDs explicitly. Prove with PostgreSQL concurrency tests. |
-| P1 | `tempo/orchestrator.py:504`: work starts from `self.store.current()`; node definitions use the store's active workflow version | A run's stored workflow reference alone does not ensure retries execute its original definition. Load an immutable run snapshot for execution; apply edited workflows to new runs unless an explicit migration occurs. |
-| P1 | `tempo/validation.py:159`: the caller supplies the entire command sequence | Successful exit codes cannot establish that required behavior was tested. Add a trusted validation profile and acceptance-test inventory; agents may propose extra checks but cannot remove mandatory checks. |
-| P1 | `tempo/codex.py:484`: no-change completion checks a reason and validation fingerprint | An unchanged fingerprint since validation does not prove no implementation delta against the task's base. Require a base-relative diff check and requirement evidence for no-change completion. |
-| P1 | `tempo/orchestrator.py:1142` and `tempo/config.py:232` | A completed turn and a 4,000-character summary can count as a successful handoff. Introduce output schemas and authoritative deliverable validation. |
-| P1 | `tempo/orchestrator.py:1258` directly creates `CodexAppServer` for review | Review bypasses the provider registry and graph-level role configuration. Bring review into the same node/runtime/tool contract as other agents. |
-| P1 | `tempo/agent_runtime.py:329` forwards unsolicited JSONL messages as events | The bridge has no general request/response tool broker dispatch or capability contract. Test actual tool calls, cancellation, approval, usage, and resumption before advertising another production runtime. |
-| P1 | `tempo_web/views.py:51` and `:93`; `tempo_web/settings.py` | State/configuration reads are unauthenticated, and authentication lacks project-scoped authorization. Protect operational reads and apply authorization to all queries and actions. Fail startup for unsafe production secrets/settings. |
-| P1 | `Dockerfile:2`; `WORKFLOW.md` sandbox settings and README deployment prose | Codex installs without a pinned version, and deployment documentation contains conflicting sandbox descriptions. Pin the runtime/image, record the actual effective policy, and verify it with isolation probes. |
+| Next | Task/profile conflicts and weak completion semantics | Reject a task that needs file edits when its chosen profile prohibits them; require evidence for specified deliverables instead of accepting a completed turn as fulfillment. |
+| Next | No fresh live delivery using the new repair path | Complete a new approved mini-app enhancement without operator source edits; exercise a controlled build failure and retain the repair plus fresh checks. |
+| Next | No repeated release-level evaluation | Record successes, failures, time, tokens, available costs, and each human intervention over repeated runs. Keep fixture pass rates separate from product delivery rates. |
+| Near term | No tracked GitHub Actions workflow | Add lint, Django/migration, unit, PostgreSQL race, and appropriate isolated runner regression lanes; retain test evidence in CI. |
+| Near term | Existing-repository scope only | Add reviewed template bootstrap, repository/base identity, baseline checks, and a minimal new application before agent fan-out. |
+| Near term | Managed capabilities incomplete | Implement the authorization broker, one scoped MCP integration, and one pinned skill package before expanding connector breadth. |
+| Expansion | Local static release only | Add an explicitly selected public target, then a service/database stack with configuration, secret references, migration validation, health and recovery contracts. |
+| Expansion | Distributed operation and cost controls incomplete | Separate worker/control lifecycles, prove crash/partition recovery, enforce project roles and lifetime budgets, and add image/artifact retention and restore drills. |
 
-GitHub supports an expected `sha` on its merge operation and returns a conflict when it differs. That makes commit-bound merge authorization a concrete incremental fix. [GitHub merge API](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request)
+The operator repairs from the first pilot must stay in its historical record. New recovery code
+and image probes resolve implementation gaps; they do not retroactively turn that pilot into an
+autonomous result. Preserve the approved contracts and published artifact while testing successors.
 
 **4. Target architecture and ownership**
 
-Keep a modular application, with distinct execution processes. Extract clear interfaces from the 2,113-line orchestrator before multiplying service boundaries.
+Sections 4–11 describe the target architecture and operating requirements. They are not a list of completed capabilities; sections 1–3 and 12–14 record delivery status and remaining acceptance gates. Preserve the working implementation while extracting clear interfaces from the orchestrator before multiplying service boundaries.
 
 ```mermaid
 flowchart TD
@@ -284,7 +159,7 @@ Initial extraction boundaries:
 | `tempo/integration/` | Task branches, commit acceptance, integration queue, conflict handling |
 | `tempo/releases/` | Build, preview, readiness evaluation, promotion, rollback records |
 
-Retain the current PostgreSQL execution engine for the first bounded delivery slice, after fixing its ownership and transaction invariants. Reassess a durable workflow engine when long waits, child workflows, and distributed recovery dominate maintenance. Temporal is a candidate because it resumes through recorded event history and replay, but adopting it requires a deliberate migration: deterministic workflow logic, external operations in activities, and one authoritative execution history. Do not maintain two competing schedulers. [Temporal workflow execution](https://docs.temporal.io/workflow-execution)
+Retain the current PostgreSQL execution engine and its implemented ownership and transaction protections for the supported delivery slice. Reassess a durable workflow engine when long waits, child workflows, and distributed recovery dominate maintenance. Temporal is a candidate because it resumes through recorded event history and replay, but adopting it requires a deliberate migration: deterministic workflow logic, external operations in activities, and one authoritative execution history. Do not maintain two competing schedulers. [Temporal workflow execution](https://docs.temporal.io/workflow-execution)
 
 **5. The idea-to-release workflow**
 
@@ -340,7 +215,7 @@ Nested runtime subagents may be permitted for bounded subtasks, but their usage 
 
 **7. Contracts, artifacts, and durable data**
 
-Introduce these records incrementally rather than replacing all existing run tables:
+The following is the target conceptual data model, not a promise that every name is a current Django model. Brief/plan revisions, run/node history, build artifacts, acceptance evidence, and deployment records already exist. Extend those records incrementally for the remaining contracts:
 
 | Record | Essential fields |
 | --- | --- |
@@ -412,7 +287,7 @@ Use at-least-once execution with deduplicated and reconciled side effects. A dat
 
 Implement atomic state transitions with expected status/version and fenced lease ownership. Budget reservations, task claims, checkpoint sequencing, and operation intent must be transactionally consistent. Reject stale worker reports as well as stale actions. A task's sandbox credentials should expire when its lease is lost.
 
-Separate web/control-plane processes from workers. Let the dashboard read durable projections and event streams rather than process-local orchestrator dictionaries. Distinguish liveness from readiness; the existing health handler only checks whether an orchestrator object exists. Readiness should include database connectivity and scheduler freshness, while provider outages should appear as degraded capability status.
+Separate web/control-plane processes from workers. Let the dashboard read durable projections and event streams rather than process-local orchestrator dictionaries. Distinguish liveness from readiness; the minimal health endpoint does not establish complete distributed readiness. Readiness should include database connectivity and scheduler freshness, while provider outages should appear as degraded capability status.
 
 Use ephemeral sandboxes with a minimal environment allowlist, isolated home and runtime state, read-only toolchain images, CPU/memory/disk/process/time limits, and controlled network access. Keep control-plane database credentials, signing keys, cloud production authority, and other projects' workspaces outside the sandbox. Treat `externalSandbox` as a statement that the infrastructure supplies isolation; verify that infrastructure directly.
 
@@ -424,7 +299,7 @@ Snapshot the brief/plan, prompts, workflow, model selection, runtime binary/imag
 
 Keep fast agent-selected checks for development. Add a separate authoritative verification path whose required commands, test discovery, and pass criteria are selected from the accepted project profile and requirement contract. Changes to tests, CI, validation configuration, or the profile itself require explicit review. Missing tests, skipped required tests, malformed reports, and unexpectedly empty suites must not count as passing.
 
-Bind verification to the integrated source identity and build environment. The existing fingerprint is valuable for detecting local changes, but it excludes ignored files and Git metadata and does not identify a published commit or artifact. Clean verification sandboxes should build from a specified commit with pinned dependencies; generated outputs belong in the artifact store. Record file modes, submodules, and other source inputs where relevant.
+Bind verification to the integrated source identity and build environment. The workspace fingerprint excludes ignored files and Git metadata. Current candidate and artifact records additionally bind source SHA, execution identity, required checks, and artifact digest; preserve those checks while broadening supported stacks. Clean verification sandboxes should build from a specified commit with pinned dependencies; generated outputs belong in the artifact store. Record file modes, submodules, and other source inputs where relevant.
 
 Release readiness should be a computed predicate:
 
@@ -459,57 +334,93 @@ Required fault fixtures include process death at every external-action boundary,
 
 Promote workflow/model/skill/tool revisions only after regression evaluation. Start with shadow or preview-only runs, then expand authority by project and measured reliability. Pin the previous working revision and make rollback an operator action.
 
-**12. Implementation sequence and acceptance gates**
+**12. Phase status and acceptance gates**
 
-Product usability is now an explicit workstream starting in Phase 0, following the request to make Tempo easier to understand and operate. See [the product experience plan](PRODUCT_EXPERIENCE.md) for navigation, interaction rules, staged deliverables, and acceptance criteria. The first implementation prioritizes decisions and stopped work, searchable active runs, honest validation setup status, approval context, and stale-data handling. Guided setup follows with intake; task and delivery views arrive with their authoritative backend evidence. This advances UI work from the final phase while retaining the safety and isolation dependencies below.
+Delivery crossed phase boundaries to complete the selected mini-app path. A delivered slice does
+not mean every original phase deliverable is complete. The original engineering-week estimates
+are no longer a remaining-work forecast; re-estimate scoped tickets after the next live benchmark.
 
-The effort ranges below are engineering estimates, not observed delivery rates. They include implementation and focused verification but exclude unpredictable provider, infrastructure, and deployment-target setup. With two experienced engineers, allow roughly a quarter for a useful pilot and additional time for broad production hardening; revise estimates after the first two phases.
-
-| Phase | Proposed effort | Concrete deliverables | Exit gate |
+| Phase | Current status | Delivered portion | Remaining exit work |
 | --- | --- | --- | --- |
-| 0. Establish safety and baseline | 2–3 engineer-weeks | Commit-bound review/merge; constrained publication; initial trusted validation profile; lease fencing; atomic checkpoints; secret references; protected reads; pinned runtime; CI; accurate sandbox documentation and probes | Stale owner and changed-head tests fail closed; mandatory checks cannot be bypassed through supported APIs; no resolved credentials in new snapshots |
-| 1. Contracts and product intake | 2–3 engineer-weeks | Brief/requirement/plan/result schemas; artifacts; immutable run snapshots; task-based run abstraction with legacy issue adapter; template onboarding | A brief compiles into an auditable task plan; malformed outputs are rejected; retries retain original contracts |
-| 2. Isolated agent collaboration | 3–4 engineer-weeks | Per-task sandbox/worktree; integration queue; runtime-neutral review; bounded repair; authoritative integrated checks | Three tasks execute concurrently, including a deliberate overlap; conflicts are resolved explicitly; only the integrated candidate advances |
-| 3. End-to-end release slice | 3–4 engineer-weeks | One supported stack and deployment target; build artifact; preview; acceptance matrix; release manifest; readiness evaluator; rollback rehearsal | A fresh brief produces a working application and independently verified deployable artifact without manual code editing |
-| 4. Managed capabilities | 2–3 engineer-weeks | Tool broker completion; approved stdio/HTTP MCP adapters; skill registry; runtime conformance suite; role-specific bindings | A selected skill and MCP capability work end to end, are attributable and scoped, and fail safely on schema/auth changes |
-| 5. Distributed production operation | 3–5 engineer-weeks | Independent workers; durable read projections; distributed cancellation; full resource isolation; project roles; backup/restore; traces and lifetime budgets | Kill and partition workers under PostgreSQL load: no accepted work disappears, stale actions are rejected, ambiguous side effects reconcile |
-| 6. Evaluation and usability at scale | 2–4 engineer-weeks | Benchmark/reporting; revision promotion; operator task evaluations; accessibility review; refinement of onboarding, work, and delivery views introduced earlier | A second repository is onboarded through the product; revisions are compared on quality/cost; operators diagnose failures from the UI |
+| 0. Safety and baseline | Substantial foundation delivered | Commit-bound publication/review, required checks, leases/checkpoints, secret references, protected reads, runtime isolation, network and deployment probes | CI enforcement, remaining dependency/runtime pinning, and broader broker/operational guarantees; retain all existing fault checks |
+| 1. Contracts and product intake | Existing-repository path delivered; phase partial | Brief/plan revisions, criteria, task compilation, approvals, immutable execution snapshots | Agent discovery/planning, task/result compatibility and evidence, template onboarding, and bounded scope-change handling |
+| 2. Isolated collaboration | Implemented and partly demonstrated live | Two simultaneous implementers, serialized integration, host checks, reviewed repair | Live repair/conflict recovery, runtime-neutral review, typed handoffs, and the original three-task concurrency/overlap fixture |
+| 3. End-to-end release | Assisted React-to-local-staging path demonstrated; exit gate not met | Retained build, independent browser evidence, preview, readiness, named target, publication, health and rollback | A fresh brief reaches verified release readiness without manual code edits; new-application bootstrap is a separate required demonstration |
+| 4. Managed capabilities | Mostly remaining | Constrained native tools and runtime interfaces provide a foundation | Broker authorization, approved stdio/HTTP MCP adapters, skill registry, conformance tests, and attributable scoped use |
+| 5. Distributed production operation | Partial safeguards delivered | Leases, isolation, backups, release recovery, retained-image routing, targeted PostgreSQL fault tests | Independent coding workers/projections, distributed cancellation/reconciliation, project roles, restore drills, quotas, lifetime budgets and production operations |
+| 6. Evaluation and usability at scale | UI slices delivered; evaluation incomplete | Work/decision improvements, live progress, repair and delivery views, browser checks, pilot receipt | Repeated benchmarks, second-repository onboarding, accessibility/operator task studies, large-history behavior and evidence-based revision promotion |
 
-Some work overlaps, but dependencies matter: establish ownership before scaling workers, isolated workspaces before concurrent writers, constrained capability execution before MCP writes, and evidence identities before release promotion. Add minimal isolation, traces, and evaluation fixtures in early phases; Phase 5 expands and proves them at distributed scale.
+Usability remains a workstream throughout these phases; see [the product experience plan](PRODUCT_EXPERIENCE.md).
+Each new backend capability needs an understandable status, evidence, and next action. Remaining
+UI work should be driven by the next pilot and a second operator's onboarding/failure-recovery
+experience, rather than adding empty destinations or exposing implementation details by default.
 
-The first useful milestone is Phase 3. It proves the factory's product outcome. Connector breadth, additional runtimes, and a visual workflow editor should earn priority by improving that outcome.
+Preserve the dependencies: ownership before more workers, isolated checkouts before concurrent
+writers, governed capabilities before MCP writes, and exact evidence identities before promotion.
+The next delivery gate is the no-manual-code-editing pilot, not completion of the entire roadmap.
 
-**13. First ten implementation tickets**
+**13. Prioritized remaining implementation tickets**
 
-1. **Bind review and merge to an exact candidate.** Add reviewed SHA/tree/evidence IDs; send expected SHA; invalidate review on branch movement; test a changed head and a lost merge response.
-2. **Constrain publication and completion.** Publish only accepted commits to run-owned branches; deny other ref writes; separate comment/PR operations; verify no-change against the task base.
-3. **Fence persistence and effects.** Require the claiming lease on heartbeat, node completion, checkpoint, and tool calls; allocate sequences atomically; prove old-worker rejection with PostgreSQL.
-4. **Remove ambient authority.** Store secret references, build environment allowlists, isolate worker execution, authenticate validation jobs, and test that a task cannot reach another task or control-plane credentials.
-5. **Freeze execution inputs.** Resolve a complete immutable run snapshot; resume from it; test workflow/skill/model configuration changes during an interrupted run.
-6. **Add authoritative validation profiles and CI.** Define mandatory checks independently of agent text, validate test reports, and run existing checks plus PostgreSQL/protocol regression lanes in CI.
-7. **Introduce artifacts and typed results.** Add schema validation, content digests, provenance, semantic commit checks, and structured blocked/failed/completed dispositions.
-8. **Add product briefs and task compilation.** Preserve issue compatibility, introduce stable acceptance IDs, template bootstrap, dependency validation, and bounded scope-change handling.
-9. **Isolate task contributions and integrate them.** Add task workspaces, commit handoff, a serialized integration queue, and a conflicting-edit fixture with fresh combined validation.
-10. **Unify review and produce a release candidate.** Move review into the graph/runtime abstraction; add trusted build/preview activities and a computed readiness manifest for one stack.
+| Order | Ticket | Acceptance and evidence |
+| --- | --- | --- |
+| 1 | **Check plan/profile compatibility and required deliverables.** Make task needs and profile capabilities explicit; validate them before dispatch. Add an enforceable result for required files/decisions. | The pilot's read-only-planner/write-document conflict is rejected before model work. A corrected plan/profile combination proceeds, and missing required output blocks completion. Saved runs keep their original contracts. |
+| 2 | **Run a new supervised pilot without manual code edits.** Reuse the supported React target, freeze observable criteria, and include a recoverable build failure. | Native agents implement and repair the candidate; fresh required checks, browser evidence, preview, staging readiness, and rollback pass. Record every approval, environment intervention, and any operator edit; an edit makes this an assisted attempt. |
+| 3 | **Measure repeated delivery and establish CI.** Start with a small repeated pilot set, then expand the 20–30-task benchmark. Add automatic regression lanes and a release-level result record. | Reports include denominators, failed attempts, interventions, duration, tokens, known costs/unknown costs, and evidence completeness. CI runs the defined fast and PostgreSQL checks; Docker/browser lanes run in suitable isolated infrastructure. |
+| 4 | **Strengthen planning, review, and handoffs.** Add repository-aware plan proposals, structured findings/results, independent runtime-neutral review, and explicit conflict-resolution assignments. | Missing deliverables and unresolved required findings block readiness. A three-task overlap/conflict fixture integrates only accepted work and obtains fresh verification. Runtime differences are tested rather than inferred from profile names. |
+| 5 | **Bootstrap a new application.** Begin with a versioned React template and controlled repository creation, base commit, toolchain checks, CI, and configuration contract. | An idea creates a new repository and working application through the product flow, then passes the same artifact/acceptance/readiness gates without manual source edits. A second operator can complete onboarding. |
+| 6 | **Deliver one governed skill and MCP capability.** Build the common authorization/effect contract, then pin and provision a selected skill and connector. | Calls are attributable to project/run/task and current authority; credentials stay scoped; schema/auth changes fail safely. Package/schema identities appear in new versioned snapshots without rewriting historical ones. |
+| 7 | **Automate bounded recovery decisions.** Classify failures, propose repairs or scoped replans, and execute only within reviewed project authority and shared limits. | A defined recoverable failure completes without a new operator repair instruction; scope, authority, budget, and ambiguous external-effect failures stop with evidence. New commits receive fresh required evidence. |
+| 8 | **Add public and service deployment support.** Select one public static target first; then add one application-service/database stack. | The reviewed artifact deploys with validated configuration/secret references, health/monitoring, cleanup, rollback, and data-recovery procedures. Service/database readiness is demonstrated independently of static staging. |
+| 9 | **Complete distributed and economic controls.** Add independent coding workers, durable projections, project roles, lifetime reservations, retention/revocation, and restore operations. | PostgreSQL load and worker-kill/partition drills preserve accepted work and reject stale actions. Known costs and remaining budgets are visible; unknown costs are explicit. Backup restore and image/artifact availability are rehearsed. |
+| 10 | **Evaluate and improve operation at scale.** Compare workflow/model/skill revisions and observe operators using onboarding, work, repair, and release views. | Operators diagnose the benchmark's blockers from the UI, keyboard/accessibility checks pass, a second repository works, and revisions are promoted using measured quality/cost/intervention results. |
 
-Each ticket should preserve the existing issue workflow through compatibility tests. Use additive migrations, backfill historical identities where possible, and distinguish unknown legacy evidence from verified new evidence. Roll out the factory workflow per project behind an explicit configuration version.
+Tickets 1–2 are the immediate sequence. Begin CI and measurement alongside them; do not defer
+recording outcomes until the whole benchmark or distributed architecture exists. Later tickets
+should be split into deployable slices with their own acceptance checks. Capability breadth and
+additional stacks should follow evidence that the supported path works reliably.
 
-**14. Demonstration and success criteria**
+For every completed implementation slice, retain relevant regression evidence and follow the
+requested **commit → push → deploy → live verification** workflow. Preserve issue-to-PR
+compatibility, use explicit versioned contract changes and additive migrations, and never invent
+missing historical evidence. A documentation update changes the roadmap, not a capability's
+validation status.
 
-Use a compact demonstration brief such as a booking application with authentication, availability, reservation conflicts, and an operator view. Require the planner to define observable criteria before coding. Implement the API and UI in separate task sandboxes against an accepted interface, integrate them, exercise double-booking and authorization scenarios, and deploy the built artifact to preview.
+**14. Demonstrations, evaluation, and completion criteria**
 
-Deliberately kill a worker, introduce an integration conflict, move the PR head after review, and make one preview health check fail. The system should recover or report an explicit blocker with evidence. It must not report deployment readiness in those failing states.
+The first demonstration is complete **with assistance**. Keep its record as the baseline.
+Advance through these demonstrations rather than substituting an unsupported larger application
+for the selected first target:
 
-Proposed pilot targets, to calibrate after collecting baseline results:
+1. **Existing React application, no operator source edits.** Use a fresh brief/plan, independent
+   feature tasks, explicit criteria, and a controlled build failure. Complete any repair through
+   Tempo, then retain checks, browser evidence, preview health, staging publication and rollback.
+   Human approvals are allowed and counted; manual source edits or undocumented environment fixes
+   must be reported and prevent an unassisted claim.
+2. **Repeatability on the supported target.** Repeat bounded features and failures, including
+   worker interruption and integration conflict. Freeze evaluation criteria, retain unsuccessful
+   attempts, and compare accepted releases rather than completed agent turns.
+3. **New application from an idea.** Bootstrap a maintained template into a new repository and
+   reach the same independently verified release gate. This proves creation rather than enhancement.
+4. **Broader deployment readiness.** Demonstrate one public environment, then a service/database
+   application with authentication, migration, configuration, health, and data-recovery requirements.
+   A booking application can be a later full-stack benchmark after that stack is supported.
 
-| Measure | Initial target |
-| --- | --- |
-| Release evidence completeness | 100% of ready candidates have identity-bound required evidence |
-| Fault-suite integrity | No lost accepted tasks or unauthorized duplicate effects in the defined fault fixtures |
-| Isolation checks | All defined cross-task, credential, and stale-lease probes rejected |
-| Bounded-task success | At least 80% of the initial supported benchmark reaches accepted readiness without manual code edits; report sample size and variance |
-| Operator visibility | Every blocked run exposes its failed criterion, evidence, and permitted next action |
-| Economics | Every run reports known model/tool/compute cost and remaining budget, with estimates labeled |
-| Reproducibility | Every accepted release can be traced to its source, artifact, execution snapshot, and preview result |
+The fault suite should also cover moved PR heads, provider/tool failures, lost external responses,
+stale leases, and failed preview/release health. Recovery must produce valid new evidence or an
+explicit blocker; none of these failures may be represented as deployment readiness.
 
-Passing these fixtures is a bounded release criterion, not a claim of universal reliability. The strongest next investment is a complete, measurable path from brief to verified application, supported by the execution and authorization fixes above.
+| Measure | Target | Current evidence / remaining measurement |
+| --- | --- | --- |
+| Release evidence completeness | Every ready artifact has its required identity-bound evidence | Local staging gates and the pilot receipt are implemented; evaluate completeness across the repeated benchmark and each additional adapter |
+| Fault integrity and isolation | All defined stale-owner, cross-task, credential, and duplicate-effect fixtures fail safely | Targeted PostgreSQL, Docker, network, and release recovery tests pass; distributed partition coverage and broader authority boundaries remain |
+| Bounded-task success | Proposed target: at least 80% reach accepted readiness without manual code edits, with sample size and variance reported | One assisted live pilot; no measured unassisted success rate yet. Calibrate the target after initial repeated runs |
+| Human intervention | Count approvals, clarifications, environment fixes, source edits, and repair decisions separately | Pilot interventions are documented; aggregate rates and automatic recovery performance remain unmeasured |
+| Operator visibility | Every benchmark blocker exposes its reason, evidence, and permitted next action | Progress, failure, repair, acceptance, and release views exist; second-operator and accessibility evaluation remains |
+| Economics | Known model/tool/compute costs and remaining lifetime budget, with uncertainty shown | Token totals and attempt limits exist; dollar/compute/tool attribution and lifetime budget enforcement remain |
+| Traceability | Accepted releases link source, artifact, snapshots, verification, target and recovery evidence | Demonstrated for the local static pilot; skill/tool identities and additional application/deployment profiles remain |
+
+The full end goal requires the new-application path, repeatable no-manual-code delivery, governed
+capabilities, independent environment-specific release evidence, and operational/cost controls
+for the supported product scope. It does not require every possible language, connector, or
+hosting provider. Declare each supported stack and deployment target explicitly, and claim
+completion only when its defined demonstrations and operating gates have passed.
