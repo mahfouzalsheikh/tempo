@@ -108,6 +108,19 @@ def test_preview_launch_authentication_scope_and_csrf(artifact):
     assert PreviewDeployment.objects.count() == 0
 
 
+def test_idea_pages_with_preview_links_are_private_and_not_cached(artifact):
+    client = Client()
+    idea = artifact.url.split("/runs/", 1)[0] + "/"
+    denied = client.get(idea)
+    assert denied.status_code == 302 and "no-store" in denied["Cache-Control"]
+    client.force_login(artifact.user)
+    assert client.post(artifact.url + "start/").status_code == 302
+    response = client.get(idea)
+    assert response.status_code == 200 and b"Open preview" in response.content
+    assert "no-store" in response["Cache-Control"]
+    assert {"Cookie", "Authorization"} <= set(response["Vary"].split(", "))
+
+
 def test_launch_replay_restart_repair_stop_and_expiration(artifact):
     client = Client()
     client.force_login(artifact.user)

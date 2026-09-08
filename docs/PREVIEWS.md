@@ -16,6 +16,8 @@ need an absolute `TEMPO_PREVIEW_ROOT` and the isolated serving process.
 ## Evidence and lifecycle
 
 Authenticated, CSRF-protected POST controls scope the artifact to its product and run.
+Guarded idea pages and controls use the operator middleware's no-store policy and vary
+by Cookie and Authorization, so pages containing preview access links are not cached.
 Launching rechecks the ZIP and manifest digests, saved product contract, successful
 candidate checkpoint, and passed validation evidence. All ZIP members must match the
 saved inventory; traversal paths, links, duplicate entries, private configuration names,

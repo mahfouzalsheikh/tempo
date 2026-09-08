@@ -68,6 +68,9 @@ def page(request, mode, **context):
 
 
 def signed_in(request):
+    # Idea pages now include bearer preview links as well as private product contracts.
+    # Reuse the access middleware's no-store/Vary policy for every guarded response.
+    request.tempo_private_response = True
     if not request.user.is_authenticated:
         return redirect(f"/login/?next={request.path}")
     return None
