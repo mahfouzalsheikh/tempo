@@ -65,10 +65,12 @@ Run `./scripts/restart-tempo.sh` from a committed checkout. It:
 3. Starts the existing database without forcibly recreating it.
 4. Stops Tempo and validation gracefully and saves a private backup beneath `var/backups/`.
 5. Updates execution infrastructure, waits for firewall-aware readiness, and provisions the agent network.
-6. Loads the validation image into the daemon and supplies its immutable ID to both application services.
-7. Starts the application services and waits for health checks. Startup applies migrations.
+6. Loads the validation image into the daemon, supplies its immutable ID to both application services,
+   applies migrations, and collects approved retained IDs from verified snapshots with workers stopped.
+7. Starts the application services and waits for health checks. Startup also checks migrations.
 8. Verifies the deployed commit, protected reads, validation, network isolation, runtime resume,
-   hook isolation, and initialization/login recognition with the installed Codex binary.
+   hook isolation, and initialization/login recognition with the installed Codex binary. When an
+   older approved image is installed, validation probes also verify concurrent use of both images.
 9. Checks product intake, retained builds, preview health, browser acceptance, and temporary
    staging activation/rollback with process, storage, and network isolation probes.
 

@@ -64,8 +64,9 @@ A subsequent attempt rejected the newer validation runner installed by the inter
 release. With no other runs active, the runner was temporarily restored to the exact immutable
 image in the saved snapshot. That mismatch remained recorded as validation #35; failed repair
 checks #36 and #37 also remain in history. Validation #38 passed. Normal deployment restores the
-current runner configuration after this completed candidate. Supporting multiple retained validation
-images concurrently is still an operational gap.
+current runner configuration after this completed candidate. A subsequent factory update now
+supports concurrent validation with approved, locally retained image IDs; the original mismatch
+and operator intervention remain part of this pilot's history.
 
 ## Factory fixes from this run
 
@@ -91,6 +92,6 @@ revision-scoped, read-only, and respectful of keyboard focus; see [product execu
 Follow-up: [reviewed build repairs](PRODUCT_EXECUTION.md#reviewed-build-repairs) now give a stopped
 candidate an explicit agent assignment with allowed paths and fresh required checks. Automated
 regression tests exercise this path; this historical pilot remains an operator-assisted result.
-Next priorities: detect plan/profile conflicts before spending model tokens, route old runs to
-compatible validation images, and repeat this benchmark without operator code repair before
-claiming autonomous delivery.
+The validation runner now also routes concurrent requests to exact image IDs collected from
+verified saved contracts. Next priorities: detect plan/profile conflicts before spending model
+tokens and repeat this benchmark without operator code repair before claiming autonomous delivery.

@@ -12,6 +12,7 @@ from .errors import ConfigError
 from .process import stop_process_group
 from .run_snapshot import execution_setting
 from .validation_auth import runner_environment
+from .validation_images import allowed_images
 
 
 def execution_config() -> tuple[str, str | None]:
@@ -23,7 +24,34 @@ def execution_config() -> tuple[str, str | None]:
     image = execution_setting("TEMPO_VALIDATION_IMAGE", "")
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", image):
         raise ConfigError("validation requires an immutable Docker image ID")
+    allowed_images(image)
     return backend, image
+
+
+async def select_image(requested):
+    backend, default = execution_config()
+    if (backend == "process" and requested is not None) or (
+        backend == "docker" and (
+            not isinstance(requested, str) or requested not in allowed_images(default)
+        )
+    ):
+        raise ConfigError("Image is not approved for this runner.",
+                          category="execution_image_mismatch")
+    if backend == "docker":
+        process = await asyncio.create_subprocess_exec(
+            "docker", "image", "inspect", "--format", "{{.Id}}", requested,
+            env=runner_environment(), stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+        )
+        try:
+            output, _ = await asyncio.wait_for(process.communicate(), timeout=5)
+        except BaseException:
+            await stop_process_group(process)
+            raise
+        if process.returncode or output.decode().strip() != requested:
+            raise ConfigError("The exact saved image is not installed locally.",
+                              category="execution_image_unavailable")
+    return requested
 
 
 def container_arguments(name: str, image: str, workspace: Path, command: str, timeout_ms: int):
@@ -77,8 +105,12 @@ async def remove_container(name: str) -> None:
 
 
 @contextlib.asynccontextmanager
-async def command_process(command: str, workspace: Path, timeout_ms: int):
+async def command_process(command: str, workspace: Path, timeout_ms: int, *, execution_image=None):
     backend, image = execution_config()
+    if execution_image is not None:
+        if backend != "docker" or execution_image not in allowed_images(image):
+            raise ConfigError("The selected validation image is not approved.")
+        image = execution_image
     name = f"tempo-validation-{uuid.uuid4().hex}" if backend == "docker" else None
     arguments = container_arguments(name, image, workspace, command, timeout_ms) if name else [
         "bash", "--noprofile", "--norc", "-c", command,

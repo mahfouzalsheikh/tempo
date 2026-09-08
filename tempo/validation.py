@@ -461,7 +461,8 @@ class ProjectValidator:
                 if response.status_code == 409:
                     raise ConfigError(
                         "The validation runner does not provide this run's saved execution image. "
-                        "Restore a matching runner before retrying.",
+                        "Restore the exact local image and refresh the retained-image "
+                        "configuration before retrying.",
                         category="snapshot_environment_changed",
                     )
                 if response.status_code != 200:

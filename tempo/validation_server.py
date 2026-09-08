@@ -13,7 +13,7 @@ import uvicorn
 
 from .errors import ConfigError
 from .validation_auth import runner_token
-from .validation_sandbox import command_process, execution_config
+from .validation_sandbox import command_process, execution_config, select_image
 
 ROOT = Path(os.getenv("TEMPO_WORKSPACE_ROOT", "/data/workspaces")).resolve(strict=False)
 MAX_REQUEST_BYTES = 1024 * 1024
@@ -90,13 +90,17 @@ async def application(scope: dict[str, Any], receive: Any, send: Any) -> None:
         await _respond(send, 400, {"error": "invalid_request"})
         return
     try:
-        backend, image = execution_config()
-    except ConfigError:
-        await _respond(send, 503, {"error": "runner_not_configured"})
+        image = await select_image(payload.get("execution_image"))
+    except ConfigError as exc:
+        if exc.category in {"execution_image_mismatch", "execution_image_unavailable"}:
+            await _respond(send, 409, {"error": exc.category})
+        else:
+            await _respond(send, 503, {"error": "runner_not_configured"})
         return
-    if payload.get("execution_image") != image:
-        await _respond(send, 409, {"error": "execution_image_mismatch"})
+    except (OSError, TimeoutError):
+        await _respond(send, 503, {"error": "execution_service_unavailable"})
         return
+    selection = {"execution_image": image} if image else {}
     if path == "/run-stream":
         await send(
             {
@@ -108,28 +112,33 @@ async def application(scope: dict[str, Any], receive: Any, send: Any) -> None:
                 ],
             }
         )
-        async for item in stream_command(command, workspace, timeout_ms, max_output_chars):
+        async for item in stream_command(
+            command, workspace, timeout_ms, max_output_chars, **selection,
+        ):
             body = (json.dumps(item, separators=(",", ":")) + "\n").encode()
             await send({"type": "http.response.body", "body": body, "more_body": True})
         await send({"type": "http.response.body", "body": b""})
     else:
-        result = await run_command(command, workspace, timeout_ms, max_output_chars)
+        result = await run_command(command, workspace, timeout_ms, max_output_chars, **selection)
         await _respond(send, 200, result)
 
 
 async def run_command(
-    command: str, workspace: Path, timeout_ms: int, max_output_chars: int
+    command: str, workspace: Path, timeout_ms: int, max_output_chars: int, *, execution_image=None,
 ) -> dict[str, Any]:
-    async for item in stream_command(command, workspace, timeout_ms, max_output_chars):
+    selection = {"execution_image": execution_image} if execution_image else {}
+    async for item in stream_command(command, workspace, timeout_ms, max_output_chars, **selection):
         if item["type"] == "result":
             return {key: value for key, value in item.items() if key != "type"}
     raise RuntimeError("validation command ended without a result")
 
 
-async def stream_command(command: str, workspace: Path, timeout_ms: int, max_output_chars: int):
+async def stream_command(command: str, workspace: Path, timeout_ms: int, max_output_chars: int,
+                         *, execution_image=None):
     captured = ""
     timed_out = False
-    async with command_process(command, workspace, timeout_ms) as process:
+    selection = {"execution_image": execution_image} if execution_image else {}
+    async with command_process(command, workspace, timeout_ms, **selection) as process:
         assert process.stdout
         try:
             async with asyncio.timeout(timeout_ms / 1000 + (5 if process.validation_image else 0)):

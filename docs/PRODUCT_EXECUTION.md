@@ -110,9 +110,10 @@ Successful candidates and build manifests include repair action digests and outc
 the shared artifact gate verifies before download, preview, or publication. Runs that already
 have checked candidates cannot be repaired in place, preserving their release evidence.
 
-This adds operator-directed agent repair, not automatic diagnosis and repair approval. Saved
-validation images must still be available to the runner; concurrent routing to retained images
-and a fresh live benchmark without operator code changes remain follow-up work.
+This adds operator-directed agent repair, not automatic diagnosis and repair approval.
+[Concurrent routing to retained validation images](VALIDATION_SANDBOX.md#image-identity-and-deployment)
+is now supported, provided those exact images remain installed. A fresh live benchmark without
+operator code changes remains follow-up work.
 
 The repair implementation passed the full suite (626 tests, 22 environment-dependent skips),
 then 144 focused PostgreSQL execution, persistence, artifact, integration, and usage checks.

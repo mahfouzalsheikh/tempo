@@ -44,6 +44,11 @@ export TEMPO_ACCEPTANCE_IMAGE
 docker image save tempo-acceptance:latest | docker compose exec -T project-runner docker image load
 TEMPO_ACCEPTANCE_IMAGE="$(docker compose exec -T project-runner docker image inspect --format '{{.Id}}' tempo-acceptance:latest)"
 
+echo "Collecting immutable validation images from verified saved contracts..."
+docker compose run --rm --no-deps -T --entrypoint python tempo manage.py migrate --noinput
+export TEMPO_VALIDATION_RETAINED_IMAGES
+TEMPO_VALIDATION_RETAINED_IMAGES="$(docker compose run --rm --no-deps -T --entrypoint python tempo -m tempo.validation_images)"
+
 echo "Updating Tempo and the validation runner..."
 docker compose up \
   --detach \

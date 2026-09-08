@@ -70,9 +70,11 @@ who can rewrite both a snapshot and its digest directly in the database.
 
 Execution backend changes stop with `snapshot_environment_changed`. A Docker run cannot fall back
 to host validation when its saved runner URL is absent. Runtime image IDs remain pinned and must
-still exist in the execution daemon. The remote validation runner accepts only its configured
-image: after an image upgrade, an older run requires a matching runner/image before validation
-can proceed. A mismatch stops the node and run; it never revalidates under a different image.
+still exist in the execution daemon. The remote validation runner accepts its current image and
+retained IDs collected from verified saved snapshots at deployment. Each request uses its exact
+saved image independently, allowing old and new runs to validate concurrently. Missing or
+unapproved images stop validation; the runner never substitutes a different image. See
+[image permissions and retention](VALIDATION_SANDBOX.md#image-identity-and-deployment).
 Missing infrastructure is not permission to substitute a new execution configuration.
 An existing run also keeps its recorded workspace path. A missing workspace or a path outside
 the saved root stops recovery instead of cloning a replacement and reusing old evidence.
