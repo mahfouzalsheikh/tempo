@@ -63,7 +63,7 @@ def test_real_http_bytes_and_security_headers_satisfy_only_the_preview_gate(publ
     assert attempt.report["checks"] == expected_report(artifact.manifest["files"])
     assert attempt.report_digest == digest(attempt.report)
     report = evaluate(artifact)
-    assert report["schema"] == 3 and report["evaluator"] == "release-readiness-v3"
+    assert report["schema"] == 4 and report["evaluator"] == "release-readiness-v4"
     assert {g["id"]: g["status"] for g in report["gates"]}["preview_health"] == "passed"
     assert not report["ready"]
     assert deployment.token.hex not in str(report)

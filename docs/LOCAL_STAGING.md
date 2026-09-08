@@ -15,15 +15,15 @@ Changing a saved identity, serving port, policy, or artifact invalidates the con
 gate until reviewed again. Authentication, CSRF protection, artifact scope, and private
 response headers apply to the configuration form and readiness export.
 
-This step provides reviewed configuration and low-level adapter operations. It does **not**
-publish builds through the UI or claim deployment readiness. Durable release intent/history,
-transactional evidence rechecks, coordinator crash recovery, target health receipts, and a
-recorded target-specific rollback rehearsal remain required before promotion is enabled.
-Adapter smoke tests are infrastructure checks, not product release evidence.
+Reviewed configuration and the static adapter now support [recorded rollback rehearsals](ROLLBACK_REHEARSAL.md).
+The readiness gates can all pass for local staging. Publishing through the UI remains unavailable
+until durable promotion intent/history, transactional evidence rechecks, activation recovery, and
+post-promotion health checks are connected. Adapter smoke tests remain infrastructure checks;
+only an identity-bound rehearsal job supplies product rollback evidence.
 
 ## Serving boundary
 
-Compose adds a seventh service, `release-server`, listening on host loopback port 8032
+The eight-service Compose stack includes `release-server`, listening on host loopback port 8032
 (override with `TEMPO_RELEASE_PORT`). Each target receives an independent
 `http://<random-slot>.localhost:8032` origin. These addresses are accessible on the Docker host;
 they are not public websites. Target names cannot select arbitrary URLs, shell commands, or
@@ -32,7 +32,7 @@ filesystem paths. Existing Amplify applications and DNS are unaffected by this a
 Tempo writes `/data/releases` through the `tempo-releases` named volume; the serving container
 mounts only that volume, read-only. It has a read-only root, resource limits, an unprivileged
 UID 10001 process with zero capabilities, and an outbound-deny firewall. Its separate ingress
-network contains only the serving container. No database, Docker, model, or tracker authority
+network contains the serving container and dedicated rehearsal worker. No database, Docker, model, or tracker authority
 is installed in that image. Requests use the same constrained browser policy and per-file
 integrity checks as previews. Web Workers, WebAssembly and downloads are supported; external
 connections, embedded pages and service workers are denied.
@@ -52,9 +52,9 @@ The serving process rechecks the pointer after reading each response, rejecting 
 whose target changed during the read. A page already open during activation may still need
 reloading if an old asset path is absent from the new release.
 
-These primitives are host-internal and are not an authorization API or a complete operation
-ledger. A future coordinator must persist intent before calling them and reconcile interrupted
-preparation or activation. Bundles currently remain retained; deletion and retention policies
+These primitives are host-internal and are not an authorization API or a complete promotion
+ledger. The rehearsal coordinator records intent and recovers its temporary resources. A future
+promotion coordinator must persist intent and reconcile interrupted activation at the named target. Bundles currently remain retained; deletion and retention policies
 must protect active and rollback references. Back up the release volume with database backups
 before relying on it for durable product releases.
 

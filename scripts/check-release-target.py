@@ -84,6 +84,35 @@ activate(ROOT, SLOT, FIRST, 'a' * 64, SECOND_OP, ROLLBACK_OP)
 activate(ROOT, SLOT, FIRST, 'a' * 64, SECOND_OP, ROLLBACK_OP)
 """)
     assert request()[2] == b"<h1>Staging first</h1>"
+    compose(
+        "exec",
+        "-T",
+        "release-worker",
+        "python",
+        "-",
+        source=context
+        + """
+import hashlib, json, socket
+from pathlib import Path
+from tempo.preview_probe import probe, expected_report
+from tempo.release_files import document
+from tempo.rollback_rehearsal import endpoint
+from tempo.release_probe import absent, absent_report
+host, port = endpoint()
+files = list(document(ROOT, SLOT)['files'].values())
+public_port = int(os.environ['TEMPO_RELEASE_PORT'])
+assert probe(host, port, public_port, SLOT, files) == expected_report(files)
+assert absent(host, port, int(os.environ['TEMPO_RELEASE_PORT']), ROLLBACK_OP) == absent_report()
+assert os.getuid() == 10001
+lines = Path('/proc/1/status').read_text().splitlines()
+fields = dict(line.split(':',1) for line in lines if ':' in line)
+caps = ('CapInh','CapPrm','CapEff','CapBnd','CapAmb')
+assert all(int(fields[name].strip(),16)==0 for name in caps)
+assert not any(key.startswith(('GITHUB_', 'OPENAI_', 'DOCKER_')) for key in os.environ)
+assert not Path('/data/workspaces').exists() and not Path('/home/tempo/.codex').exists()
+print('Release worker verified serving and withdrawal HTTP checks without coding credentials.')
+""",
+    )
     release_id = compose("ps", "-q", "release-server")
     release = json.loads(subprocess.check_output(["docker", "inspect", release_id], text=True))[0]
     assert release["HostConfig"]["ReadonlyRootfs"]
@@ -99,7 +128,8 @@ activate(ROOT, SLOT, FIRST, 'a' * 64, SECOND_OP, ROLLBACK_OP)
             text=True,
         )
     )[0]
-    assert set(network["Containers"]) == {release_id}
+    worker_id = compose("ps", "-q", "release-worker")
+    assert set(network["Containers"]) == {release_id, worker_id}
 
     targets = [("1.1.1.1", 443)]
     for service, target_port in (
@@ -108,6 +138,7 @@ activate(ROOT, SLOT, FIRST, 'a' * 64, SECOND_OP, ROLLBACK_OP)
         ("project-runner", 2375),
         ("acceptance-worker", 8000),
         ("preview-server", 8080),
+        ("release-worker", 8000),
     ):
         identifier = compose("ps", "-q", service)
         document = json.loads(
@@ -159,6 +190,42 @@ except OSError:
     pass
 else:
     raise AssertionError('Staging server can use outbound DNS')
+""",
+    )
+    worker = json.loads(subprocess.check_output(["docker", "inspect", worker_id], text=True))[0]
+    assert worker["HostConfig"]["ReadonlyRootfs"] and worker["HostConfig"]["CapDrop"] == ["ALL"]
+    assert len(worker["Mounts"]) == 1 and worker["Mounts"][0]["Destination"] == "/data/releases"
+    assert worker["Mounts"][0]["RW"]
+    assert len(worker["NetworkSettings"]["Networks"]) == 2
+    forbidden = []
+    for service, destination_port in (
+        ("tempo", 8000),
+        ("project-runner", 2375),
+        ("validation-runner", 8787),
+    ):
+        container = json.loads(
+            subprocess.check_output(["docker", "inspect", compose("ps", "-q", service)], text=True)
+        )[0]
+        forbidden.extend(
+            (item["IPAddress"], destination_port)
+            for item in container["NetworkSettings"]["Networks"].values()
+        )
+    compose(
+        "exec",
+        "-T",
+        "release-worker",
+        "python",
+        "-",
+        source=f"TARGETS={forbidden!r}\n"
+        + """
+import socket
+for host, port in TARGETS:
+    try:
+        client=socket.create_connection((host,port),timeout=1)
+    except OSError:
+        continue
+    client.close()
+    raise AssertionError('Release worker can reach the control API or execution daemon')
 """,
     )
 finally:

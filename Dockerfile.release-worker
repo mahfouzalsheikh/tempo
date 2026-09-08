@@ -1,0 +1,14 @@
+FROM python:3.12-slim-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIPENV_NOSPIN=1
+WORKDIR /app
+RUN pip install --no-cache-dir pipenv
+COPY Pipfile Pipfile.lock pyproject.toml README.md ./
+COPY tempo ./tempo
+COPY tempo_web ./tempo_web
+COPY manage.py ./
+RUN pipenv install --system --deploy
+ARG TEMPO_GIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$TEMPO_GIT_SHA
+ENV TEMPO_BUILD_REVISION=$TEMPO_GIT_SHA
+USER 10001:10001
+ENTRYPOINT ["python", "/app/manage.py", "release_worker"]

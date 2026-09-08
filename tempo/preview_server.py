@@ -13,6 +13,15 @@ from urllib.parse import unquote, urlsplit
 
 from tempo.preview_files import MAX_BYTES, metadata
 
+# Use Python's built-in table, excluding host /etc/mime.types and registry overrides.
+# Serving and checking must agree across minimal worker images and development hosts.
+MIME_TYPES = mimetypes.MimeTypes(filenames=())
+
+
+def content_type(name):
+    return MIME_TYPES.guess_type(name)[0] or "application/octet-stream"
+
+
 CSP = (
     "sandbox allow-scripts allow-same-origin allow-downloads; default-src 'none'; "
     "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; "
@@ -83,8 +92,7 @@ class PreviewHandler(BaseHTTPRequestHandler):
                 raise ValueError("Preview changed")
         except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile):
             return self.reply(404, b"Preview unavailable or expired", "text/plain")
-        content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
-        return self.reply(200, data, content_type)
+        return self.reply(200, data, content_type(name))
 
     def reply(self, status, data, content_type):
         self.send_response(status)

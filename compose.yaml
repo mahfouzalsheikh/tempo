@@ -133,7 +133,38 @@ services:
       timeout: 3s
       retries: 3
 
+  release-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.release-worker
+    entrypoint: ["python", "/app/manage.py", "release_worker"]
+    user: "10001:10001"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=4m,mode=1777,noexec,nosuid"]
+    pids_limit: 32
+    mem_limit: 512m
+    cpus: 1
+    environment:
+      DATABASE_URL: "postgresql://tempo:${TEMPO_POSTGRES_PASSWORD:-tempo-local}@postgres:5432/tempo"
+      TEMPO_RELEASE_ROOT: /data/releases
+      TEMPO_RELEASE_PORT: "${TEMPO_RELEASE_PORT:-8032}"
+    volumes:
+      - tempo-releases:/data/releases
+    networks: [release-control, release-ingress]
+    depends_on:
+      tempo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import time; from pathlib import Path; assert time.time() - Path('/tmp/release-heartbeat').stat().st_mtime < 240"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   postgres:
+    networks: [default, release-control]
     image: postgres:17-bookworm
     restart: unless-stopped
     environment:
@@ -207,3 +238,5 @@ volumes:
 networks:
   preview-ingress:
   release-ingress:
+  release-control:
+    internal: true

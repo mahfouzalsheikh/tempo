@@ -142,6 +142,16 @@ See [local staging](LOCAL_STAGING.md). Durable promotion/history, evidence reche
 crash recovery, recorded rollback rehearsal, and QA-agent proposals remain outstanding. The
 adapter is not yet exposed as a publishing action; the factory is not complete.
 
+The next release slice implements durable rollback rehearsals using private copies of named
+staging targets. A dedicated worker verifies the candidate over HTTP, restores the prior bundle
+or withdraws a first release, verifies recovery, and records success only after cleanup. Row locks,
+leases, deterministic effect identities, and cleanup recovery fence interrupted workers. Version 4
+readiness includes verified receipts and can pass all six gates for local staging. A cross-image
+rehearsal also exposed and fixed OS-dependent MIME classification. See
+[recorded rollback rehearsal](ROLLBACK_REHEARSAL.md). Publishing, promotion history/recovery,
+post-promotion health, and QA-agent proposals remain outstanding; this is the first coordinator
+operation, not a completed promotion workflow or a completed software factory.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

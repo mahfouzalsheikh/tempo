@@ -72,9 +72,12 @@ Run `./scripts/restart-tempo.sh` from a committed checkout. It:
 9. Checks product intake, retained builds, preview health, browser acceptance, and temporary
    staging activation/rollback with process, storage, and network isolation probes.
 
-The stack now has seven services, including a separate [local staging server](LOCAL_STAGING.md).
+The stack now has eight services, including a separate [local staging server](LOCAL_STAGING.md)
+and [rollback rehearsal worker](ROLLBACK_REHEARSAL.md).
 Its loopback port defaults to 8032. Staging configuration approval is available from release
-readiness; product promotion remains blocked pending the release coordinator and rehearsal.
+readiness, with durable rollback rehearsals available after approval. Publishing remains pending
+the promotion coordinator. Consumer shutdown and a database backup precede applying the private
+PostgreSQL network attachment for the rehearsal worker; its data volume is preserved.
 
 The script preserves named volumes. It does not run `down -v`, remove orphan services, or
 automatically restore a database. It exits on failure. If an update fails after Tempo stops, fix

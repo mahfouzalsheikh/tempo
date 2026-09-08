@@ -9,14 +9,14 @@ cd "${project_root}"
 python3 scripts/provision-runner-token.py
 echo "Building Tempo application services..."
 tempo_revision="$(git rev-parse HEAD)"
-docker compose build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" tempo validation-runner project-runner preview-server release-server
+docker compose build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" tempo validation-runner project-runner preview-server release-server release-worker
 docker build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" -f Dockerfile.acceptance -t tempo-acceptance:latest .
 
 echo "Starting the database without recreating it..."
 docker compose up --detach --no-recreate --wait --wait-timeout 180 postgres
 
 echo "Draining Tempo before updating execution infrastructure..."
-docker compose stop --timeout 180 acceptance-worker
+docker compose stop --timeout 180 acceptance-worker release-worker
 docker compose stop --timeout 60 tempo
 docker compose stop --timeout 60 validation-runner
 umask 077
@@ -25,6 +25,10 @@ chmod 0700 var/backups
 backup_path="var/backups/tempo-$(date -u +%Y%m%dT%H%M%SZ)-${tempo_revision:0:12}.dump"
 docker compose exec -T postgres pg_dump --username=tempo --dbname=tempo --format=custom > "$backup_path"
 echo "Pre-deployment database backup saved to ${backup_path}"
+
+# Apply database network changes only after consumers have drained and the backup
+# exists. PostgreSQL data remains in its existing named volume.
+docker compose up --detach --wait --wait-timeout 180 postgres
 
 docker compose up --detach --wait --wait-timeout 180 project-runner
 docker compose exec -T project-runner sh /usr/local/bin/tempo-execution-daemon --network
@@ -45,7 +49,7 @@ docker compose up \
   --detach \
   --wait \
   --wait-timeout 180 \
-  tempo validation-runner preview-server release-server acceptance-worker
+  tempo validation-runner preview-server release-server acceptance-worker release-worker
 
 echo
 echo "Tempo services are running:"

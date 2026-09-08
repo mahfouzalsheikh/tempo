@@ -120,3 +120,14 @@ def test_serving_follows_atomic_pointer_and_rejects_missing_or_corrupt_releases(
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_serving_content_types_ignore_host_mime_overrides(monkeypatch):
+    import mimetypes
+
+    from tempo.preview_server import content_type
+
+    monkeypatch.setitem(mimetypes.types_map, ".xml", "application/x-host-specific")
+    assert content_type("sitemap.xml") == "text/xml"
+    assert content_type("app.js") == "text/javascript"
+    assert content_type("worker.wasm") == "application/wasm"

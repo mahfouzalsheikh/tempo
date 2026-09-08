@@ -97,6 +97,45 @@ def document(root, slot):
     return value | {"pointer": current}
 
 
+def verify_bundle(root, release_id, artifact_digest, configuration_digest, files):
+    """Verify retained bytes against external artifact/configuration identities."""
+    identifier(release_id)
+    bundle = Path(root) / "bundles" / release_id
+    expected = {
+        "schema": 1,
+        "adapter": ADAPTER,
+        "release_id": release_id,
+        "sha256": artifact_digest,
+        "configuration_digest": configuration_digest,
+        "files": {item["path"]: item for item in files},
+    }
+    if json.loads((bundle / "metadata.json").read_text()) != expected:
+        raise ValueError("Retained release metadata changed")
+    with (bundle / "artifact.zip").open("rb") as stream:
+        data = stream.read(MAX_BYTES + 1)
+    if hashlib.sha256(data).hexdigest() != artifact_digest:
+        raise ValueError("Retained release bytes changed")
+    inventory(data, files)
+    return expected
+
+
+def remove_target(root, slot, expected_operation):
+    """Revoke an owned temporary target. Caller must fence all future writes to its slot."""
+    identifier(slot)
+    identifier(expected_operation)
+    root = Path(root)
+    (root / "locks").mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (root / "locks" / f"{slot}.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        current = pointer(root, slot)
+        if current is None:
+            return
+        if current["operation_id"] != expected_operation:
+            raise ValueError("Refuse to revoke a changed staging target")
+        (root / "targets" / f"{slot}.json").unlink()
+        sync_directory(root / "targets")
+
+
 def activate(root, slot, release_id, configuration_digest, expected_operation, operation_id):
     """Adapter primitive. The future release coordinator must authorize every invocation."""
     for value in (slot, release_id, operation_id):

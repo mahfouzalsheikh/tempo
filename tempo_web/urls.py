@@ -60,6 +60,8 @@ urlpatterns = [
          release_configuration_views.configure, name="release_configuration"),
     path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/health/",
          release_views.check_preview, name="preview_health_check"),
+    path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/rehearse/",
+         release_views.rehearse_rollback, name="rollback_rehearsal"),
     path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/<str:kind>/",
          artifact_views.download, name="build_artifact"),
     path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/preview/<str:action>/",

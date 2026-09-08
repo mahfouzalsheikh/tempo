@@ -100,8 +100,8 @@ New runs retain a [verified execution snapshot](docs/RUN_SNAPSHOTS.md). Workflow
 newly queued work; existing runs and retries keep their original prompts, policies, and defaults.
 
 Saved builds offer release readiness and [reviewed local staging configuration](docs/LOCAL_STAGING.md).
-The staging adapter supports immutable static bundles and rollback; product promotion still
-requires the release coordinator and recorded rollback evidence.
+The staging adapter supports immutable static bundles and [recorded rollback rehearsals](docs/ROLLBACK_REHEARSAL.md).
+All readiness gates can pass for local staging; publishing still requires the promotion coordinator.
 
 After source changes, rebuild and health-check all services with:
 

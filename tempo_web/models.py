@@ -837,6 +837,34 @@ class ReleaseConfiguration(models.Model):
     approved_at = models.DateTimeField(auto_now_add=True)
 
 
+class RollbackRehearsal(models.Model):
+    configuration = models.ForeignKey(ReleaseConfiguration, on_delete=models.PROTECT,
+                                      related_name="rehearsals")
+    target = models.ForeignKey(DeploymentTarget, on_delete=models.PROTECT,
+                               related_name="rehearsals")
+    request_key = models.UUIDField(unique=True)
+    requested_by = models.ForeignKey("auth.User", on_delete=models.PROTECT)
+    slot = models.UUIDField(unique=True)
+    bundle = models.UUIDField(unique=True)
+    identity = models.JSONField()
+    status = models.CharField(max_length=20, default="queued", db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True)
+    finished_at = models.DateTimeField(null=True)
+    deadline = models.DateTimeField(null=True)
+    lease_token = models.UUIDField(null=True)
+    report = models.JSONField(default=dict)
+    report_digest = models.CharField(max_length=64, blank=True)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=["target"],
+            condition=models.Q(status__in=["queued", "running", "cleanup_pending"]),
+            name="tempo_one_active_rollback_rehearsal",
+        )]
+
+
 class AcceptanceSuite(models.Model):
     artifact = models.ForeignKey(BuildArtifact, on_delete=models.PROTECT,
                                  related_name="acceptance_suites")

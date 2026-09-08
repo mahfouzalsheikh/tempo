@@ -4,8 +4,8 @@ Every saved static build now offers **View release readiness**, from its idea an
 pages. It shows six gates, explains blockers, links to browser checks, and exports a private
 JSON assessment with a digest. It never rewrites the immutable build manifest.
 
-`release-readiness-v3` evaluates current evidence on each request. Earlier version 1 and 2
-exports remain historical assessments; version 3 adds reviewed staging configuration:
+`release-readiness-v4` evaluates current evidence on each request. Earlier version 1–3
+exports remain historical assessments; version 4 adds recorded rollback rehearsal evidence:
 
 | Gate | Required evidence |
 | --- | --- |
@@ -14,10 +14,10 @@ exports remain historical assessments; version 3 adds reviewed staging configura
 | Reviewed browser checks | All criteria pass in the latest attempt for the latest approved check plan, with verified artifact/report/image identities |
 | Preview health evidence | A passing HTTP probe of the current preview generation, every inventory file and browser headers, no older than five minutes |
 | Deployment target and configuration | Latest verified approval for the exact artifact and named local staging target, static runtime requirements, serving and rollback policies |
-| Rollback rehearsal | Recorded target-specific rollback evidence; not implemented yet |
+| Rollback rehearsal | Latest passing candidate/restoration/cleanup receipt, bound to this configuration and unchanged target baseline, no older than 24 hours |
 
-The rollback gate remains blocked. The target gate can pass after configuration review;
-the promotion coordinator has not yet been connected. An available preview link is information, not
+All six gates can pass for local staging after [rollback rehearsal](ROLLBACK_REHEARSAL.md).
+The promotion coordinator has not yet been connected; no publishing action is enabled. An available preview link is information, not
 health evidence. Passing every reviewed browser journey proves that coverage only; it cannot
 substitute for a target, health checks, or rollback. A newer brief or plan blocks the scope gate,
 while historical candidate evidence remains intact. A newer browser plan or attempt clears
@@ -33,7 +33,7 @@ No preview bearer link is included in the export.
 
 This is a read-time, point-in-time assessment, not a transactional promotion authorization.
 It is not persisted as a release record. The future promotion path must lock/recheck current
-evidence and bind a release to a named environment and immutable artifact. Release history, target health probes, promotion recovery, and rollback rehearsal remain next.
+evidence and bind a release to a named environment and immutable artifact. Promotion history, post-promotion health probes, and activation recovery remain next.
 The first adapter and configuration UI support [local staging](LOCAL_STAGING.md); configuration
 approval reserves an address and does not activate a deployment.
 
@@ -53,7 +53,7 @@ the configured preview service. The host/port come only from operator configurat
 from a brief, project file, redirect, or form. Requests carry only the preview Host identity
 and identity encoding; proxy variables, cookies, and authentication credentials are not used.
 
-The trusted `preview-health-v1` probe verifies HTTP 200, exact lengths and SHA-256 hashes,
+The trusted `preview-health-v2` probe verifies HTTP 200, exact lengths and SHA-256 hashes,
 content types, and required CSP/cache/referrer/opener/frame/nosniff headers. Redirects,
 duplicate response headers, cookies, compressed bodies, partial files, and policy mismatches
 fail. Reads stream through bounded buffers. A 45-second watchdog shuts down an active socket,

@@ -1,7 +1,6 @@
 """Bounded HTTP checks against one operator-configured preview service; no browser or code."""
 
 import hashlib
-import mimetypes
 import socket
 import threading
 import time
@@ -10,9 +9,9 @@ from urllib.parse import quote
 
 from tempo.acceptance_contract import digest
 from tempo.preview_files import MAX_BYTES, MAX_FILES, TOKEN
-from tempo.preview_server import CSP
+from tempo.preview_server import CSP, content_type
 
-VERSION = "preview-health-v1"
+VERSION = "preview-health-v2"
 TIMEOUT = 45
 HEADERS = {
     "content-security-policy": CSP,
@@ -83,14 +82,11 @@ def probe(host, port, public_port, token, files):
                 with connection.getresponse() as response:
                     raw_headers = response.getheaders()
                     headers = {name.lower(): value for name, value in raw_headers}
-                    content_type = (
-                        mimetypes.guess_type(item["path"])[0] or "application/octet-stream"
-                    )
                     if (
                         response.status != 200
                         or len(headers) != len(raw_headers)
                         or any(headers.get(key) != value for key, value in HEADERS.items())
-                        or headers.get("content-type") != content_type
+                        or headers.get("content-type") != content_type(item["path"])
                         or headers.get("content-length") != str(item["size"])
                         or headers.get("content-encoding") not in {None, "identity"}
                         or "transfer-encoding" in headers
