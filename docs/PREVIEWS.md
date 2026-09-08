@@ -49,8 +49,13 @@ deployment record is not a complete historical release/event ledger.
 ## Isolation and browser behavior
 
 `preview-server` uses a minimal Python image, an unprivileged user, a read-only root and
-preview volume, dropped capabilities, process/memory/CPU limits, and its own internal
-Docker network. It has no Django application, database, execution workspace, Docker socket,
+preview volume, dropped capabilities, process/memory/CPU limits, and its own Docker network.
+The entrypoint first installs IPv4/IPv6 firewall rules inside the container's network
+namespace, then drops its UID and every capability, including the bounding set. Startup
+fails before serving if firewall setup fails. Only replies and IPv4 loopback connections
+are allowed outbound; public/private destinations and Docker's DNS forwarder are blocked.
+A normal bridge is required because this Docker engine omits published ports on internal
+networks. The server has no Django application, database, execution workspace, Docker socket,
 model login, or operator credentials. It cannot connect to the control plane, execution
 daemon, database, or public network. Its request logs omit capability hostnames.
 

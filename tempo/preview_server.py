@@ -4,6 +4,8 @@ import hashlib
 import mimetypes
 import os
 import re
+import signal
+import sys
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -96,10 +98,15 @@ class PreviewHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    # PID 1 needs an explicit SIGTERM handler for bounded container shutdown.
+    signal.signal(signal.SIGTERM, lambda _signum, _frame: sys.exit(0))
     server = HTTPServer(("0.0.0.0", 8080), PreviewHandler)
     server.root = os.environ["TEMPO_PREVIEW_ROOT"]
     server.public_port = int(os.environ.get("TEMPO_PREVIEW_PORT", "8031"))
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
 
 
 if __name__ == "__main__":

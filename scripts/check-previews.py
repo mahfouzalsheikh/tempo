@@ -74,7 +74,6 @@ try:
 
     preview_id = compose("ps", "-q", "preview-server")
     preview = json.loads(subprocess.check_output(["docker", "inspect", preview_id], text=True))[0]
-    assert preview["Config"]["User"] == "10001:10001"
     assert preview["HostConfig"]["ReadonlyRootfs"]
     assert "ALL" in preview["HostConfig"]["CapDrop"]
     assert any("no-new-privileges" in option for option in preview["HostConfig"]["SecurityOpt"])
@@ -88,7 +87,7 @@ try:
             text=True,
         )
     )[0]
-    assert network["Internal"] and len(network["Containers"]) == 1
+    assert len(network["Containers"]) == 1
 
     targets = [("1.1.1.1", 443)]
     for service, target_port in (("tempo", 8000), ("postgres", 5432), ("project-runner", 2375)):
@@ -103,6 +102,8 @@ try:
     compose(
         "exec",
         "-T",
+        "--user",
+        "10001:10001",
         "preview-server",
         "python",
         "-",
@@ -110,7 +111,13 @@ try:
         + """
 import os, socket
 from pathlib import Path
+os.environ['RES_OPTIONS'] = 'attempts:1 timeout:1'
 assert os.getuid() == 10001
+status = Path('/proc/1/status').read_text().splitlines()
+fields = dict(line.split(':', 1) for line in status if ':' in line)
+assert set(fields['Uid'].split()) == {'10001'}
+assert all(int(fields[name].strip(), 16) == 0
+           for name in ('CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb'))
 assert not any(key.startswith(('GITHUB_', 'OPENAI_', 'DOCKER_', 'DATABASE_', 'DJANGO_'))
                for key in os.environ)
 assert not Path('/data/workspaces').exists()
@@ -128,6 +135,12 @@ for host, port in TARGETS:
         continue
     connection.close()
     raise AssertionError('Preview server can reach forbidden infrastructure')
+try:
+    socket.getaddrinfo('example.com', 443)
+except OSError:
+    pass
+else:
+    raise AssertionError('Preview server can use outbound DNS')
 """,
     )
 finally:
