@@ -41,6 +41,7 @@ from .run_snapshot import (
 )
 from .trackers.base import Tracker
 from .trackers.github import GitHubTracker, build_tracker
+from .usage import run_usage
 from .validation import workspace_fingerprint, workspace_publication_pending
 from .workflow import WorkflowStore, render_node_prompt, render_prompt
 from .workload import execution_scope
@@ -865,9 +866,14 @@ class Orchestrator:
                 if state["status"] in {"accepted", "integrating", "integrated"}:
                     output = await contributions.integrate(node_id)
                     restored = entry.graph_nodes[node_id]
+                    finished_at = (
+                        restored.finished_at
+                        if restored.status == "succeeded" and restored.output == output
+                        else None
+                    )
                     restored.status = "succeeded"
                     restored.output = output
-                    restored.finished_at = utcnow()
+                    restored.finished_at = finished_at or utcnow()
                     if self.persistence and entry.run_record_id:
                         await self.persistence.finish_run_node(
                             entry.run_record_id, node_id, status="succeeded", output=output,
@@ -2029,9 +2035,10 @@ class Orchestrator:
                         )
                     runtime = (utcnow() - entry.started_at).total_seconds()
                     self.totals.runtime_seconds += runtime
-                    self.totals.input_tokens += entry.session.codex_input_tokens
-                    self.totals.output_tokens += entry.session.codex_output_tokens
-                    self.totals.total_tokens += entry.session.codex_total_tokens
+                    usage = run_usage(entry)
+                    self.totals.input_tokens += usage["input_tokens"]
+                    self.totals.output_tokens += usage["output_tokens"]
+                    self.totals.total_tokens += usage["total_tokens"]
                     if release or operator_outcome:
                         status = "paused" if operator_outcome == "paused" else "cancelled"
                         entry.phase = status.title()
@@ -2279,14 +2286,15 @@ class Orchestrator:
         state_counts = Counter(
             normalize_state(entry.issue.state) for entry in self.running.values()
         )
+        usage = [run_usage(entry) for entry in self.running.values()]
         live_totals = {
             **self.totals.__dict__,
             "input_tokens": self.totals.input_tokens
-            + sum(entry.session.codex_input_tokens for entry in self.running.values()),
+            + sum(item["input_tokens"] for item in usage),
             "output_tokens": self.totals.output_tokens
-            + sum(entry.session.codex_output_tokens for entry in self.running.values()),
+            + sum(item["output_tokens"] for item in usage),
             "total_tokens": self.totals.total_tokens
-            + sum(entry.session.codex_total_tokens for entry in self.running.values()),
+            + sum(item["total_tokens"] for item in usage),
             "runtime_seconds": self.totals.runtime_seconds
             + sum((now - entry.started_at).total_seconds() for entry in self.running.values()),
         }
@@ -2346,6 +2354,7 @@ class Orchestrator:
                     ],
                     "session": {
                         **entry.session.__dict__,
+                        **{f"codex_{key}": value for key, value in run_usage(entry).items()},
                         "last_codex_timestamp": (
                             entry.session.last_codex_timestamp.isoformat()
                             if entry.session.last_codex_timestamp

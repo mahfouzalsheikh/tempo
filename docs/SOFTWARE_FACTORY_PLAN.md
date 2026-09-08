@@ -160,13 +160,17 @@ before unblocking the target. See [staging publication](STAGING_PUBLICATION.md).
 retained-build-to-local-staging path. The fresh-brief autonomous demonstration, QA-agent proposals,
 managed skill/MCP capabilities, and broader production-operation work remain outstanding.
 
-The first fresh product-agent pilot now has a saved, reviewed mini-app brief, two independent
-implementation tasks, and predetermined browser journeys. Its actual launch stopped at checkout
-because GitHub rejected the configured credential; no model turn or build ran. The saved run is
-stopped pending credential repair. Candidate progress now appears first on the idea page and
-updates automatically with revision-scoped, read-only requests. See [the pilot record](FIRST_AGENT_PILOT.md).
-Successful live agent execution and the resulting release remain unproved; the earlier retained-build
-publication fixture must not be counted as that demonstration.
+The first fresh product-agent pilot has now run five native tasks, including two simultaneous
+implementation agents in private checkouts. The resulting mini-app enhancement passed required
+tests/build checks, reviewed browser journeys, preview health, and rollback rehearsal; it was
+published, rolled back, and republished to local staging. This was an assisted result: repository
+credentials and the saved validation image needed repair, and an operator corrected a build
+script that changed a tracked image. The planner's read-only profile also conflicted with its
+requested design-document task. See [the pilot record and evidence](FIRST_AGENT_PILOT.md).
+The trial produced fixes for graph-wide usage reporting and replayed task completion times.
+Plan/profile compatibility, agent-driven build repair, and simultaneous support for retained
+validation images remain necessary before claiming autonomous delivery. The existing application's
+local staging result is not a new-repository or public production deployment demonstration.
 
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 

@@ -210,8 +210,11 @@ def run_details(plan):
                 else None,
                 "active": run.status in {"running", "waiting_approval"},
                 "resumable": run.status in {"failed", "cancelled", "paused"},
+                "previous_error": bool(run.error)
+                and run.status in {"queued", "running", "waiting_approval"},
                 "access_error": run.error.startswith("after_create hook exited")
-                and "Authentication failed for" in run.error,
+                and "Authentication failed for" in run.error
+                and run.status not in {"queued", "running", "waiting_approval"},
             }
         )
     return rows

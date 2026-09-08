@@ -1,0 +1,114 @@
+{
+  "kind": "assisted-live-pilot",
+  "run_id": 7,
+  "plan_id": 2,
+  "base_sha": "5b11540be95a83b9e200df82f02e214b42e7a501",
+  "source_sha": "5575c09854c10d45aa5cfdb2a9a6adec773b1da4",
+  "source_branch": "tempo/pilot-drawing-help-run-7",
+  "reported_model_tokens": 1489526,
+  "nodes": [
+    {
+      "id": "design",
+      "status": "succeeded",
+      "started_at": "2026-09-08T18:59:19.831998+00:00",
+      "completion_observed_at": "2026-09-08T19:00:15.534117+00:00",
+      "completion_basis": "run node completion",
+      "reported_tokens": 102898
+    },
+    {
+      "id": "tips",
+      "status": "succeeded",
+      "started_at": "2026-09-08T19:00:17.532517+00:00",
+      "completion_observed_at": "2026-09-08T19:02:17.189945+00:00",
+      "completion_basis": "accepted contribution checkpoint 313",
+      "reported_tokens": 212509
+    },
+    {
+      "id": "checklist",
+      "status": "succeeded",
+      "started_at": "2026-09-08T19:00:17.535669+00:00",
+      "completion_observed_at": "2026-09-08T19:02:18.864836+00:00",
+      "completion_basis": "accepted contribution checkpoint 314",
+      "reported_tokens": 223493
+    },
+    {
+      "id": "integrate",
+      "status": "succeeded",
+      "started_at": "2026-09-08T19:02:25.564569+00:00",
+      "completion_observed_at": "2026-09-08T19:04:30.314475+00:00",
+      "completion_basis": "run node completion",
+      "reported_tokens": 417836
+    },
+    {
+      "id": "verify",
+      "status": "succeeded",
+      "started_at": "2026-09-08T19:04:30.318454+00:00",
+      "completion_observed_at": "2026-09-08T19:07:19.150611+00:00",
+      "completion_basis": "run node completion",
+      "reported_tokens": 532790
+    }
+  ],
+  "build": {
+    "id": 1,
+    "sha256": "07e18e5b6bc0b6feacd339dd447d4da8f13c215549c39457eb49591a42c85a64",
+    "zip_bytes": 37947227,
+    "file_count": 26,
+    "uncompressed_bytes": 69995148
+  },
+  "validation": [
+    {
+      "id": 38,
+      "status": "passed"
+    },
+    {
+      "id": 37,
+      "status": "failed"
+    },
+    {
+      "id": 36,
+      "status": "failed"
+    },
+    {
+      "id": 35,
+      "status": "invalidated"
+    }
+  ],
+  "acceptance": [
+    {
+      "id": 1,
+      "status": "passed",
+      "report_digest": "4fd89bedc0cfcc1e1e048e70ea3c167690524107d801729ff2cf625efec151ac"
+    }
+  ],
+  "rollback_rehearsal": [
+    {
+      "id": 1,
+      "status": "passed",
+      "report_digest": "f495a8de7f9e25421f03c3fec94e0f6b6a6c580e7274613acf2cffef25361f50"
+    }
+  ],
+  "releases": [
+    {
+      "id": 1,
+      "status": "rolled_back",
+      "report_digest": "1a1e590bce93b6d7f23fdf4249dff1c1a5aae8d705e726ec56c10b966eea03fb",
+      "recovery_digest": "a9ee6ee219c5916e035509bf04124d3355a706411f752cb507130c0ca487f673"
+    },
+    {
+      "id": 2,
+      "status": "published",
+      "report_digest": "f464964dc0ef74bbdfe43c8d29ea59746a04ab230a87034a2474bf1df06632d9",
+      "recovery_digest": ""
+    }
+  ],
+  "operator_repairs": [
+    "Repository credential refresh",
+    "Preserve the checked-in social preview during builds and test explicit refresh",
+    "Restore the validation runner image required by the saved snapshot"
+  ],
+  "limits": [
+    "Existing application enhancement, not repository bootstrap",
+    "Assisted recovery; not a fully autonomous success",
+    "Planner profile prevented the requested design document; decisions are in node output"
+  ]
+}

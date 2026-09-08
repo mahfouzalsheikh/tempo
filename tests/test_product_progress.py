@@ -53,3 +53,8 @@ def test_stopped_progress_explains_checkout_failure_without_rendering_error_html
     assert "Retry saved execution" in body
     assert "<script>bad()" not in body
     assert "&lt;script&gt;bad()" in body
+    run.status = "running"
+    run.save(update_fields=["status"])
+    body = client.get(f"/ideas/{factory.product.pk}/").content.decode()
+    assert "Previous attempt error" in body
+    assert "Repository access needs attention." not in body

@@ -18,6 +18,7 @@ from django.db.models import Count, Max, Q, Sum
 from .domain import Issue, RunningEntry, Totals, utcnow
 from .errors import LeaseLostError
 from .run_snapshot import capture_snapshot, restore_snapshot, snapshot_digest
+from .usage import run_usage
 
 if TYPE_CHECKING:
     from .agent_runtime import RuntimeResumeContext
@@ -999,12 +1000,20 @@ class PersistenceStore:
     ) -> None:
         from tempo_web.models import RunNode
 
+        saved = RunNode.objects.filter(run_id=run_id, node_key=node_id).first()
+        payload = _json_safe(output or {})
+        if (
+            saved and saved.finished_at and saved.status == status
+            and saved.error == (error or "") and saved.output == payload
+        ):
+            return  # Reconciliation of accepted work is not another task completion.
+        finished_at = utcnow()
         RunNode.objects.filter(run_id=run_id, node_key=node_id).update(
             status=status,
-            finished_at=utcnow(),
+            finished_at=finished_at,
             error=error or "",
-            output=_json_safe(output or {}),
-            checkpoint={"status": status, "finished_at": utcnow().isoformat()},
+            output=payload,
+            checkpoint={"status": status, "finished_at": finished_at.isoformat()},
         )
 
     @leased_write
@@ -1525,9 +1534,7 @@ class PersistenceStore:
         AgentRun.objects.filter(pk=entry.run_record_id).update(
             phase=entry.phase,
             pull_request_url=session.pull_request_url or "",
-            input_tokens=session.codex_input_tokens,
-            output_tokens=session.codex_output_tokens,
-            total_tokens=session.codex_total_tokens,
+            **run_usage(entry, session),
         )
         AgentSession.objects.update_or_create(
             run_id=entry.run_record_id,
@@ -1631,9 +1638,7 @@ class PersistenceStore:
             finished_at=None if status == AgentRun.Status.RETRY_SCHEDULED else utcnow(),
             error=error or "",
             pull_request_url=entry.session.pull_request_url or "",
-            input_tokens=entry.session.codex_input_tokens,
-            output_tokens=entry.session.codex_output_tokens,
-            total_tokens=entry.session.codex_total_tokens,
+            **run_usage(entry),
             lease_expires_at=None,
             lease_token="",
             worker_id="",

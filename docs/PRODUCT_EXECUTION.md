@@ -81,8 +81,9 @@ All endpoints require installation-wide operator authentication and cookie-authe
 mutations require CSRF. Project-level roles and lifetime product cost accounting remain future
 work. Existing issue-to-PR runs continue through their original execution path.
 
-The [first live pilot](FIRST_AGENT_PILOT.md) records the reviewed mini-app contract and its
-observed repository-access blocker. It has not yet demonstrated successful model execution.
+The [first live pilot](FIRST_AGENT_PILOT.md) ran five coding tasks, including two concurrent
+implementers, and reached a verified local staging release. It required operator build and
+environment repairs; the record distinguishes this assisted result from autonomous delivery.
 
 | Endpoint | Behavior |
 | --- | --- |
