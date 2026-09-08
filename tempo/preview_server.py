@@ -36,6 +36,12 @@ class PreviewHandler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET()
 
+    def document(self, token):
+        return metadata(self.server.root, token)
+
+    def archive_path(self, token, document):
+        return Path(self.server.root) / token / "artifact.zip"
+
     def do_GET(self):
         if (
             self.headers.get("Service-Worker", "").lower() == "script"
@@ -51,7 +57,7 @@ class PreviewHandler(BaseHTTPRequestHandler):
             return self.reply(404, b"Preview unavailable", "text/plain")
         token = match[1]
         try:
-            document = metadata(self.server.root, token)
+            document = self.document(token)
             name = unquote(urlsplit(self.path).path).lstrip("/") or "index.html"
             if any(p.startswith(".") for p in name.split("/")) or "\\" in name:
                 raise ValueError("Invalid path")
@@ -66,14 +72,14 @@ class PreviewHandler(BaseHTTPRequestHandler):
             expected = entries[name]
             if not 0 <= expected["size"] <= MAX_BYTES:
                 raise ValueError("Invalid file size")
-            with zipfile.ZipFile(Path(self.server.root) / token / "artifact.zip") as archive:
+            with zipfile.ZipFile(self.archive_path(token, document)) as archive:
                 if archive.getinfo(name).file_size != expected["size"]:
                     raise ValueError("File size mismatch")
                 data = archive.read(name)
             if hashlib.sha256(data).hexdigest() != expected["sha256"]:
                 raise ValueError("File digest mismatch")
             # Revocation or expiration while reading also fails closed.
-            if metadata(self.server.root, token) != document:
+            if self.document(token) != document:
                 raise ValueError("Preview changed")
         except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile):
             return self.reply(404, b"Preview unavailable or expired", "text/plain")

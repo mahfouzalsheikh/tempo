@@ -1,0 +1,17 @@
+{% load static %}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Staging configuration · Tempo</title><link rel="stylesheet" href="{% static 'tempo.css' %}"><link rel="stylesheet" href="{% static 'intake.css' %}"></head>
+<body><a class="skip-link" href="#main-content">Skip to staging configuration</a><div class="app-shell">{% include "_sidebar.html" %}<main id="main-content" class="workspace intake-workspace acceptance-workspace">
+<p><a href="{% url 'release_readiness' brief_id artifact.run_id artifact.pk %}">← Back to release readiness</a></p>
+<p class="section-kicker">DELIVERY SETUP</p><h1>Configure local staging</h1>
+<p>Give this build a named destination on the current Docker host. Future builds can use the same target and address. The supported environment is local staging.</p>
+{% if error %}<p class="intake-error" role="alert">{{ error }}</p>{% endif %}
+<section class="panel"><h2>Review the delivery contract</h2>
+<p><strong>Destination:</strong> a separate localhost address on port {{ port|default:'8032' }}, available on this machine.</p>
+<p><strong>Application:</strong> the saved React mini-app ZIP, served from the root path. This profile supports browser-only applications without server processes, runtime variables, secret injection, or database migrations.</p>
+<p><strong>Browser policy:</strong> local scripts, Web Workers, WebAssembly, and downloads are enabled. External services, embedded pages, and service workers are blocked.</p>
+<p><strong>Release checks:</strong> every served file must match the saved build. Rollback must restore a retained, immutable bundle for this target.</p>
+<p>Build SHA-256: <code>{{ artifact.digest }}</code></p>
+<form method="post" class="intake-form">{% csrf_token %}<input type="hidden" name="expected_configuration_id" value="{{ expected_configuration_id }}">{{ form.as_p }}<datalist id="staging-targets">{% for target in targets %}<option value="{{ target.key }}">{% endfor %}</datalist><button class="button primary" {% if not enabled %}disabled{% endif %}>Approve staging configuration</button></form>
+<p>Approval saves a version for this exact build. Changing the target or installation settings requires a new review. Publishing is not available yet.</p></section>
+{% if info.configuration %}<section class="panel"><h2>{{ info.status }}</h2><p>Configuration #{{ info.configuration.pk }} · {{ info.configuration.approved_at }}</p>{% if info.passed %}<p>Target: <strong>{{ info.configuration.target.key }}</strong></p><p>Reserved address: <code>{{ info.configuration.specification.origin }}</code></p><p>This configuration does not record a deployment. The address serves a site once an approved release is activated.</p>{% endif %}</section>{% endif %}
+</main></div></body></html>

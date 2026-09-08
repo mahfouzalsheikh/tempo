@@ -99,6 +99,10 @@ work. Nodes using the integration checkout run exclusively. See
 New runs retain a [verified execution snapshot](docs/RUN_SNAPSHOTS.md). Workflow edits apply to
 newly queued work; existing runs and retries keep their original prompts, policies, and defaults.
 
+Saved builds offer release readiness and [reviewed local staging configuration](docs/LOCAL_STAGING.md).
+The staging adapter supports immutable static bundles and rollback; product promotion still
+requires the release coordinator and recorded rollback evidence.
+
 After source changes, rebuild and health-check all services with:
 
 ```bash

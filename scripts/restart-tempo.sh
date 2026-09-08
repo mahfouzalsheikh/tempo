@@ -9,7 +9,7 @@ cd "${project_root}"
 python3 scripts/provision-runner-token.py
 echo "Building Tempo application services..."
 tempo_revision="$(git rev-parse HEAD)"
-docker compose build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" tempo validation-runner project-runner preview-server
+docker compose build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" tempo validation-runner project-runner preview-server release-server
 docker build --build-arg "TEMPO_GIT_SHA=${tempo_revision}" -f Dockerfile.acceptance -t tempo-acceptance:latest .
 
 echo "Starting the database without recreating it..."
@@ -45,7 +45,7 @@ docker compose up \
   --detach \
   --wait \
   --wait-timeout 180 \
-  tempo validation-runner preview-server acceptance-worker
+  tempo validation-runner preview-server release-server acceptance-worker
 
 echo
 echo "Tempo services are running:"
@@ -84,3 +84,5 @@ docker compose exec -T --user 10001:10001 tempo python < scripts/check-static-bu
 python3 scripts/check-previews.py
 
 docker compose exec -T acceptance-worker python < scripts/check-acceptance.py
+
+python3 scripts/check-release-target.py

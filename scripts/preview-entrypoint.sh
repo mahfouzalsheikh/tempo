@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+case "${1:-preview}" in
+    preview) serving_module=tempo.preview_server ;;
+    staging) serving_module=tempo.release_server ;;
+    *) exit 2 ;;
+esac
+
 # These rules affect only this container's network namespace. Install them before
 # starting a listener; any failure stops startup. The serving process drops every
 # capability, including its bounding set, before reading any preview request.
@@ -16,4 +22,4 @@ ip6tables -w 5 -P OUTPUT DROP
 ip6tables -w 5 -P INPUT DROP
 
 exec setpriv --reuid=10001 --regid=10001 --clear-groups --bounding-set=-all \
-    --inh-caps=-all --ambient-caps=-all python -m tempo.preview_server
+    --inh-caps=-all --ambient-caps=-all python -m "$serving_module"

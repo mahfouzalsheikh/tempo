@@ -813,6 +813,30 @@ class PreviewDeployment(models.Model):
     created_by = models.ForeignKey("auth.User", on_delete=models.PROTECT)
 
 
+class DeploymentTarget(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.PROTECT,
+                                related_name="deployment_targets")
+    key = models.CharField(max_length=48)
+    slot = models.UUIDField(unique=True)
+    created_by = models.ForeignKey("auth.User", on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["project", "key"],
+                                               name="tempo_unique_deployment_target")]
+
+
+class ReleaseConfiguration(models.Model):
+    artifact = models.ForeignKey(BuildArtifact, on_delete=models.PROTECT,
+                                 related_name="release_configurations")
+    target = models.ForeignKey(DeploymentTarget, on_delete=models.PROTECT,
+                               related_name="configurations")
+    specification = models.JSONField()
+    digest = models.CharField(max_length=64)
+    approved_by = models.ForeignKey("auth.User", on_delete=models.PROTECT)
+    approved_at = models.DateTimeField(auto_now_add=True)
+
+
 class AcceptanceSuite(models.Model):
     artifact = models.ForeignKey(BuildArtifact, on_delete=models.PROTECT,
                                  related_name="acceptance_suites")

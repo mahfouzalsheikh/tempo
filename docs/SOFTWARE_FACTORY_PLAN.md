@@ -133,6 +133,15 @@ See [release readiness](RELEASE_READINESS.md). A named production deployment tar
 configuration contract, promotion/recovery ledger, rollback rehearsal, and QA-agent proposals
 remain outstanding.
 
+The next release slice adds reviewed configuration for named local staging targets and the
+`local-static-v1` adapter. Exact build, target, static runtime requirements, serving policy,
+and rollback policy are frozen in append-only approvals. Version 3 readiness can pass the
+configuration gate. A separate credential-free container serves immutable bundles through
+atomic target pointers, with stale-operation fencing and restoration of a previous bundle.
+See [local staging](LOCAL_STAGING.md). Durable promotion/history, evidence rechecks at activation,
+crash recovery, recorded rollback rehearsal, and QA-agent proposals remain outstanding. The
+adapter is not yet exposed as a publishing action; the factory is not complete.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

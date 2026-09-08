@@ -69,6 +69,12 @@ Run `./scripts/restart-tempo.sh` from a committed checkout. It:
 7. Starts the application services and waits for health checks. Startup applies migrations.
 8. Verifies the deployed commit, protected reads, validation, network isolation, runtime resume,
    hook isolation, and initialization/login recognition with the installed Codex binary.
+9. Checks product intake, retained builds, preview health, browser acceptance, and temporary
+   staging activation/rollback with process, storage, and network isolation probes.
+
+The stack now has seven services, including a separate [local staging server](LOCAL_STAGING.md).
+Its loopback port defaults to 8032. Staging configuration approval is available from release
+readiness; product promotion remains blocked pending the release coordinator and rehearsal.
 
 The script preserves named volumes. It does not run `down -v`, remove orphan services, or
 automatically restore a database. It exits on failure. If an update fails after Tempo stops, fix

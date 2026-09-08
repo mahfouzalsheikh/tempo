@@ -16,9 +16,9 @@ for name in auth.json config.toml; do
     fi
 done
 
-mkdir -p /data/agent-state /data/previews
-chown tempo:tempo /data/previews
-chmod 0700 /data/previews
+mkdir -p /data/agent-state /data/previews /data/releases
+chown tempo:tempo /data/previews /data/releases
+chmod 0700 /data/previews /data/releases
 chown tempo:tempo /data/workspaces /data/agent-state /data/database /data/log "$codex_home"
 chmod 0700 /data/agent-state
 

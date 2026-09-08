@@ -6,7 +6,7 @@ from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from tempo import preview_health
+from tempo import preview_health, release_configuration
 from tempo.acceptance_contract import digest
 from tempo.errors import CodexError, ConfigError
 
@@ -90,12 +90,12 @@ def evaluate(artifact):
         if valid and health["passed"]
         else health["status"].capitalize(),
     )
+    configuration = release_configuration.summary(artifact)
     gate(
         "target",
         "Deployment target and configuration",
-        False,
-        "Deployment setup is not available yet. This gate needs a named environment "
-        "and verified configuration.",
+        valid and configuration["passed"],
+        configuration["status"],
     )
     gate(
         "rollback",
@@ -105,8 +105,8 @@ def evaluate(artifact):
     )
     suite, attempt = acceptance.get("suite"), acceptance.get("attempt")
     return {
-        "schema": 2,
-        "evaluator": "release-readiness-v2",
+        "schema": 3,
+        "evaluator": "release-readiness-v3",
         "evaluated_at": timezone.now().isoformat(),
         "ready": all(item["status"] == "passed" for item in gates),
         "artifact_id": artifact.pk,
@@ -116,6 +116,15 @@ def evaluate(artifact):
         "snapshot_digest": artifact.run.snapshot_digest,
         "plan_id": plan.pk if plan else None,
         "latest_plan_id": latest_plan.pk if latest_plan else None,
+        "release_configuration": {
+            "status": configuration["status"],
+            "passed": valid and configuration["passed"],
+            "id": configuration["configuration"].pk if configuration["configuration"] else None,
+            "digest": configuration["configuration"].digest if configuration["passed"] else None,
+            "specification": configuration["configuration"].specification
+            if configuration["passed"]
+            else None,
+        },
         "preview_health": {
             "status": health["status"],
             "passed": valid and health["passed"],

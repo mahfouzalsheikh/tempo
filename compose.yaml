@@ -20,6 +20,8 @@ services:
       TEMPO_AGENT_STATE_ROOT: /data/agent-state
       TEMPO_PREVIEW_ROOT: /data/previews
       TEMPO_PREVIEW_PORT: "${TEMPO_PREVIEW_PORT:-8031}"
+      TEMPO_RELEASE_ROOT: /data/releases
+      TEMPO_RELEASE_PORT: "${TEMPO_RELEASE_PORT:-8032}"
       TEMPO_ACCEPTANCE_IMAGE: "${TEMPO_ACCEPTANCE_IMAGE:-}"
       TEMPO_DATABASE_PATH: /data/database/tempo.sqlite3
       DATABASE_URL: "postgresql://tempo:${TEMPO_POSTGRES_PASSWORD:-tempo-local}@postgres:5432/tempo"
@@ -36,6 +38,7 @@ services:
       - tempo-agent-state:/data/agent-state
       - tempo-database:/data/database
       - tempo-previews:/data/previews
+      - tempo-releases:/data/releases
       # Import credentials as root during container startup, then run Tempo as its
       # unprivileged user with state stored in a container-owned volume. A direct
       # bind mount is not writable when the host and container UIDs differ.
@@ -72,6 +75,33 @@ services:
     volumes:
       - tempo-previews:/data/previews:ro
     networks: [preview-ingress]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  release-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.release
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/run:size=1m,mode=0755,noexec,nosuid"]
+    pids_limit: 32
+    mem_limit: 256m
+    cpus: 1
+    ports:
+      - "127.0.0.1:${TEMPO_RELEASE_PORT:-8032}:8080"
+    environment:
+      TEMPO_RELEASE_ROOT: /data/releases
+      TEMPO_RELEASE_PORT: "${TEMPO_RELEASE_PORT:-8032}"
+    volumes:
+      - tempo-releases:/data/releases:ro
+    networks: [release-ingress]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"]
       interval: 5s
@@ -172,6 +202,8 @@ volumes:
   tempo-postgres:
   tempo-agent-state:
   tempo-previews:
+  tempo-releases:
 
 networks:
   preview-ingress:
+  release-ingress:
