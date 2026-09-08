@@ -94,6 +94,9 @@ activate(ROOT, SLOT, FIRST, 'a' * 64, SECOND_OP, ROLLBACK_OP)
         + """
 import hashlib, json, socket
 from pathlib import Path
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tempo_web.settings')
+import django
+django.setup()
 from tempo.preview_probe import probe, expected_report
 from tempo.release_files import document
 from tempo.rollback_rehearsal import endpoint
