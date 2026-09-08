@@ -28,7 +28,9 @@ def write_json(path, value):
         os.fsync(stream.fileno())
 
 
-def prepare(root, release_id, data, files, artifact_digest, configuration_digest):
+def prepare(
+    root, release_id, data, files, artifact_digest, configuration_digest, *, before_commit=None
+):
     identifier(release_id)
     if not isinstance(configuration_digest, str) or not re.fullmatch(
         r"[0-9a-f]{64}", configuration_digest
@@ -57,6 +59,8 @@ def prepare(root, release_id, data, files, artifact_digest, configuration_digest
         write_json(temporary / "metadata.json", document)
         sync_directory(temporary)
         # Existing releases are immutable, including on retry.
+        if before_commit:
+            before_commit()
         os.rename(temporary, target)
         sync_directory(bundles)
     finally:
@@ -119,7 +123,7 @@ def verify_bundle(root, release_id, artifact_digest, configuration_digest, files
     return expected
 
 
-def remove_target(root, slot, expected_operation):
+def remove_target(root, slot, expected_operation, *, before_commit=None):
     """Revoke an owned temporary target. Caller must fence all future writes to its slot."""
     identifier(slot)
     identifier(expected_operation)
@@ -132,12 +136,23 @@ def remove_target(root, slot, expected_operation):
             return
         if current["operation_id"] != expected_operation:
             raise ValueError("Refuse to revoke a changed staging target")
+        if before_commit:
+            before_commit()
         (root / "targets" / f"{slot}.json").unlink()
         sync_directory(root / "targets")
 
 
-def activate(root, slot, release_id, configuration_digest, expected_operation, operation_id):
-    """Adapter primitive. The future release coordinator must authorize every invocation."""
+def activate(
+    root,
+    slot,
+    release_id,
+    configuration_digest,
+    expected_operation,
+    operation_id,
+    *,
+    before_commit=None,
+):
+    """Adapter primitive. Trusted coordinators authorize and fence every invocation."""
     for value in (slot, release_id, operation_id):
         identifier(value)
     root = Path(root)
@@ -177,6 +192,8 @@ def activate(root, slot, release_id, configuration_digest, expected_operation, o
         temporary = targets / f".pointer-{uuid.uuid4().hex}"
         try:
             write_json(temporary, desired)
+            if before_commit:
+                before_commit()
             os.replace(temporary, targets / f"{slot}.json")
             sync_directory(targets)
         finally:

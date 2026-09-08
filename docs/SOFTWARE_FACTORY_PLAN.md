@@ -152,6 +152,14 @@ rehearsal also exposed and fixed OS-dependent MIME classification. See
 post-promotion health, and QA-agent proposals remain outstanding; this is the first coordinator
 operation, not a completed promotion workflow or a completed software factory.
 
+The next release slice connects retained builds to named local staging publication. Durable
+intent, exact evidence identities, an HTTP preflight, final gate/lease checks at the pointer switch,
+post-publication health, and release history now support the publishing UI. Explicit rollback and
+interrupted-publication recovery restore only recognized target state and require verified health
+before unblocking the target. See [staging publication](STAGING_PUBLICATION.md). This closes the
+retained-build-to-local-staging path. The fresh-brief autonomous demonstration, QA-agent proposals,
+managed skill/MCP capabilities, and broader production-operation work remain outstanding.
+
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.
 
 Adding agent roles alone will not reach that milestone. The critical additions are enforceable work contracts, isolated concurrent execution, reliable integration, trustworthy verification, and release evidence.

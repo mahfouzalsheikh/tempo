@@ -16,9 +16,9 @@ gate until reviewed again. Authentication, CSRF protection, artifact scope, and 
 response headers apply to the configuration form and readiness export.
 
 Reviewed configuration and the static adapter now support [recorded rollback rehearsals](ROLLBACK_REHEARSAL.md).
-The readiness gates can all pass for local staging. Publishing through the UI remains unavailable
-until durable promotion intent/history, transactional evidence rechecks, activation recovery, and
-post-promotion health checks are connected. Adapter smoke tests remain infrastructure checks;
+The readiness gates can all pass for local staging. [Publication controls](STAGING_PUBLICATION.md)
+now record durable intent/history, recheck evidence before activation, verify post-publication
+health, and recover interrupted operations. Adapter smoke tests remain infrastructure checks;
 only an identity-bound rehearsal job supplies product rollback evidence.
 
 ## Serving boundary
@@ -53,8 +53,8 @@ whose target changed during the read. A page already open during activation may 
 reloading if an old asset path is absent from the new release.
 
 These primitives are host-internal and are not an authorization API or a complete promotion
-ledger. The rehearsal coordinator records intent and recovers its temporary resources. A future
-promotion coordinator must persist intent and reconcile interrupted activation at the named target. Bundles currently remain retained; deletion and retention policies
+ledger. The rehearsal coordinator records intent and recovers its temporary resources. The
+publication coordinator now records intent and reconciles interrupted activation at the named target. Bundles currently remain retained; deletion and retention policies
 must protect active and rollback references. Back up the release volume with database backups
 before relying on it for durable product releases.
 

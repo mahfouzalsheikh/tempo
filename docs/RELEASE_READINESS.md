@@ -17,7 +17,8 @@ exports remain historical assessments; version 4 adds recorded rollback rehearsa
 | Rollback rehearsal | Latest passing candidate/restoration/cleanup receipt, bound to this configuration and unchanged target baseline, no older than 24 hours |
 
 All six gates can pass for local staging after [rollback rehearsal](ROLLBACK_REHEARSAL.md).
-The promotion coordinator has not yet been connected; no publishing action is enabled. An available preview link is information, not
+The [publication coordinator](STAGING_PUBLICATION.md) now rechecks those gates before activation
+and records separate release and recovery receipts. An available preview link is information, not
 health evidence. Passing every reviewed browser journey proves that coverage only; it cannot
 substitute for a target, health checks, or rollback. A newer brief or plan blocks the scope gate,
 while historical candidate evidence remains intact. A newer browser plan or attempt clears
@@ -32,8 +33,9 @@ The digest detects content changes; it is not a cryptographic attestation or rel
 No preview bearer link is included in the export.
 
 This is a read-time, point-in-time assessment, not a transactional promotion authorization.
-It is not persisted as a release record. The future promotion path must lock/recheck current
-evidence and bind a release to a named environment and immutable artifact. Promotion history, post-promotion health probes, and activation recovery remain next.
+Its GET result is not itself a release authorization. Publishing records a separate durable
+intent and activation assessment, locks/rechecks current evidence, and binds the release to its
+named target and immutable artifact. Post-publication health and recovery receipts are retained.
 The first adapter and configuration UI support [local staging](LOCAL_STAGING.md); configuration
 approval reserves an address and does not activate a deployment.
 

@@ -865,6 +865,52 @@ class RollbackRehearsal(models.Model):
         )]
 
 
+class ReleaseDeployment(models.Model):
+    configuration = models.ForeignKey(ReleaseConfiguration, on_delete=models.PROTECT,
+                                      related_name="releases")
+    target = models.ForeignKey(DeploymentTarget, on_delete=models.PROTECT, related_name="releases")
+    request_key = models.UUIDField(unique=True)
+    requested_by = models.ForeignKey("auth.User", on_delete=models.PROTECT,
+                                     related_name="requested_releases")
+    bundle = models.UUIDField(unique=True)
+    probe_slot = models.UUIDField(unique=True)
+    identity = models.JSONField()
+    identity_digest = models.CharField(max_length=64)
+    status = models.CharField(max_length=24, default="queued", db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True)
+    finished_at = models.DateTimeField(null=True)
+    deadline = models.DateTimeField(null=True)
+    lease_token = models.UUIDField(null=True)
+    authorization = models.JSONField(default=dict)
+    authorization_digest = models.CharField(max_length=64, blank=True)
+    report = models.JSONField(default=dict)
+    report_digest = models.CharField(max_length=64, blank=True)
+    recovery_report = models.JSONField(default=dict)
+    recovery_digest = models.CharField(max_length=64, blank=True)
+    recovery_attempts = models.PositiveIntegerField(default=0)
+    rollback_requested_by = models.ForeignKey("auth.User", null=True, on_delete=models.PROTECT,
+                                              related_name="requested_release_rollbacks")
+    rollback_requested_at = models.DateTimeField(null=True)
+    error = models.TextField(blank=True)
+
+    @property
+    def status_label(self):
+        return {"queued": "Waiting to publish", "running": "Publishing", "published": "Published",
+                "rollback_queued": "Waiting for recovery", "recovering": "Restoring previous state",
+                "recovery_pending": "Recovery will retry",
+                "needs_attention": "Recovery needs attention",
+                "rolled_back": "Previous state restored"}.get(self.status, self.status)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=["target"],
+            condition=models.Q(status__in=["queued", "running", "rollback_queued",
+                "recovering", "recovery_pending", "needs_attention"]),
+            name="tempo_one_active_release_operation",
+        )]
+
+
 class AcceptanceSuite(models.Model):
     artifact = models.ForeignKey(BuildArtifact, on_delete=models.PROTECT,
                                  related_name="acceptance_suites")

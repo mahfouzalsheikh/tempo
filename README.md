@@ -101,7 +101,8 @@ newly queued work; existing runs and retries keep their original prompts, polici
 
 Saved builds offer release readiness and [reviewed local staging configuration](docs/LOCAL_STAGING.md).
 The staging adapter supports immutable static bundles and [recorded rollback rehearsals](docs/ROLLBACK_REHEARSAL.md).
-All readiness gates can pass for local staging; publishing still requires the promotion coordinator.
+Once all gates pass, [publish the retained build to local staging](docs/STAGING_PUBLICATION.md)
+and follow its release history, health evidence, and rollback controls.
 
 After source changes, rebuild and health-check all services with:
 

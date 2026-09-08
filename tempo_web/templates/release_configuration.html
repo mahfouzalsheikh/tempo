@@ -12,6 +12,6 @@
 <p><strong>Release checks:</strong> every served file must match the saved build. Rollback must restore a retained, immutable bundle for this target.</p>
 <p>Build SHA-256: <code>{{ artifact.digest }}</code></p>
 <form method="post" class="intake-form">{% csrf_token %}<input type="hidden" name="expected_configuration_id" value="{{ expected_configuration_id }}">{{ form.as_p }}<datalist id="staging-targets">{% for target in targets %}<option value="{{ target.key }}">{% endfor %}</datalist><button class="button primary" {% if not enabled %}disabled{% endif %}>Approve staging configuration</button></form>
-<p>Approval saves a version for this exact build. Changing the target or installation settings requires a new review. Publishing is not available yet.</p></section>
+<p>Approval saves a version for this exact build. Changing the target or installation settings requires a new review. Publishing requires all release gates to pass.</p></section>
 {% if info.configuration %}<section class="panel"><h2>{{ info.status }}</h2><p>Configuration #{{ info.configuration.pk }} · {{ info.configuration.approved_at }}</p>{% if info.passed %}<p>Target: <strong>{{ info.configuration.target.key }}</strong></p><p>Reserved address: <code>{{ info.configuration.specification.origin }}</code></p><p>This configuration does not record a deployment. The address serves a site once an approved release is activated.</p>{% endif %}</section>{% endif %}
 </main></div></body></html>

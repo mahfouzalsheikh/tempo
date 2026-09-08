@@ -149,10 +149,13 @@ services:
     cpus: 1
     environment:
       DATABASE_URL: "postgresql://tempo:${TEMPO_POSTGRES_PASSWORD:-tempo-local}@postgres:5432/tempo"
+      TEMPO_PREVIEW_ROOT: /data/previews
+      TEMPO_PREVIEW_PORT: "${TEMPO_PREVIEW_PORT:-8031}"
       TEMPO_RELEASE_ROOT: /data/releases
       TEMPO_RELEASE_PORT: "${TEMPO_RELEASE_PORT:-8032}"
     volumes:
       - tempo-releases:/data/releases
+      - tempo-previews:/data/previews:ro
     networks: [release-control, release-ingress]
     depends_on:
       tempo:

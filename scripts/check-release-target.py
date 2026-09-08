@@ -197,8 +197,8 @@ else:
     )
     worker = json.loads(subprocess.check_output(["docker", "inspect", worker_id], text=True))[0]
     assert worker["HostConfig"]["ReadonlyRootfs"] and worker["HostConfig"]["CapDrop"] == ["ALL"]
-    assert len(worker["Mounts"]) == 1 and worker["Mounts"][0]["Destination"] == "/data/releases"
-    assert worker["Mounts"][0]["RW"]
+    mounts = {item["Destination"]: item["RW"] for item in worker["Mounts"]}
+    assert mounts == {"/data/releases": True, "/data/previews": False}
     assert len(worker["NetworkSettings"]["Networks"]) == 2
     forbidden = []
     for service, destination_port in (

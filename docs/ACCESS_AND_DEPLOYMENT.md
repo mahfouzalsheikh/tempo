@@ -75,8 +75,8 @@ Run `./scripts/restart-tempo.sh` from a committed checkout. It:
 The stack now has eight services, including a separate [local staging server](LOCAL_STAGING.md)
 and [rollback rehearsal worker](ROLLBACK_REHEARSAL.md).
 Its loopback port defaults to 8032. Staging configuration approval is available from release
-readiness, with durable rollback rehearsals available after approval. Publishing remains pending
-the promotion coordinator. Consumer shutdown and a database backup precede applying the private
+readiness, with durable rollback rehearsals available after approval and
+[publication/rollback controls](STAGING_PUBLICATION.md) once the gates pass. Consumer shutdown and a database backup precede applying the private
 PostgreSQL network attachment for the rehearsal worker; its data volume is preserved.
 
 The script preserves named volumes. It does not run `down -v`, remove orphan services, or

@@ -6,7 +6,7 @@ from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from tempo import preview_health, release_configuration, rollback_rehearsal
+from tempo import preview_health, release_configuration, releases, rollback_rehearsal
 from tempo.acceptance_contract import digest
 from tempo.errors import CodexError, ConfigError
 
@@ -191,6 +191,7 @@ def readiness(request, brief_id, run_id, artifact_id):
             "brief_id": brief_id,
             "artifact": artifact,
             "report": report,
+            "delivery": releases.delivery(artifact),
             "preview": preview,
             "health": preview_health.summary(artifact),
             "rehearsal": rollback_rehearsal.summary(artifact),

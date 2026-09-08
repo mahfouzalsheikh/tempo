@@ -24,8 +24,8 @@ The report records candidate, restoration, and cleanup observations, the worker 
 completion time, and a content digest. It does not export the private rehearsal address.
 Receipts satisfy only the rollback readiness gate. Browser acceptance, current approved scope,
 required candidate checks, reviewed configuration, and fresh preview health remain independent.
-Version 4 readiness exports include verified rehearsal evidence. All six gates can now pass
-for local staging; publishing through the UI still requires the promotion coordinator.
+Version 4 readiness exports include verified rehearsal evidence. All six gates can pass
+for local staging; [publication controls](STAGING_PUBLICATION.md) now use those gates.
 
 ## Concurrency and recovery
 
@@ -50,7 +50,7 @@ records and lock files remains future work.
 A passing observation expires after 24 hours. A newer rehearsal, changed configuration,
 changed target pointer, changed baseline bytes, changed endpoint/storage settings, or tampered
 report invalidates its use in readiness. Preview health still expires after five minutes.
-A future promotion must lock and freshly recheck evidence; the read-time assessment is not
+The publication coordinator locks and freshly rechecks evidence; the read-time assessment is not
 transactional publishing authorization. Rehearsals do not prove database recovery because this
 supported static profile has no database migrations or server runtime.
 
@@ -58,7 +58,7 @@ supported static profile has no database migrations or server runtime.
 
 Compose now has eight services. `release-worker` uses a dedicated Python image without Codex,
 Docker CLI, agent homes, or model/tracker environment grants. It runs unprivileged with zero
-capabilities, a read-only root, bounded resources, and one writable release-volume mount.
+capabilities, a read-only root, bounded resources, one writable release-volume mount, and read-only preview evidence.
 It has a private connection to PostgreSQL and a connection to the staging server. It does not
 join the control API/execution-daemon network. The serving container keeps its read-only mount
 and outbound-deny firewall, including denial of new connections to the worker.
@@ -83,4 +83,5 @@ changed targets/configuration, corrupt baselines, and restoration of a different
 The dedicated read-only worker image processed the retained mini-app's 26-file rehearsal against
 a disposable PostgreSQL database and HTTP server. After its image-to-SVG acceptance journey and
 preview health check, the UI showed six passing gates with no horizontal overflow at 390 pixels.
-No production product records were created by this fixture; publishing remains unavailable.
+No production product records were created by this fixture. Publication was added in the
+subsequent [publication slice](STAGING_PUBLICATION.md).

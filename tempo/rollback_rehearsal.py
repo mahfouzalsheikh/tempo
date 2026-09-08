@@ -19,6 +19,7 @@ from tempo_web.models import (
     BuildArtifact,
     DeploymentTarget,
     ReleaseConfiguration,
+    ReleaseDeployment,
     RollbackRehearsal,
 )
 
@@ -108,6 +109,12 @@ def enqueue(artifact_id, configuration_id, expected_digest, request_key, user_id
     ):
         raise ValueError("Staging configuration changed. Refresh before rehearsing rollback")
     DeploymentTarget.objects.select_for_update().get(pk=configuration.target_id)
+    from tempo.releases import ACTIVE as RELEASE_ACTIVE
+
+    if ReleaseDeployment.objects.filter(
+        target_id=configuration.target_id, status__in=RELEASE_ACTIVE
+    ).exists():
+        raise ValueError("A publication or recovery for this target is still pending")
     saved = identity(configuration)
     existing = RollbackRehearsal.objects.filter(request_key=request_key).first()
     if existing:
