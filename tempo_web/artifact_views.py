@@ -61,6 +61,13 @@ def verified_candidate_artifact(artifact):
     if not checkpoint or checkpoint.payload.get("artifact") != expected:
         raise ValueError("Missing candidate evidence")
     candidate = checkpoint.payload
+    from tempo.product_repairs import evidence as repair_evidence
+
+    repairs = repair_evidence(run)
+    if candidate.get("repairs", []) != repairs or artifact.manifest.get("repairs", []) != repairs:
+        raise ValueError("Repair evidence mismatch")
+    if repairs and candidate.get("source_sha") != repairs[-1]["source_sha"]:
+        raise ValueError("Candidate does not match the completed repair")
     for key in (
         "source_sha",
         "snapshot_digest",

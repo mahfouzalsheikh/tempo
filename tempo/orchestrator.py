@@ -688,6 +688,9 @@ class Orchestrator:
             await workspace_manager.before_run(workspace.path)
             if getattr(persistence, "product_snapshot", {}):
                 from .product_execution import prepare_product_repository
+                from .product_repairs import execute as execute_product_repair
+
+                await execute_product_repair(self, entry, workspace.path, tracker)
                 await prepare_product_repository(entry, workspace.path, persistence)
             if isinstance(tracker, GitHubTracker):
                 if not persistence or not entry.run_record_id:
@@ -1266,7 +1269,9 @@ class Orchestrator:
         node_base = None
         if product_task:
             from .integration import inspect_repository
-            node_base = await inspect_repository(workspace_path)
+            node_base = await inspect_repository(
+                workspace_path, allow_dirty=bool(node.settings.get("product_repair")),
+            )
         enabled_tools = providers.enabled_tools(config, profile)
         if node.workspace == "isolated" and (
             profile.completion != "turn" or enabled_tools is None
@@ -2168,6 +2173,25 @@ class Orchestrator:
         if not context:
             return False, "run_not_found"
         issue_id = context["issue_id"]
+        if action == "product_repair":
+            from asgiref.sync import sync_to_async
+
+            from .product_repairs import enqueue as enqueue_repair
+
+            async with self._lock:
+                if issue_id in self.running:
+                    return False, "Stop the active worker before requesting a repair."
+                await sync_to_async(enqueue_repair)(
+                    self.persistence, run_id, user_id=user_id, idempotency_key=idempotency_key,
+                    **payload,
+                )
+                self.retries.pop(issue_id, None)
+                self.claimed.discard(issue_id)
+                self.safety_blocked.discard(issue_id)
+                self.completed.discard(issue_id)
+                self._refresh.set()
+                self._publish_live_state()
+                return True, "Repair queued"
         if action == "restart":
             async with self._lock:
                 if issue_id in self.running:

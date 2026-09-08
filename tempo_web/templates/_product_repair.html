@@ -1,0 +1,21 @@
+<section class="panel">
+  <h2>Repair build #{{ run.pk }}</h2>
+  <p>Give the saved implementer agent a specific fix for this failed candidate. Completed plan tasks stay in the run history. Tempo checks the repair's file scope, then reruns the saved required checks.</p>
+  <p><a class="button ghost" href="{% url 'idea_detail' product.pk %}#execution">Back to build</a></p>
+  {% if repair %}
+  <dl class="brief-facts"><dt>Failure</dt><dd>{{ run.error }}</dd><dt>Candidate commit</dt><dd><code>{{ repair.evidence.source.head }}</code></dd><dt>Saved agent profile</dt><dd>{{ repair.profile }}</dd><dt>Attempts remaining</dt><dd>{{ repair.remaining_repairs }} repairs · {{ repair.remaining_checks }} required-check attempts</dd></dl>
+  {% if repair.changes %}<details><summary>Uncommitted source changes</summary><pre class="intake-copy">{{ repair.changes }}</pre></details>{% endif %}
+  {% for check in repair.evidence.failed_checks %}<details><summary>Failed check: {{ check.check_id }} · exit {{ check.exit_code }}</summary><pre class="intake-copy">{{ check.output }}</pre></details>{% endfor %}
+  <p>Each request uses one agent turn and compute. A stopped or interrupted repair needs another review. The approved brief, checks, build recipe, and saved execution environment still apply. Changed or uncommitted source is retained for the agent to inspect.</p>
+  <form method="post" class="intake-form">{% csrf_token %}
+    <input type="hidden" name="request_key" value="{{ request_key }}">
+    <input type="hidden" name="expected_digest" value="{{ repair.digest }}">
+    <label for="repair-instructions">What should the agent fix?</label>
+    <textarea id="repair-instructions" name="instructions" rows="6" minlength="10" maxlength="4000" required placeholder="Explain the failure and the intended correction. Keep existing features and tests intact.">{{ instructions }}</textarea>
+    <label for="repair-paths">Files or directories the repair may change</label>
+    <textarea id="repair-paths" name="paths" rows="4" maxlength="6020" required placeholder="mini-app/scripts/&#10;mini-app/package.json">{{ paths }}</textarea>
+    <p>One relative path per line. End directories with / to include their contents. Use specific paths within this build target. Tempo rejects a resulting commit that changes other files.</p>
+    <button class="button primary" type="submit">Start agent repair &amp; rerun checks</button>
+  </form>
+  {% else %}<p>Review the current build state before submitting another repair.</p><a class="button" href="{% url 'idea_repair' product.pk run.pk %}">Reload repair review</a>{% endif %}
+</section>

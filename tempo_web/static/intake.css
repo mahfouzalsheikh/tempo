@@ -30,6 +30,7 @@
 .plan-wave + .plan-wave { border-top: 1px solid #364030; padding-top: 22px; }
 .task-links, .intake-copy { color: #bac3b0; }
 .intake-copy { margin: 12px 0 22px; }
+.intake-workspace pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
 .revision-list { padding-left: 20px; line-height: 2; }
 .intake-workspace button:disabled { opacity: .45; cursor: not-allowed; }
 @media(max-width: 700px) { .intake-fields { grid-template-columns: 1fr; } .brief-facts { grid-template-columns: 1fr; gap: 8px; } .brief-facts dd { margin-bottom: 14px; } .intake-workspace .panel { padding: 18px; } .intake-submit .button { width: 100%; } }

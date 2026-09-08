@@ -168,8 +168,13 @@ credentials and the saved validation image needed repair, and an operator correc
 script that changed a tracked image. The planner's read-only profile also conflicted with its
 requested design-document task. See [the pilot record and evidence](FIRST_AGENT_PILOT.md).
 The trial produced fixes for graph-wide usage reporting and replayed task completion times.
-Plan/profile compatibility, agent-driven build repair, and simultaneous support for retained
-validation images remain necessary before claiming autonomous delivery. The existing application's
+Stopped builds now support a reviewed agent repair with explicit allowed paths, one model turn,
+retained failure history, and fresh required checks. Repair receipts follow the candidate into
+its build evidence; checked/published candidates cannot be changed in place. See
+[the repair workflow](PRODUCT_EXECUTION.md#reviewed-build-repairs).
+Plan/profile compatibility, autonomous repair decisions, a fresh unassisted live benchmark,
+and simultaneous support for retained validation images remain necessary before claiming
+autonomous delivery. The existing application's
 local staging result is not a new-repository or public production deployment demonstration.
 
 Tempo has a useful execution foundation. The next product milestone should be: **turn a bounded product brief into an integrated application, with an immutable build, verified acceptance criteria, a working preview, and a deployment package.** Preserve the existing issue-to-PR workflow as a supported delivery mode while building this broader lifecycle.

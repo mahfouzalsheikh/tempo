@@ -73,9 +73,52 @@ terminal work stops polling. **Refresh status** also works without JavaScript. P
 the existing lease-fenced run controls. Retry preserves the run's contracts and workspace;
 completed task checkpoints can be reused. The persisted required-check attempt count remains
 bounded by the saved run limit across retries. Retrying failed final checks does not automatically
-replan or rerun completed implementation tasks. Resolve the retained workspace or revise and
-approve a new plan for changed work. Generic “restart with current configuration” is disabled
+replan or rerun completed implementation tasks. Use **Repair with an agent** for a scoped build
+fix, resolve the retained workspace, or revise and approve a new plan for changed work.
+Generic “restart with current configuration” is disabled
 for product runs so it cannot discard their approved contract.
+
+### Reviewed build repairs
+
+After the approved agent tasks finish, a stopped run without a checked candidate can receive
+an explicit repair assignment. Open **Repair with an agent**, review its failure, commit,
+uncommitted changes, failed-check output, saved implementer profile, and remaining attempts.
+Describe the fix and list allowed repository paths. Directory paths end in `/`; wildcards,
+parent traversal, Git metadata paths, and paths outside the selected mini-app are rejected.
+The form requires authentication and CSRF and does not start work until submitted.
+
+Submission locks the product and run, rechecks the current approved plan, other active work,
+check budget, and the reviewed source fingerprint. An append-only operator action stores the
+assignment, failure, source identity, and original snapshot digests. Duplicate submissions reuse
+the same action. Neither the approved plan nor its compiled execution snapshot is rewritten.
+Each run permits at most three repair requests; the existing required-check limit still applies.
+
+The saved implementer profile gets one turn in the existing integration checkout, with the
+original model/runtime settings and attempt token budget. Repository identity, metadata, and
+ancestry checks still apply. Dirty source is allowed only for this reviewed repair entry point;
+the agent may inspect and restore generated changes. The resulting commit must be clean,
+descend from the reviewed commit, and change only allowed paths. This is a check on the final
+source diff, not a filesystem sandbox confining every command to those paths. Runtime sandbox
+rules continue to apply. No files are automatically reset by the controller.
+
+The normal graph reuses completed tasks, including its earlier verifier report. Fresh host
+checks, artifact capture, and independent acceptance/release gates are still required. A model
+turn is not proof that the defect is fixed. Failed or interrupted turns remain in the history;
+retries cannot silently repeat them. A new repair review is required. Completed repairs are
+reused if subsequent checks need a retry. Historical failed-repair usage remains in run totals.
+Successful candidates and build manifests include repair action digests and outcomes, which
+the shared artifact gate verifies before download, preview, or publication. Runs that already
+have checked candidates cannot be repaired in place, preserving their release evidence.
+
+This adds operator-directed agent repair, not automatic diagnosis and repair approval. Saved
+validation images must still be available to the runner; concurrent routing to retained images
+and a fresh live benchmark without operator code changes remain follow-up work.
+
+The repair implementation passed the full suite (626 tests, 22 environment-dependent skips),
+then 144 focused PostgreSQL execution, persistence, artifact, integration, and usage checks.
+After the final source-file guard, 37 PostgreSQL repair/evidence/integration checks passed,
+including concurrent requests and a tracked file replaced with a FIFO. Browser checks at
+390 and 1440 pixels covered the review form and long failure output without horizontal overflow.
 
 All endpoints require installation-wide operator authentication and cookie-authenticated
 mutations require CSRF. Project-level roles and lifetime product cost accounting remain future
@@ -97,7 +140,7 @@ reload, retry, host-check failure, cleanup mutation, unrelated history, forged e
 launches, authentication/CSRF, and PostgreSQL launch/edit races. Deployment checks read stored
 contracts and evidence without starting agents or creating product work.
 
-The React mini-app now has a supported build recipe and retained artifact manifest. Next:
-independently verifiable criterion results, a supported preview deployment, and tested
-promotion/rollback. An agent planner that inspects
-the repository can propose the same typed contracts; its proposal still requires review.
+The React mini-app supports retained builds, independent browser criteria, local preview,
+and rehearsed staging publication/rollback. An agent planner that inspects the repository can
+propose the same typed contracts; its proposal still requires review. Broader repository
+bootstrap and autonomous recovery remain outside this first supported path.

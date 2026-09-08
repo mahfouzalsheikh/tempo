@@ -755,7 +755,7 @@ class PersistenceStore:
         """Clear derived terminal state before reevaluating a retried graph."""
         from tempo_web.models import RunNode
 
-        RunNode.objects.filter(run_id=run_id).exclude(
+        RunNode.objects.filter(run_id=run_id).exclude(input__has_key="review_digest").exclude(
             status=RunNode.Status.SUCCEEDED
         ).update(
             status=RunNode.Status.PENDING,

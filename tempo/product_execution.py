@@ -304,14 +304,14 @@ def enqueue_product(
     return run
 
 
-async def prepare_product_repository(entry, path, persistence):
+async def prepare_product_repository(entry, path, persistence, *, allow_dirty=False):
     from urllib.parse import urlparse
 
     from tempo_web.models import RunCheckpoint
 
     from .integration import git, inspect_repository
 
-    head = await inspect_repository(path)
+    head = await inspect_repository(path, allow_dirty=allow_dirty)
     config = entry.execution_config
     if config.tracker.kind == "github":
         remote = (await git(path, "config", "--get", "remote.origin.url")).decode().strip()
@@ -354,6 +354,7 @@ async def validate_product_candidate(entry, path, persistence, on_event):
 
     from .errors import CodexError, WorkspaceError
     from .integration import git, git_environment, inspect_repository
+    from .product_repairs import check_candidate as check_repair_candidate
     from .validation import ProjectValidator, workspace_fingerprint
 
     # Agents and lifecycle hooks have finished. Only trusted validation runs from this point.
@@ -364,6 +365,7 @@ async def validate_product_candidate(entry, path, persistence, on_event):
             category="validation_attempt_limit",
         )
     head = await inspect_repository(path)
+    await check_repair_candidate(entry.run_record_id, head)
     base = await RunCheckpoint.objects.filter(
         run_id=entry.run_record_id, kind="product_base"
     ).afirst()
@@ -440,6 +442,17 @@ async def validate_product_candidate(entry, path, persistence, on_event):
         "snapshot_digest": entry.snapshot_digest,
         "mode": "candidate",
     }
+    from asgiref.sync import sync_to_async
+
+    from tempo_web.models import AgentRun
+
+    from .product_repairs import evidence as repair_evidence
+
+    repairs = await sync_to_async(repair_evidence)(
+        await AgentRun.objects.aget(pk=entry.run_record_id)
+    )
+    if repairs:
+        candidate["repairs"] = repairs
     if profile:
         from .build_artifacts import artifact_manifest
 

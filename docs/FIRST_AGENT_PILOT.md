@@ -88,6 +88,9 @@ fix. Focused persistence, orchestration, execution, and reporting checks cover t
 Django checks, migration consistency, and lint passed. Automatic product progress remains private,
 revision-scoped, read-only, and respectful of keyboard focus; see [product execution](PRODUCT_EXECUTION.md).
 
-Next priorities: detect plan/profile conflicts before spending model tokens, make stopped-build
-repair an explicit agent task, route old runs to compatible validation images, and repeat this
-benchmark without operator code repair before claiming autonomous delivery.
+Follow-up: [reviewed build repairs](PRODUCT_EXECUTION.md#reviewed-build-repairs) now give a stopped
+candidate an explicit agent assignment with allowed paths and fresh required checks. Automated
+regression tests exercise this path; this historical pilot remains an operator-assisted result.
+Next priorities: detect plan/profile conflicts before spending model tokens, route old runs to
+compatible validation images, and repeat this benchmark without operator code repair before
+claiming autonomous delivery.

@@ -114,6 +114,7 @@ def artifact_manifest(context, candidate, bundle):
         "policy_digest": candidate["policy_digest"],
         "required_check_ids": candidate["required_check_ids"],
         "workspace_fingerprint": candidate["workspace_fingerprint"],
+        **({"repairs": candidate["repairs"]} if candidate.get("repairs") else {}),
         "execution": {
             "runtime_backend": environment["TEMPO_RUNTIME_BACKEND"],
             "runtime_image": environment["TEMPO_RUNTIME_IMAGE"]

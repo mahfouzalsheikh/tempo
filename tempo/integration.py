@@ -59,7 +59,7 @@ def check_metadata_files(path: Path) -> None:
             raise integration_error("External Git object stores and grafts are not supported.")
 
 
-async def inspect_repository(path: Path) -> str:
+async def inspect_repository(path: Path, *, allow_dirty: bool = False) -> str:
     await asyncio.to_thread(check_metadata_files, path)
     # No ambient/global configuration, includes, filters, merge drivers, executable helpers,
     # or alternate worktrees. Remote metadata is retained only in the integration checkout.
@@ -89,7 +89,16 @@ async def inspect_repository(path: Path) -> str:
             raise integration_error("Invalid repository file path.")
         if any((path / parent).is_symlink() for parent in relative.parents):
             raise integration_error("Repository file parents must not be symlinks.")
-    head = await clean_workspace_head(path, env=git_environment())
+        try:
+            mode = (path / relative).lstat().st_mode
+        except FileNotFoundError:
+            continue
+        if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
+            raise integration_error("Repository source must contain regular files or symlinks.")
+    head = (
+        (await git(path, "rev-parse", "--verify", "HEAD^{commit}")).decode()
+        if allow_dirty else await clean_workspace_head(path, env=git_environment())
+    )
     if not head or not re.fullmatch(r"[0-9a-f]{40}", head):
         raise integration_error("Commit all contributor changes before integration.")
     return head

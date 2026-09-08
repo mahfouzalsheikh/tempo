@@ -10,6 +10,7 @@ from . import (
     publication_views,
     release_configuration_views,
     release_views,
+    repair_views,
     views,
 )
 
@@ -73,6 +74,8 @@ urlpatterns = [
     path("ideas/<int:brief_id>/runs/<int:run_id>/artifacts/<int:artifact_id>/preview/<str:action>/",
          preview_views.control, name="preview_control"),
     path("ideas/<int:brief_id>/execute/", product_views.execute, name="idea_execute"),
+    path("ideas/<int:brief_id>/runs/<int:run_id>/repair/", repair_views.repair,
+         name="idea_repair"),
     path("ideas/<int:brief_id>/runs/<int:run_id>/<str:action>/", product_views.control,
          name="idea_run_control"),
     path("api/v1/briefs/<int:brief_id>/execution", product_views.execution_setup),

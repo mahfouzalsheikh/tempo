@@ -5,7 +5,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Ideas & plans · Tempo</title>
   <link rel="stylesheet" href="{% static 'tempo.css' %}?v=20260907-2">
-  <link rel="stylesheet" href="{% static 'intake.css' %}?v=1">
+  <link rel="stylesheet" href="{% static 'intake.css' %}?v=2">
 </head>
 <body>
 <a class="skip-link" href="#main-content">Skip to ideas and plans</a>
@@ -14,7 +14,7 @@
   <main id="main-content" class="workspace intake-workspace">
     <header class="workspace-header">
       <div><p class="breadcrumb">TEMPO <span>/</span> IDEAS & PLANS</p>
-        <h1>{% if mode == "edit" %}{% if product %}Revise the brief{% else %}Start with an idea{% endif %}{% elif mode == "plan" %}Edit the task plan{% elif mode == "execute" %}Set up a candidate build{% elif mode == "detail" %}{{ brief.title }}{% else %}Ideas & plans{% endif %}</h1>
+        <h1>{% if mode == "edit" %}{% if product %}Revise the brief{% else %}Start with an idea{% endif %}{% elif mode == "plan" %}Edit the task plan{% elif mode == "execute" %}Set up a candidate build{% elif mode == "repair" %}Repair a stopped build{% elif mode == "detail" %}{{ brief.title }}{% else %}Ideas & plans{% endif %}</h1>
         <p class="subtitle">Define the outcome, review the plan, and follow the build through its checks.</p>
       </div>
       <div class="header-actions">{% if mode == "list" %}<a class="button primary" href="{% url 'idea_new' %}">New idea</a>{% else %}<a class="button ghost" href="{% url 'ideas' %}">All ideas</a>{% endif %}</div>
@@ -90,6 +90,7 @@
         <div class="intake-submit"><a class="button ghost" href="{% url 'idea_detail' product.pk %}">Back to plan</a><button class="button primary" type="submit" {% if setup.blocked or not plan.approved_at %}disabled{% endif %}>Build & verify candidate</button></div>
       </form></section>
     {% endif %}
+    {% if mode == "repair" %}{% include '_product_repair.html' %}{% endif %}
     {% if mode == "plan" %}
       <section class="system-notice"><div><strong>Edit a new plan revision</strong><p>Use the IDs below to connect each task to its criteria and prerequisites. Tempo rejects missing references, cycles, and verification scheduled before implementation.</p></div></section>
       <section class="panel"><h2>Acceptance criteria</h2>{% for criterion in brief.criteria %}<p><code>{{ criterion.id }}</code> · {{ criterion.outcome }}</p>{% endfor %}</section>
