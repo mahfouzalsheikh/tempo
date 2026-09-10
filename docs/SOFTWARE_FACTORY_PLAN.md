@@ -1,6 +1,6 @@
 **Tempo: plan for a reliable software factory**
 
-Updated: **2026-09-10**. Reviewed deployment baseline: **`fe26221`**.
+Updated: **2026-09-10**. Reviewed deployment baseline: **`470a949`**.
 The original assessment was made on 2026-09-06 at `45b84bd`; the plan was first committed as
 `7f40f0f`. This document now records current delivery status and the remaining roadmap.
 Historical findings and incremental progress notes remain available in Git history.
@@ -24,6 +24,9 @@ it would not establish unattended autonomous operation.
 
 The next implementation slice adds opt-in version 2 task requirements and host-checked file and
 decision deliverables; see [task contracts](TASK_CONTRACTS.md). The live pilot remains pending.
+The [second pilot review package](SECOND_AGENT_PILOT.md) now defines a pinned source, dedicated
+project/profiles, two feature tasks, a controlled compile failure, a scoped repair, and 35 browser
+steps. It remains a draft until the exact brief and plan are reviewed and approved.
 The user also requested first-class configuration of the agents underneath Tempo: multiple
 Codex accounts, multiple Claude accounts, and explicit project/team assignments. This is now a
 prioritized workstream in [agent accounts](AGENT_ACCOUNTS.md), beginning after the next pilot
@@ -371,7 +374,7 @@ The next delivery gate is the no-manual-code-editing pilot, not completion of th
 
 | Order | Ticket | Acceptance and evidence |
 | --- | --- | --- |
-| 1 | **Check plan/profile compatibility and required deliverables.** Opt-in version 2 contracts are implemented locally; enable and review them for the next pilot. | Explicit write requirements are checked against profile capabilities and runtime settings before model work. Required committed files and structured decisions gate task acceptance. Version 1 serialization stays unchanged. Live evidence remains pending; see [task contracts](TASK_CONTRACTS.md). |
+| 1 | **Check plan/profile compatibility and required deliverables.** Opt-in version 2 contracts were deployed as `470a949`; enable and review them for the next pilot. | Explicit write requirements are checked against profile capabilities and runtime settings before model work. Required committed files and structured decisions gate task acceptance. Version 1 serialization stays unchanged. Deployed checks passed; a native-agent pilot remains pending. See [task contracts](TASK_CONTRACTS.md). |
 | 2 | **Run a new supervised pilot without manual code edits.** Reuse the supported React target, freeze observable criteria, and include a recoverable build failure. | Native agents implement and repair the candidate; fresh required checks, browser evidence, preview, staging readiness, and rollback pass. Record every approval, environment intervention, and any operator edit; an edit makes this an assisted attempt. |
 | 3 | **Measure repeated delivery and establish CI.** Start with a small repeated pilot set, then expand the 20–30-task benchmark. Add automatic regression lanes and a release-level result record. | Reports include denominators, failed attempts, interventions, duration, tokens, known costs/unknown costs, and evidence completeness. CI runs the defined fast and PostgreSQL checks; Docker/browser lanes run in suitable isolated infrastructure. |
 | 3a | **Configure providers, accounts, and agent teams.** Deliver named Codex connections and project/profile assignment first, then a tested Claude adapter and shared account scheduling. | Two accounts of the same provider run without credential/session crossover; a mixed Codex/Claude team records actual task attribution. Revocation, reconnect, capacity and explicit fallback are tested. Secrets stay out of workflow JSON and snapshots. See [delivery slices](AGENT_ACCOUNTS.md). |

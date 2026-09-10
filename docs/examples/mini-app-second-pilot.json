@@ -1,0 +1,176 @@
+{
+  "schema": 1,
+  "status": "draft-awaiting-review",
+  "project": "mahfouzalsheikh/react-supervised-pilot",
+  "request_key": "6ffbd946-16af-4a51-8a61-bd1e4a45a675",
+  "source_sha": "5575c09854c10d45aa5cfdb2a9a6adec773b1da4",
+  "brief": {
+    "schema_version": 1,
+    "title": "React mini-app: preparation feedback and group tips",
+    "goal": "Help visitors see what preparation remains and read all drawing advice in one action, while demonstrating a reviewed agent build repair.",
+    "users": "First-time visitors to the existing browser-only image-to-SVG mini-app.",
+    "scope": "Extend the existing PreparationChecklist and DrawingTips components from the first retained pilot. Add remaining-step feedback and Expand all tips / Collapse all tips. Exercise one deliberately isolated TypeScript compilation failure, then remove it through Tempo’s reviewed repair workflow.",
+    "exclusions": "No accounts, backend, persistence, analytics, external requests, dependencies, lockfile changes, generator algorithm changes, public deployment, or changes outside mini-app/. Do not modify existing build scripts, checks, or the first pilot’s published artifact.",
+    "constraints": "Start at reviewed commit 5575c09854c10d45aa5cfdb2a9a6adec773b1da4. Follow AGENTS.md. Retain keyboard controls, labels, focus and the mobile layout. Use focused existing CSS and meaningful component tests. No operator source edits. All coding and removal of the controlled probe must be performed by native Tempo agents. Budget: at most 3,000,000 reported model tokens per execution attempt, no automatic retries, at most one reviewed repair request and three host check attempts for this pilot. The repair starts another attempt; the combined upper bound is 6,000,000 tokens, not a dollar estimate. Do not push or publish. Initial build failure is expected only for the reviewed TypeScript probe; any other failure is reported separately.",
+    "target": "Retained React static build, independent browser acceptance, isolated preview and a new local staging target named preparation-feedback-pilot. Preserve the first pilot’s staging target.",
+    "open_questions": "",
+    "criteria": [
+      {
+        "id": "AC-REMAINING",
+        "outcome": "The checklist shows correct remaining-step feedback and resets reliably.",
+        "verification": "On /, preparation-remaining reads 3 steps remaining. Select Photo selected, Style selected, Detail reviewed; the text progresses through 2 steps remaining, 1 step remaining, Ready to draw. Reset checklist restores 3 steps remaining and 0 of 3 ready. Reload also resets."
+      },
+      {
+        "id": "AC-GROUP-TIPS",
+        "outcome": "Visitors can expand or collapse both tips together while individual toggles remain usable.",
+        "verification": "On /, drawing-tips-status reads 0 of 2 tips open. Expand all tips shows both existing advice texts and 2 of 2 tips open. Choosing a photo closes only its panel, leaving 1 of 2 tips open. Expand all tips reopens it; Collapse all tips restores 0 of 2 tips open. Unit tests verify hidden panels and aria-expanded."
+      },
+      {
+        "id": "AC-STUDIO",
+        "outcome": "The existing photo-to-SVG journey remains usable after the changes.",
+        "verification": "Upload the fixed PNG fixture, choose Circle Shape Art, set Detail to Home, generate SVG and download a file that passes the existing svg-v1 byte validator."
+      }
+    ]
+  },
+  "plan": {
+    "schema_version": 2,
+    "brief_digest": "228423d1656bffcc42f357d5aa5d90153b37e8d6c25bea10c9d2db0dcecde51b",
+    "tasks": [
+      {
+        "id": "design",
+        "title": "Confirm pinned source and component ownership",
+        "role": "planner",
+        "instructions": "Verify HEAD is exactly 5575c09854c10d45aa5cfdb2a9a6adec773b1da4 before editing. Read AGENTS.md and both existing components/tests. Write mini-app/docs/preparation-feedback-design.md recording source identity, shared interfaces, ownership and the reviewed one-file fault. Keep named exports and existing App.tsx wiring unchanged. Checklist owner: PreparationChecklist.tsx, PreparationChecklist.test.tsx, preparation-checklist.css. Tips owner: DrawingTips.tsx, DrawingTips.test.tsx, drawing-tips.css. Integrator owns integration fixes and the probe; verifier edits nothing. Commit only the design document. Return required decisions identifying actual inspected source and interfaces.",
+        "criteria": [
+          "AC-REMAINING",
+          "AC-GROUP-TIPS",
+          "AC-STUDIO"
+        ],
+        "depends_on": [],
+        "requires": [
+          "repository_write"
+        ],
+        "required_files": [
+          "mini-app/docs/preparation-feedback-design.md"
+        ],
+        "required_decisions": [
+          "source-and-interfaces",
+          "file-ownership"
+        ]
+      },
+      {
+        "id": "remaining",
+        "title": "Add checklist remaining-step feedback",
+        "role": "implementer",
+        "instructions": "Extend PreparationChecklist with data-testid=preparation-remaining and exact texts 3 steps remaining, 2 steps remaining, 1 step remaining, Ready to draw. Derive it from existing checked state. Preserve preparation-progress, labels, reset and session-only behavior. Keep announcements understandable without competing live regions. Own only mini-app/src/components/PreparationChecklist.tsx, mini-app/src/components/PreparationChecklist.test.tsx and mini-app/src/styles/preparation-checklist.css. Test every count, unchecking, reset and a remount. Use the existing test harness; no new dependencies. Commit a clean contribution.",
+        "criteria": [
+          "AC-REMAINING",
+          "AC-STUDIO"
+        ],
+        "depends_on": [
+          "design"
+        ],
+        "requires": [
+          "repository_write"
+        ],
+        "required_files": [
+          "mini-app/src/components/PreparationChecklist.tsx",
+          "mini-app/src/components/PreparationChecklist.test.tsx"
+        ],
+        "required_decisions": []
+      },
+      {
+        "id": "group-tips",
+        "title": "Add group controls for drawing tips",
+        "role": "implementer",
+        "instructions": "Extend DrawingTips with a group button labelled Expand all tips whenever fewer than both panels are open and Collapse all tips when both are open. Keep both individual buttons and original advice. Display data-testid=drawing-tips-status as N of 2 tips open. Maintain correct aria-expanded, aria-controls and hidden panels. Own only mini-app/src/components/DrawingTips.tsx, mini-app/src/components/DrawingTips.test.tsx and mini-app/src/styles/drawing-tips.css. Test group and individual transitions, hidden advice, and keyboard activation with the existing harness. No new dependencies. Commit a clean contribution.",
+        "criteria": [
+          "AC-GROUP-TIPS",
+          "AC-STUDIO"
+        ],
+        "depends_on": [
+          "design"
+        ],
+        "requires": [
+          "repository_write"
+        ],
+        "required_files": [
+          "mini-app/src/components/DrawingTips.tsx",
+          "mini-app/src/components/DrawingTips.test.tsx"
+        ],
+        "required_decisions": []
+      },
+      {
+        "id": "integrate",
+        "title": "Review integration and seed the controlled build failure",
+        "role": "integrator",
+        "instructions": "Tempo has imported both contributions. Review their interfaces, original App.tsx wiring and relevant tests. Resolve genuine integration defects within mini-app/. Then create mini-app/src/pilot-repair-probe.ts containing exactly: export const pilotRepairProbe: string = 1; followed by a newline. This one exported type mismatch is an approved failure fixture included by tsconfig.app.json. Do not import it into application code, weaken tsconfig or fix the fixture in this task. Commit the probe and any integration fixes. Return a decision distinguishing this expected TypeScript error from all other findings. The separately reviewed repair must delete only this probe unless an additional defect is reviewed.",
+        "criteria": [
+          "AC-REMAINING",
+          "AC-GROUP-TIPS",
+          "AC-STUDIO"
+        ],
+        "depends_on": [
+          "remaining",
+          "group-tips"
+        ],
+        "requires": [
+          "repository_write"
+        ],
+        "required_files": [
+          "mini-app/src/pilot-repair-probe.ts"
+        ],
+        "required_decisions": [
+          "integration-and-controlled-failure"
+        ]
+      },
+      {
+        "id": "verify",
+        "title": "Independently review changes and identify the expected blocker",
+        "role": "verifier",
+        "instructions": "Read the integrated commit, component tests and approved criteria. Do not edit or commit files. Review remaining counts, group/individual disclosure behavior, keyboard/ARIA behavior and preservation of the studio. Inspect the exact controlled probe; report that a build cannot pass until a reviewed repair removes it. Use available nonmutating checks only; do not install dependencies. Return each required decision with concrete findings, evidence and current source SHA. Mark any unresolved real defect explicitly; do not call the candidate accepted or ready for deployment. Tempo performs fresh host checks and independent browser acceptance after repair.",
+        "criteria": [
+          "AC-REMAINING",
+          "AC-GROUP-TIPS",
+          "AC-STUDIO"
+        ],
+        "depends_on": [
+          "integrate"
+        ],
+        "requires": [],
+        "required_files": [],
+        "required_decisions": [
+          "remaining-review",
+          "tips-review",
+          "studio-review",
+          "expected-build-failure"
+        ]
+      }
+    ]
+  },
+  "bindings": {
+    "planner": "pilot-planner",
+    "implementer": "pilot-implementer",
+    "integrator": "pilot-integrator",
+    "verifier": "pilot-verifier"
+  },
+  "parallelism": 2,
+  "build_target": "react-mini-app-v1",
+  "checks": {
+    "AC-REMAINING": "open /\nexpect testid preparation-remaining \"3 steps remaining\"\nclick checkbox \"Photo selected\"\nexpect testid preparation-remaining \"2 steps remaining\"\nclick checkbox \"Style selected\"\nexpect testid preparation-remaining \"1 step remaining\"\nclick checkbox \"Detail reviewed\"\nexpect testid preparation-remaining \"Ready to draw\"\nexpect testid preparation-progress \"3 of 3 ready\"\nclick button \"Reset checklist\"\nexpect testid preparation-remaining \"3 steps remaining\"\nexpect testid preparation-progress \"0 of 3 ready\"\nclick checkbox \"Photo selected\"\nopen /\nexpect testid preparation-remaining \"3 steps remaining\"",
+    "AC-GROUP-TIPS": "open /\nexpect testid drawing-tips-status \"0 of 2 tips open\"\nclick button \"Expand all tips\"\nexpect testid drawing-tips-status \"2 of 2 tips open\"\nexpect text \"Use a clear, well-lit photo with one main subject.\"\nexpect text \"Start with Circle Shape Art for bold outlines; try Spiral FM Art for continuous lines.\"\nclick button \"Choosing a photo\"\nexpect testid drawing-tips-status \"1 of 2 tips open\"\nclick button \"Expand all tips\"\nexpect testid drawing-tips-status \"2 of 2 tips open\"\nclick button \"Collapse all tips\"\nexpect testid drawing-tips-status \"0 of 2 tips open\"",
+    "AC-STUDIO": "open /\nexpect heading \"Turn a photograph into a line worth keeping.\"\nupload label \"Choose a photoDrop or browse · JPG, PNG, WEBP · max 15 MB\" png-circle-v1\nexpect text \"Subject ready\"\nclick text \"Circle Shape Art\"\npress slider \"Detail\" Home\nclick button \"Generate SVG\"\ndownload button \"Download SVG SVG ready\" svg-v1"
+  },
+  "repair": {
+    "max_requests": 1,
+    "paths": [
+      "mini-app/src/pilot-repair-probe.ts"
+    ],
+    "instructions": "Confirm the failed build reports the approved string/number mismatch in mini-app/src/pilot-repair-probe.ts. Delete only that probe, commit its deletion and leave a clean checkout. Do not change application code, tests, tsconfig, dependencies or build scripts. Report any unrelated error instead of broadening the repair. Tempo will rerun required checks."
+  },
+  "release": {
+    "target_key": "preparation-feedback-pilot",
+    "replace_existing_target": false,
+    "publication_requires_separate_review": true
+  }
+}
