@@ -92,7 +92,9 @@ grant, binding, rotation and fallback changes without recording secrets.
    diagnoses a failed connection and completes a bounded product run from the UI. Retain actual
    per-task account/model attribution and provider-reported usage; display unknown costs as unknown.
 
-Begin the registry/Codex slice after the next supervised mini-app pilot and alongside CI work.
+The [second supervised mini-app pilot](SECOND_AGENT_PILOT.md) now has an accepted candidate and
+passed readiness evidence without operator source edits; its separate publication decision remains
+pending. Begin the registry/Codex slice next, alongside CI work.
 Do not defer account configuration until broad MCP integrations or distributed worker scaling.
 The complete mixed-provider feature remains open until the Claude and account-isolation gates pass.
 

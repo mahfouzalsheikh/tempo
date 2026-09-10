@@ -66,12 +66,19 @@ The [idea and evidence](http://localhost:8001/ideas/1/) and
 [local staging application](http://5c96e222bd9e46cbb267bab9669934ad.localhost:8032/)
 are accessible from the deployment host.
 
+The [second supervised pilot](SECOND_AGENT_PILOT.md), brief #2 / plan #4 / run #8, now adds
+version 2 task-contract evidence and a controlled native-agent repair without operator source edits.
+Its retained build #2 passed 31 application tests, two asset tests, 35 browser steps, preview health
+and an isolated rollback rehearsal. Usage was 1,481,164 reported tokens, with unknown dollar cost.
+Its source is pushed and its named staging target is prepared; publication is awaiting the separate
+artifact review. This is one additional enhancement and does not establish a repeatable success rate.
+
 Subsequent reliability steps are delivered, with different levels of evidence:
 
 | Change | Evidence and limit |
 | --- | --- |
 | Graph usage and replay timing (`e349cbc`) | Corrected graph-wide token reporting and preserved completed-task timestamps on replay; the pilot record identifies its original contribution checkpoints. |
-| Reviewed agent repair (`03e7a01`) | Automated execution and PostgreSQL tests cover one scoped repair turn, clean commit/path enforcement, fresh checks, interrupted work, duplicate requests, and retained history. It has not yet completed a new live product-agent pilot. |
+| Reviewed agent repair (`03e7a01`) | Automated execution and PostgreSQL tests cover one scoped repair turn, clean commit/path enforcement, fresh checks, interrupted work, duplicate requests, and retained history. Second pilot run 8 now exercises one native repair of the approved TypeScript probe, with no operator source edits and fresh passing checks; publication remains pending. |
 | Retained validation images (`fe26221`) | The deployed runner executed overlapping sandbox jobs on the new image and the pilot's original image, with exact result identities and isolation checks. This was a compatibility probe, not a new application delivery. |
 | Latest feature verification | Full suite: 652 passed, 24 environment-dependent skips; focused image/snapshot/authentication checks: 62 passed, four Docker skips; all seven real Docker sandbox tests passed. These counts describe that change's validation, not universal reliability. |
 | Deployment operation | Commit, push, backup, deployment, and live smoke checks completed; all eight services were healthy and the pilot's retained artifact/publication evidence remained valid. |
@@ -117,8 +124,8 @@ These are the current gaps; the original line-numbered baseline findings are his
 
 | Priority | Gap | Required proof or next change |
 | --- | --- | --- |
-| Next | Task/profile conflicts and weak completion semantics | Version 2 checks are implemented locally for declared write capabilities and required files/decisions. Enable and review them in the next pilot; prompt-prose inference and semantic deliverable verification remain outside this slice. |
-| Next | No fresh live delivery using the new repair path | Complete a new approved mini-app enhancement without operator source edits; exercise a controlled build failure and retain the repair plus fresh checks. |
+| Delivered, bounded evidence | Task/profile conflicts and weak completion semantics | Version 2 contracts passed in second pilot run 8, including required committed files and structured decisions. Prompt-prose inference and semantic deliverable verification remain outside this slice. |
+| Publication review pending | Fresh live delivery using the new repair path | Second pilot run 8 reached accepted readiness with one native repair, no operator source edits, and 35 passing browser steps. Review the exact artifact and new target before publication. |
 | Next | No repeated release-level evaluation | Record successes, failures, time, tokens, available costs, and each human intervention over repeated runs. Keep fixture pass rates separate from product delivery rates. |
 | Near term | No tracked GitHub Actions workflow | Add lint, Django/migration, unit, PostgreSQL race, and appropriate isolated runner regression lanes; retain test evidence in CI. |
 | Near term | No account-management flow or tested native Claude adapter | Add named provider accounts, scoped credentials/project grants, role bindings, isolated sessions, connection health and shared capacity. Prove multiple Codex accounts and a mixed Codex/Claude team; see [the account plan](AGENT_ACCOUNTS.md). |
@@ -368,14 +375,16 @@ experience, rather than adding empty destinations or exposing implementation det
 
 Preserve the dependencies: ownership before more workers, isolated checkouts before concurrent
 writers, governed capabilities before MCP writes, and exact evidence identities before promotion.
-The next delivery gate is the no-manual-code-editing pilot, not completion of the entire roadmap.
+The second pilot reached accepted readiness without operator source edits. Its publication decision
+remains pending; next implementation work is the account registry/Codex slice alongside CI and
+repeat-run measurement.
 
 **13. Prioritized remaining implementation tickets**
 
 | Order | Ticket | Acceptance and evidence |
 | --- | --- | --- |
-| 1 | **Check plan/profile compatibility and required deliverables.** Opt-in version 2 contracts were deployed as `470a949`; enable and review them for the next pilot. | Explicit write requirements are checked against profile capabilities and runtime settings before model work. Required committed files and structured decisions gate task acceptance. Version 1 serialization stays unchanged. Deployed checks passed; a native-agent pilot remains pending. See [task contracts](TASK_CONTRACTS.md). |
-| 2 | **Run a new supervised pilot without manual code edits.** Reuse the supported React target, freeze observable criteria, and include a recoverable build failure. | Native agents implement and repair the candidate; fresh required checks, browser evidence, preview, staging readiness, and rollback pass. Record every approval, environment intervention, and any operator edit; an edit makes this an assisted attempt. |
+| 1 | **Check plan/profile compatibility and required deliverables.** Opt-in version 2 contracts were deployed as `470a949` and passed in native pilot run 8. | Explicit write requirements are checked against profile capabilities and runtime settings before model work. Required committed files and structured decisions gate task acceptance. Version 1 serialization stays unchanged. Deployed checks and all five original pilot task contracts passed. See [task contracts](TASK_CONTRACTS.md). |
+| 2 | **Complete the second supervised pilot publication review.** Run 8 reached accepted readiness without manual code edits after a controlled failure and one native repair. | Native agents implement and repair the candidate; fresh required checks, browser evidence, preview, staging readiness, and rollback pass. Record every approval, environment intervention, and any operator edit; an edit makes this an assisted attempt. |
 | 3 | **Measure repeated delivery and establish CI.** Start with a small repeated pilot set, then expand the 20–30-task benchmark. Add automatic regression lanes and a release-level result record. | Reports include denominators, failed attempts, interventions, duration, tokens, known costs/unknown costs, and evidence completeness. CI runs the defined fast and PostgreSQL checks; Docker/browser lanes run in suitable isolated infrastructure. |
 | 3a | **Configure providers, accounts, and agent teams.** Deliver named Codex connections and project/profile assignment first, then a tested Claude adapter and shared account scheduling. | Two accounts of the same provider run without credential/session crossover; a mixed Codex/Claude team records actual task attribution. Revocation, reconnect, capacity and explicit fallback are tested. Secrets stay out of workflow JSON and snapshots. See [delivery slices](AGENT_ACCOUNTS.md). |
 | 4 | **Strengthen planning, review, and handoffs.** Add repository-aware plan proposals, structured findings/results, independent runtime-neutral review, and explicit conflict-resolution assignments. | Missing deliverables and unresolved required findings block readiness. A three-task overlap/conflict fixture integrates only accepted work and obtains fresh verification. Runtime differences are tested rather than inferred from profile names. |

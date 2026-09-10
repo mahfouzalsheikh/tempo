@@ -54,7 +54,13 @@ The idea's run view exposes these records in each node's **Task deliverables** d
 
 Missing deliverables stop the task before accepting its contribution or unlocking dependants.
 Version 1 repairs keep their existing reviewed repair contract. General typed findings, semantic
-document checks, automated plan discovery, and a live version 2 pilot remain future work.
+document checks and automated plan discovery remain future work.
+
+Live evidence on 2026-09-10: [second pilot run 8](SECOND_AGENT_PILOT.md) passed all five version 2
+task contracts, including the committed planner document and exact decision IDs. Its controlled
+build failure was repaired by a native agent with no operator source edits, followed by fresh
+required checks and 35 passing browser steps. This demonstrates the bounded contract path on one
+existing-application enhancement; it does not establish semantic correctness for arbitrary tasks.
 
 Local validation on 2026-09-10: the full suite passed 689 tests with 24 environment-dependent
 skips. After the final retry-baseline and evidence-view changes, the affected task, execution,

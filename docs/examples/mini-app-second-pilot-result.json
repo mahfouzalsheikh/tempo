@@ -1,0 +1,839 @@
+{
+  "kind": "supervised-live-pilot-with-reviewed-agent-repair",
+  "recorded_at": "2026-09-10T22:00:49.482540+00:00",
+  "brief_id": 2,
+  "plan_id": 4,
+  "plan_digest": "b583e3b927b8284c075657a77ff4d24e70948d1759fc9ca5840594746b768852",
+  "approved_at": "2026-09-10T21:47:37.094994+00:00",
+  "run_id": 8,
+  "status": "succeeded",
+  "base_sha": "5575c09854c10d45aa5cfdb2a9a6adec773b1da4",
+  "source_sha": "d890ae249234aa8ea5f69f5655ce48b665c747df",
+  "source_branch": "tempo/preparation-feedback-run-8",
+  "source_repository": "https://github.com/mahfouzalsheikh/drawing-algorithms",
+  "snapshot_digest": "45d0f17bf14e118778b10b11b2aa4d7158370afcfb3b327fd6016383455be582",
+  "product_snapshot_digest": "5b136b5e76f7a23455a71f096ede27429cf4a23d778fad1ccd721f7aa8e2d667",
+  "reported_model_tokens": 1481164,
+  "initial_attempt_tokens": 1287721,
+  "repair_tokens": 193443,
+  "approved_combined_token_ceiling": 6000000,
+  "known_dollar_cost": null,
+  "first_node_started_at": "2026-09-10T21:47:39.679050+00:00",
+  "candidate_finished_at": "2026-09-10T21:57:24.754725+00:00",
+  "dispatch_to_candidate_seconds": 587.659731,
+  "implementer_overlap_seconds": 90.20366,
+  "nodes": [
+    {
+      "id": "design",
+      "status": "succeeded",
+      "profile": "product-planner",
+      "runtime": "codex",
+      "model": "default",
+      "started_at": "2026-09-10T21:47:39.679050+00:00",
+      "finished_at": "2026-09-10T21:49:54.090744+00:00",
+      "reported_tokens": 297460,
+      "deliverables": {
+        "files": [
+          {
+            "blob": "d81c9f4efbdec0eedf4aca34378509cd1b692824",
+            "path": "mini-app/docs/preparation-feedback-design.md",
+            "size": 10641
+          }
+        ],
+        "schema": 1,
+        "decisions": [
+          {
+            "id": "source-and-interfaces",
+            "decision": "Confirmed reviewed HEAD 5575c09854c10d45aa5cfdb2a9a6adec773b1da4 before editing. Preserve both named, zero-prop component exports and existing App.tsx wiring.",
+            "rationale": "Inspected AGENTS.md, both components/tests, focused CSS, App.tsx, studio and build configuration. Documented derived checklist feedback, parent-owned disclosure state, accessibility, verification and the exact integrator-only TypeScript probe."
+          },
+          {
+            "id": "file-ownership",
+            "decision": "Committed only mini-app/docs/preparation-feedback-design.md in 24b55e3c26841a9a191659dde642499d607233d7.",
+            "rationale": "Document assigns each implementer its component, test and CSS files; integrator owns integration fixes and probe; verifier edits nothing. Whitespace checks passed and working tree is clean. No features implemented, dependencies installed, builds run or publication performed."
+          }
+        ],
+        "source_sha": "24b55e3c26841a9a191659dde642499d607233d7"
+      }
+    },
+    {
+      "id": "remaining",
+      "status": "succeeded",
+      "profile": "product-implementer",
+      "runtime": "codex",
+      "model": "default",
+      "started_at": "2026-09-10T21:49:55.828375+00:00",
+      "finished_at": "2026-09-10T21:51:26.035717+00:00",
+      "reported_tokens": 172188,
+      "deliverables": {
+        "files": [
+          {
+            "blob": "f89c3468e61706731e4b227094b86dd733af2302",
+            "path": "mini-app/src/components/PreparationChecklist.tsx",
+            "size": 1658
+          },
+          {
+            "blob": "166f5989b9def32fa67a5a358216735a64c16e5e",
+            "path": "mini-app/src/components/PreparationChecklist.test.tsx",
+            "size": 3814
+          }
+        ],
+        "schema": 1,
+        "decisions": [],
+        "source_sha": "f0b784c92dfa16130d6e63e493eac9124e0b5f51"
+      }
+    },
+    {
+      "id": "group-tips",
+      "status": "succeeded",
+      "profile": "product-implementer",
+      "runtime": "codex",
+      "model": "default",
+      "started_at": "2026-09-10T21:49:55.832057+00:00",
+      "finished_at": "2026-09-10T21:52:13.544791+00:00",
+      "reported_tokens": 210140,
+      "deliverables": {
+        "files": [
+          {
+            "blob": "67e690d223a66c5b8592d53379e1d04acb652b21",
+            "path": "mini-app/src/components/DrawingTips.tsx",
+            "size": 2122
+          },
+          {
+            "blob": "75dcf911813677508bd524ae773b3cb3004e9de7",
+            "path": "mini-app/src/components/DrawingTips.test.tsx",
+            "size": 7071
+          }
+        ],
+        "schema": 1,
+        "decisions": [],
+        "source_sha": "b152566dc327e6391f5f2b3807704de97b89523b"
+      }
+    },
+    {
+      "id": "integrate",
+      "status": "succeeded",
+      "profile": "product-integrator",
+      "runtime": "codex",
+      "model": "default",
+      "started_at": "2026-09-10T21:52:13.551662+00:00",
+      "finished_at": "2026-09-10T21:53:45.272406+00:00",
+      "reported_tokens": 441473,
+      "deliverables": {
+        "files": [
+          {
+            "blob": "d2905e3e04d9bf87696a2f0d221fa965f96bbb6c",
+            "path": "mini-app/src/pilot-repair-probe.ts",
+            "size": 43
+          }
+        ],
+        "schema": 1,
+        "decisions": [
+          {
+            "id": "integration-and-controlled-failure",
+            "decision": "Reviewed imported contributions; no integration fixes needed. Committed only the exact approved probe in 76204136eadcca381e73efa325850d9b58d4a6cc. Working tree is clean.",
+            "rationale": "Named zero-prop interfaces, App wiring, checklist feedback/reset, disclosure behavior, accessibility and studio code are preserved. The unimported probe is included by tsconfig and intentionally predicts TS2322; reviewed repair must delete only that file. Separately, npm test failed because Vitest is missing; the build failed because sharp is missing, before compilation. Distribution and browser acceptance remain unverified. Whitespace checks passed. Nothing pushed, published or deployed."
+          }
+        ],
+        "source_sha": "76204136eadcca381e73efa325850d9b58d4a6cc"
+      }
+    },
+    {
+      "id": "verify",
+      "status": "succeeded",
+      "profile": "product-verifier",
+      "runtime": "codex",
+      "model": "default",
+      "started_at": "2026-09-10T21:53:45.277530+00:00",
+      "finished_at": "2026-09-10T21:55:03.639110+00:00",
+      "reported_tokens": 166460,
+      "deliverables": {
+        "files": [],
+        "schema": 1,
+        "decisions": [
+          {
+            "id": "remaining-review",
+            "decision": "Source review supports AC-REMAINING; no implementation defect identified. Runtime verification remains pending.",
+            "rationale": "At SHA 76204136eadcca381e73efa325850d9b58d4a6cc, PreparationChecklist.tsx derives all four exact remaining messages from checked state. Labels, native checkboxes, preparation-progress and its single polite live region remain intact. Tests cover every count, unchecking, repeated reset from every count, reselection and remount. Local state initializes empty without persistence. Vitest and Testing Library are unavailable, so tests were inspected but not executed; browser reload behavior remains unverified."
+          },
+          {
+            "id": "tips-review",
+            "decision": "Source review supports AC-GROUP-TIPS; no implementation defect identified. Browser keyboard and mobile checks remain pending.",
+            "rationale": "At SHA 76204136eadcca381e73efa325850d9b58d4a6cc, DrawingTips.tsx derives the group label and N of 2 tips open from two parent-owned booleans. Individual toggles preserve the other panel. Original advice, stable useId panel references, aria-expanded and hidden attributes remain intact. Tests cover required transitions, both partial states, visibility, focus and instance isolation. Keyboard tests explicitly synthesize activation clicks and do not prove native browser Enter/Space behavior. Focus outlines and wrapping CSS are present, and the existing mobile grid is unchanged. Tests could not execute because dependencies are missing."
+          },
+          {
+            "id": "studio-review",
+            "decision": "Studio preservation is supported by source comparison; AC-STUDIO browser acceptance is unverified. No unresolved studio implementation defect was identified.",
+            "rationale": "At SHA 76204136eadcca381e73efa325850d9b58d4a6cc, App wiring, GeneratorStudio, workers, image processing, generators and SVG validation are unchanged from reviewed base 5575c09854c10d45aa5cfdb2a9a6adec773b1da4. Both help components retain named zero-prop exports and independent state. PNG input, style selection, native Detail range minimum 0, generation validation and download remain present. The fixed-PNG/Circle/Home/download journey and svg-v1 byte validation were not performed. Changes are confined to the eight intended mini-app files; scripts, dependencies and lockfiles are unchanged. Changed source files satisfy the line cap and git diff --check passes."
+          },
+          {
+            "id": "expected-build-failure",
+            "decision": "The approved probe is present and blocks TypeScript compilation until a separately reviewed repair removes it. Missing dependencies are a separate verification blocker.",
+            "rationale": "At SHA 76204136eadcca381e73efa325850d9b58d4a6cc, the committed regular file mini-app/src/pilot-repair-probe.ts is exactly 43 bytes: export const pilotRepairProbe: string = 1; followed by a newline. It is unimported but included by tsconfig.app.json's src inclusion, predicting TS2322. That diagnostic was not executed locally. Read-only resolution checks independently found TypeScript, Vitest, Testing Library and sharp unavailable. No dependencies were installed, build attempted, files edited or commits created during verification; the working tree remains clean. Tempo owns fresh host checks and independent browser acceptance after repair; this review does not establish acceptance or deployment readiness."
+          }
+        ],
+        "source_sha": "76204136eadcca381e73efa325850d9b58d4a6cc"
+      }
+    },
+    {
+      "id": "repair-4f3110c2496e4f0d84466138693065d0",
+      "status": "succeeded",
+      "profile": "product-implementer",
+      "runtime": "",
+      "model": "",
+      "started_at": "2026-09-10T21:56:05.616861+00:00",
+      "finished_at": "2026-09-10T21:56:53.602387+00:00",
+      "reported_tokens": 193443,
+      "deliverables": null
+    }
+  ],
+  "validation": [
+    {
+      "id": 39,
+      "status": "failed",
+      "started_at": "2026-09-10T21:55:13.982788+00:00",
+      "finished_at": "2026-09-10T21:55:26.935238+00:00",
+      "checks": [
+        {
+          "check_id": "reviewed-pilot-base",
+          "exit_code": 0
+        },
+        {
+          "check_id": "release-mini-tests",
+          "exit_code": 0
+        },
+        {
+          "check_id": "release-mini-build",
+          "exit_code": 2
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "status": "passed",
+      "started_at": "2026-09-10T21:57:04.154110+00:00",
+      "finished_at": "2026-09-10T21:57:22.547117+00:00",
+      "checks": [
+        {
+          "check_id": "reviewed-pilot-base",
+          "exit_code": 0
+        },
+        {
+          "check_id": "release-mini-tests",
+          "exit_code": 0
+        },
+        {
+          "check_id": "release-mini-build",
+          "exit_code": 0
+        }
+      ]
+    }
+  ],
+  "test_results": {
+    "vitest_passed": 31,
+    "node_asset_tests_passed": 2,
+    "production_build_and_distribution": "passed"
+  },
+  "repair": {
+    "action_id": 37,
+    "requested_at": "2026-09-10T21:56:05.038871+00:00",
+    "applied_at": "2026-09-10T21:56:05.038509+00:00",
+    "review_digest": "c0a7195706c0b6fae481647d6f0880923eb4aa8630e485d6701b500f40258b9d",
+    "contract_digest": "5a4a9fdc02852c270fb4bfedf025dfec812b39c745f8e721b1cc224b5b97eff1",
+    "contract": {
+      "run_id": 8,
+      "schema": 1,
+      "source": {
+        "head": "76204136eadcca381e73efa325850d9b58d4a6cc",
+        "fingerprint": "8a616347a6e0942eb8f5b566e18c8774dd0fa56051c08635ca93c68c4c50f4ef"
+      },
+      "failure": {
+        "error": "The product candidate failed checks or changed during validation.",
+        "run_id": 8,
+        "source": {
+          "head": "76204136eadcca381e73efa325850d9b58d4a6cc",
+          "fingerprint": "8a616347a6e0942eb8f5b566e18c8774dd0fa56051c08635ca93c68c4c50f4ef"
+        },
+        "attempt": 0,
+        "repairs": [],
+        "finished_at": "2026-09-10 21:55:27.382875+00:00",
+        "validations": [
+          {
+            "id": 39,
+            "status": "failed"
+          }
+        ],
+        "failed_checks": [
+          {
+            "output": "\n> drawing-algorithms-mini@0.1.0 build\n> npm run prepare:assets && tsc -b && vite build && node scripts/prerender.mjs\n\n\n> drawing-algorithms-mini@0.1.0 prepare:assets\n> node scripts/prepare-assets.mjs\n\nPrepared onnx-community/ormbg-ONNX@034e2d884afbab897e10e78fc5bb566b29533fd6, the ONNX WASM runtime, and the social preview.\nsrc/pilot-repair-probe.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.\n",
+            "check_id": "release-mini-build",
+            "exit_code": 2
+          }
+        ],
+        "product_digest": "5b136b5e76f7a23455a71f096ede27429cf4a23d778fad1ccd721f7aa8e2d667",
+        "snapshot_digest": "45d0f17bf14e118778b10b11b2aa4d7158370afcfb3b327fd6016383455be582"
+      },
+      "node_id": "repair-4f3110c2496e4f0d84466138693065d0",
+      "assignment": {
+        "paths": [
+          "mini-app/src/pilot-repair-probe.ts"
+        ],
+        "instructions": "Confirm the failed build reports the approved string/number mismatch in mini-app/src/pilot-repair-probe.ts. Delete only that probe, commit its deletion and leave a clean checkout. Do not change application code, tests, tsconfig, dependencies or build scripts. Report any unrelated error instead of broadening the repair. Tempo will rerun required checks."
+      },
+      "product_digest": "5b136b5e76f7a23455a71f096ede27429cf4a23d778fad1ccd721f7aa8e2d667",
+      "snapshot_digest": "45d0f17bf14e118778b10b11b2aa4d7158370afcfb3b327fd6016383455be582"
+    },
+    "source_edit": "Deletion of mini-app/src/pilot-repair-probe.ts only",
+    "source_sha": "d890ae249234aa8ea5f69f5655ce48b665c747df"
+  },
+  "build": {
+    "id": 2,
+    "sha256": "c85b28a03d8fe043110432ef754ee3b27ae2feb60fd31bbe8e07b44181cd3246",
+    "manifest_digest": "e0c6d4e5a57b7e4914b257df1b4bc7984c7134658728be63f5b5c9a4c533090b",
+    "zip_bytes": 37947513,
+    "file_count": 26
+  },
+  "acceptance": {
+    "suite_id": 2,
+    "suite_digest": "a1c530a6655858052da72aef5b201739680ae014d720b1d9cb8432be64b78c53",
+    "attempt_id": 2,
+    "status": "passed",
+    "report_digest": "36c4ec8b86427c092cfe2ef087b8b202f6e1adf9c710f946f1b8033f1a3649d6",
+    "image": "sha256:f9db9df3929d9bb04ca9a24ad4687b536e107b2c91cf046def7781540f44c6f1",
+    "results": [
+      {
+        "id": "AC-REMAINING",
+        "error": "",
+        "steps": [
+          {
+            "action": [
+              "open",
+              "/"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "preparation-remaining",
+              "3 steps remaining"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "click",
+              "checkbox",
+              "Photo selected"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "preparation-remaining",
+              "2 steps remaining"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "click",
+              "checkbox",
+              "Style selected"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "preparation-remaining",
+              "1 step remaining"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "click",
+              "checkbox",
+              "Detail reviewed"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "preparation-remaining",
+              "Ready to draw"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "preparation-progress",
+              "3 of 3 ready"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "click",
+              "button",
+              "Reset checklist"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "preparation-remaining",
+              "3 steps remaining"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "preparation-progress",
+              "0 of 3 ready"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "click",
+              "checkbox",
+              "Photo selected"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "open",
+              "/"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "preparation-remaining",
+              "3 steps remaining"
+            ],
+            "status": "passed"
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "id": "AC-GROUP-TIPS",
+        "error": "",
+        "steps": [
+          {
+            "action": [
+              "open",
+              "/"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "drawing-tips-status",
+              "0 of 2 tips open"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "click",
+              "button",
+              "Expand all tips"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "drawing-tips-status",
+              "2 of 2 tips open"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "text",
+              "Use a clear, well-lit photo with one main subject."
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "text",
+              "Start with Circle Shape Art for bold outlines; try Spiral FM Art for continuous lines."
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "click",
+              "button",
+              "Choosing a photo"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "drawing-tips-status",
+              "1 of 2 tips open"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "click",
+              "button",
+              "Expand all tips"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "drawing-tips-status",
+              "2 of 2 tips open"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "click",
+              "button",
+              "Collapse all tips"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "testid",
+              "drawing-tips-status",
+              "0 of 2 tips open"
+            ],
+            "status": "passed"
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "id": "AC-STUDIO",
+        "error": "",
+        "steps": [
+          {
+            "action": [
+              "open",
+              "/"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "heading",
+              "Turn a photograph into a line worth keeping."
+            ],
+            "status": "passed"
+          },
+          {
+            "file": {
+              "size": 27812,
+              "sha256": "3ffafa96a7df4d40abd80a5e50ae062e60dbcf6c2b8d557a24d9c7a530f2cf08",
+              "fixture": "png-circle-v1",
+              "filename": "circle.png",
+              "media_type": "image/png"
+            },
+            "action": [
+              "upload",
+              "label",
+              "Choose a photoDrop or browse \u00b7 JPG, PNG, WEBP \u00b7 max 15 MB",
+              "png-circle-v1"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "expect",
+              "text",
+              "Subject ready"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "click",
+              "text",
+              "Circle Shape Art"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "press",
+              "slider",
+              "Detail",
+              "Home"
+            ],
+            "status": "passed"
+          },
+          {
+            "action": [
+              "click",
+              "button",
+              "Generate SVG"
+            ],
+            "status": "passed"
+          },
+          {
+            "file": {
+              "size": 188584,
+              "sha256": "9e964abe4e843e53c836a039a4f8d2a7b48a7e96ffb9a2be6b33f4d9ce00c7f0",
+              "filename": "algorithmic-ink-circle-stipple-2026-09-10.svg",
+              "validator": "svg-v1",
+              "media_type": "image/svg+xml",
+              "geometry_elements": 3960
+            },
+            "action": [
+              "download",
+              "button",
+              "Download SVG SVG ready",
+              "svg-v1"
+            ],
+            "status": "passed"
+          }
+        ],
+        "status": "passed"
+      }
+    ]
+  },
+  "preview": {
+    "configured": true,
+    "active": true,
+    "expires_at": "2026-09-11T21:57:40.679563+00:00",
+    "url": "http://b0369a99984f48ae9ba84c1317089fd5.localhost:8031/"
+  },
+  "preview_health": {
+    "status": "passed",
+    "passed": true,
+    "attempt_id": 2,
+    "valid_until": "2026-09-10T22:03:55.011918+00:00",
+    "report_digest": "d974bfd7b05ced6d0dbc541b1a716f0f53c7ddb0e5c01a34a0840ca0cf593d6f",
+    "report": {
+      "checks": {
+        "schema": 1,
+        "checker": "preview-health-v2",
+        "file_count": 26,
+        "root_digest": "709aadedfc8609d864a475e36cc6287fb70df5524df30a6570f9b75ea4c49d2f",
+        "total_bytes": 69996771,
+        "headers_digest": "e89220d1446228b12d9019f4b353fcc5df25cff9634850ded1b3366bc263f3a8",
+        "inventory_digest": "23ceb1a993c2ca3b4f0155cba875f406d4e4484d5dfaf482db7c4b90df3bb435"
+      },
+      "identity": {
+        "checker": "preview-health-v2",
+        "endpoint": [
+          "preview-server",
+          8080
+        ],
+        "expires_at": "2026-09-11T21:57:40.679563+00:00",
+        "generation": "e3ea0c57aa9e662256b3a4b189804036f7180d1f9e39a7330190a282281ee390",
+        "public_port": 8031,
+        "publication": {
+          "size": 37947513,
+          "inode": 26514416,
+          "ctime_ns": 1789077461184853388,
+          "mtime_ns": 1789077461184853388
+        },
+        "artifact_digest": "c85b28a03d8fe043110432ef754ee3b27ae2feb60fd31bbe8e07b44181cd3246",
+        "manifest_digest": "e0c6d4e5a57b7e4914b257df1b4bc7984c7134658728be63f5b5c9a4c533090b"
+      },
+      "checked_at": "2026-09-10T21:58:55.011918+00:00",
+      "worker_revision": "69faf2efab2cb2d2fa8391b265fecb116a62faa4"
+    }
+  },
+  "release_configuration": {
+    "status": "Configuration reviewed for local staging",
+    "passed": true,
+    "id": 2,
+    "digest": "b135bf42625534357108c9fdd65d88b4c8f3106bf8ee049b5a0acb98b5c7c81f",
+    "specification": {
+      "origin": "http://8d5656972aa341979b05fe40d64946f6.localhost:8032",
+      "schema": 1,
+      "adapter": "local-static-v1",
+      "runtime": {
+        "kind": "static",
+        "variables": {},
+        "migrations": [],
+        "secret_references": []
+      },
+      "base_path": "/",
+      "target_id": 2,
+      "target_key": "preparation-feedback-pilot",
+      "environment": "local-staging",
+      "target_slot": "8d5656972aa341979b05fe40d64946f6",
+      "health_policy": "all-inventory-files-v1",
+      "browser_policy": "sandbox allow-scripts allow-same-origin allow-downloads; default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; frame-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'",
+      "artifact_digest": "c85b28a03d8fe043110432ef754ee3b27ae2feb60fd31bbe8e07b44181cd3246",
+      "manifest_digest": "e0c6d4e5a57b7e4914b257df1b4bc7984c7134658728be63f5b5c9a4c533090b",
+      "rollback_policy": "restore-previous-immutable-bundle-v1",
+      "snapshot_digest": "45d0f17bf14e118778b10b11b2aa4d7158370afcfb3b327fd6016383455be582",
+      "build_profile_digest": "d2d8fadab78922a389cc04836fd85d764c25611024cdb91c9645ffed3139890b"
+    }
+  },
+  "rollback_rehearsal": {
+    "passed": true,
+    "status": "Rollback rehearsed for this build and target",
+    "attempt_id": 2,
+    "report_digest": "ee42c35e82702db7ba5f186cece2552282ef69d72e0061d83928b7f1c295aec0",
+    "report": {
+      "checks": {
+        "cleanup": {
+          "status": 404,
+          "checker": "staging-withdrawal-v1",
+          "headers_digest": "e89220d1446228b12d9019f4b353fcc5df25cff9634850ded1b3366bc263f3a8"
+        },
+        "candidate": {
+          "schema": 1,
+          "checker": "preview-health-v2",
+          "file_count": 26,
+          "root_digest": "709aadedfc8609d864a475e36cc6287fb70df5524df30a6570f9b75ea4c49d2f",
+          "total_bytes": 69996771,
+          "headers_digest": "e89220d1446228b12d9019f4b353fcc5df25cff9634850ded1b3366bc263f3a8",
+          "inventory_digest": "23ceb1a993c2ca3b4f0155cba875f406d4e4484d5dfaf482db7c4b90df3bb435"
+        },
+        "restoration": {
+          "status": 404,
+          "checker": "staging-withdrawal-v1",
+          "headers_digest": "e89220d1446228b12d9019f4b353fcc5df25cff9634850ded1b3366bc263f3a8"
+        }
+      },
+      "identity": {
+        "checker": "rollback-rehearsal-v1",
+        "baseline": null,
+        "endpoint": [
+          "release-server",
+          8080
+        ],
+        "target_id": 2,
+        "public_port": 8032,
+        "target_slot": "8d5656972aa341979b05fe40d64946f6",
+        "storage_root": "/data/releases",
+        "artifact_digest": "c85b28a03d8fe043110432ef754ee3b27ae2feb60fd31bbe8e07b44181cd3246",
+        "manifest_digest": "e0c6d4e5a57b7e4914b257df1b4bc7984c7134658728be63f5b5c9a4c533090b",
+        "configuration_id": 2,
+        "configuration_digest": "b135bf42625534357108c9fdd65d88b4c8f3106bf8ee049b5a0acb98b5c7c81f"
+      },
+      "checked_at": "2026-09-10T21:58:59.215267+00:00",
+      "worker_revision": "69faf2efab2cb2d2fa8391b265fecb116a62faa4"
+    },
+    "valid_until": "2026-09-11T21:58:59.215267+00:00"
+  },
+  "readiness": {
+    "evaluated_at": "2026-09-10T22:00:49.482540+00:00",
+    "ready": true,
+    "gates": [
+      {
+        "id": "candidate",
+        "title": "Build and required checks",
+        "status": "passed",
+        "detail": "Saved ZIP, source identity, approved execution contract, and required checks verified."
+      },
+      {
+        "id": "scope",
+        "title": "Current approved scope",
+        "status": "passed",
+        "detail": "This build uses the latest brief and approved plan."
+      },
+      {
+        "id": "acceptance",
+        "title": "Reviewed browser checks",
+        "status": "passed",
+        "detail": "Every criterion in the latest reviewed check plan passed for this exact build."
+      },
+      {
+        "id": "preview_health",
+        "title": "Preview health evidence",
+        "status": "passed",
+        "detail": "The root page and every saved file matched over HTTP, with the expected browser security headers. Evidence expires after five minutes."
+      },
+      {
+        "id": "target",
+        "title": "Deployment target and configuration",
+        "status": "passed",
+        "detail": "Configuration reviewed for local staging"
+      },
+      {
+        "id": "rollback",
+        "title": "Rollback rehearsal",
+        "status": "passed",
+        "detail": "Rollback rehearsed for this build and target"
+      }
+    ],
+    "notice": "This is a point-in-time assessment, not deployment authorization. Promotion must re-evaluate current evidence. The original build manifest remains unchanged."
+  },
+  "browser_review": {
+    "viewport_widths": [
+      390,
+      1440
+    ],
+    "horizontal_overflow": false,
+    "native_enter_and_space": "passed",
+    "aria_expanded_controls_and_hidden": "passed",
+    "visible_focus_outline": "3px solid",
+    "application_console_errors": 0,
+    "hosting_console_warning": "Chromium warns about sandbox allow-scripts with allow-same-origin; existing isolated preview policy is unchanged.",
+    "screenshots": [
+      "../evidence/second-pilot/second-pilot-mobile.png",
+      "../evidence/second-pilot/second-pilot-desktop.png"
+    ]
+  },
+  "publication": {
+    "status": "awaiting-separate-artifact-and-target-review",
+    "target_key": "preparation-feedback-pilot",
+    "releases": []
+  },
+  "interventions": [
+    "User authorized exact prepared pilot, one scoped repair and 35 browser steps through continue instruction.",
+    "Operator recorded plan approval and dispatched through authenticated live controller API.",
+    "Native integrator local test/build commands lacked dependencies; normal host build preparation installed locked dependencies. No environment repair was needed.",
+    "Operator reviewed validation 39 and submitted exactly one prepared repair through the live API; an initial helper script tuple-handling error occurred before any HTTP dispatch and was corrected.",
+    "Operator approved the prepared browser suite for artifact 2, started preview, reviewed the named static target configuration, and queued isolated rollback rehearsal and HTTP health checks.",
+    "Operator independently checked browser layout, keyboard, focus and disclosure state at two widths.",
+    "Operator pushed the existing native-agent commits to the named source branch without editing application source."
+  ],
+  "operator_application_source_edits": 0,
+  "environment_repairs": 0,
+  "limits": [
+    "One additional existing-application enhancement; no repository bootstrap or repeatability claim.",
+    "Controlled fault and prespecified operator-reviewed repair; no autonomous diagnosis claim.",
+    "Six native Codex task sessions used the existing installation login, not multiple provider accounts.",
+    "Independent verifier source review preceded repair; fresh host and browser evidence covers the repaired artifact.",
+    "Reported tokens include input/context usage; monetary cost is unknown.",
+    "Preview health is valid for five minutes and readiness is a point-in-time assessment.",
+    "Rollback rehearsal used a private slot and restored an empty target baseline; no public activation or rollback has occurred."
+  ]
+}
