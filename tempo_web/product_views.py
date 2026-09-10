@@ -5,6 +5,7 @@ import uuid
 from asgiref.sync import async_to_sync
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError
+from django.db.models import F
 from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -201,7 +202,10 @@ def run_details(plan):
                 )
                 else None,
                 "nodes": list(
-                    run.node_runs.values("node_key", "name", "status", "error", "attempt")
+                    run.node_runs.values(
+                        "node_key", "name", "status", "error", "attempt",
+                        deliverables=F("output__deliverables"),
+                    )
                 ),
                 "tokens": run.total_tokens,
                 "acceptance": acceptance_summary(artifact) if artifact else None,

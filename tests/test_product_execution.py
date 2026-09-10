@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
@@ -96,6 +97,19 @@ def context(tmp_path):
         "bindings": dict.fromkeys(ROLES, "worker"),
         "parallelism": 2,
     }
+
+
+def checked_specification(raw):
+    raw = copy.deepcopy(raw)
+    raw["schema_version"] = 2
+    for task in raw["tasks"]:
+        task.update(
+            requires=["repository_write"] if task["role"] in {"implementer", "integrator"} else [],
+            required_files=[], required_decisions=[],
+        )
+    raw["tasks"][0]["required_decisions"] = ["approach"]
+    raw["tasks"][1]["required_files"] = ["left.txt"]
+    return raw
 
 
 @pytest.fixture
@@ -273,6 +287,9 @@ def test_corrupt_product_execution_fails_closed(factory, change):
         "forged_publication",
         "forged_build",
         "retry",
+        "checked",
+        "checked_missing",
+        "checked_writes",
     ],
 )
 async def test_product_executes_parallel_contributions_and_host_checks_after_cleanup(
@@ -283,6 +300,17 @@ async def test_product_executes_parallel_contributions_and_host_checks_after_cle
     from tempo.agent_runtime import providers
 
     source = factory.source
+    if failure in {"checked", "checked_missing", "checked_writes"}:
+        factory.config.agents["worker"].capabilities = ["repository_write"]
+        factory.plan = await sync_to_async(revise_plan)(
+            factory.product.pk, expected_plan_id=factory.plan.pk,
+            specification=checked_specification(factory.plan.specification),
+            user_id=factory.user.pk,
+        )
+        await sync_to_async(approve_plan)(
+            factory.product.pk, expected_plan_id=factory.plan.pk,
+            expected_digest=factory.plan.digest, user_id=factory.user.pk,
+        )
     if failure == "check":
         factory.config.validation.required_checks[0].command = "exit 1"
         factory.config.validation.max_attempts_per_run = 1
@@ -320,6 +348,18 @@ async def test_product_executes_parallel_contributions_and_host_checks_after_cle
                 assert "{{ 7*7 }}" in prompt and "SAVED ROLE" in prompt
                 assert "NEW ROLE" not in prompt
                 if profile.role == "planner":
+                    if failure == "checked_writes":
+                        (session.workspace / "unwanted.txt").write_text("Unapproved change")
+                        await git(session.workspace, "add", ".")
+                        await git(session.workspace, "commit", "-m", "Unexpected write")
+                    if failure == "checked":
+                        await on_event({
+                            "event": "item/completed",
+                            "payload": {"item": {"type": "agentMessage", "text": json.dumps({
+                                "decisions": [{"id": "approach", "decision": "Separate files",
+                                               "rationale": "Independent ownership"}],
+                            })}},
+                        })
                     if failure == "forged_validation":
                         await on_event({"event": "validation_completed", "success": True})
                     elif failure == "forged_build":
@@ -385,13 +425,32 @@ async def test_product_executes_parallel_contributions_and_host_checks_after_cle
             await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 25)
             await controller._worker_finished(issue.id, task)
             await run.arefresh_from_db()
-        elif failure:
+        elif failure and failure != "checked":
             assert run.status == "failed", run.error
             assert not await RunCheckpoint.objects.filter(
                 run=run, kind="product_candidate"
             ).aexists()
             assert not await ValidationAttempt.objects.filter(run=run, status="passed").aexists()
             assert not run.pull_request_url
+            if failure == "checked_missing":
+                assert "required decisions" in run.error
+                assert len(observed) == 1
+            if failure == "checked_writes":
+                assert "did not permit repository changes" in run.error
+                success, _ = await controller.control_run(
+                    run.pk, "retry", {}, user_id=factory.user.pk,
+                    idempotency_key="retry-read-only-violation",
+                )
+                assert success
+                token = await controller.persistence.claim_run(run.pk, "read-only-retry")
+                assert token
+                controller._dispatch_locked(issue, 1, run_record_id=run.pk, lease_token=token)
+                task = controller.running[issue.id].task
+                await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 25)
+                await controller._worker_finished(issue.id, task)
+                await run.arefresh_from_db()
+                assert run.status == "failed" and "original task commit" in run.error
+                assert len(observed) == 1
             if failure == "check":
                 assert (
                     await ValidationAttempt.objects.filter(run=run, status="failed").acount() == 1
@@ -416,6 +475,14 @@ async def test_product_executes_parallel_contributions_and_host_checks_after_cle
                 assert await ValidationAttempt.objects.filter(run=run).acount() == 1
             return
         assert run.status == "succeeded", run.error
+        if failure == "checked":
+            design = await run.node_runs.aget(node_key="design")
+            assert design.output["deliverables"]["decisions"][0]["id"] == "approach"
+            client = Client()
+            await sync_to_async(client.force_login)(factory.user)
+            response = await sync_to_async(client.get)(f"/ideas/{factory.product.pk}/")
+            assert b"Task deliverables" in response.content
+            assert b"Separate files" in response.content
         assert run.phase == "CandidateChecksPassed"
         assert run.snapshot_digest == old_digest
         assert len(observed) == (6 if failure == "retry" else 5) and run.total_tokens == 15

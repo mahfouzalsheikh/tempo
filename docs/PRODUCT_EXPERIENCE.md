@@ -1,5 +1,12 @@
 # Product experience: from idea to delivery
 
+Added 2026-09-10: [Agents & accounts](AGENT_ACCOUNTS.md) is a required setup workstream.
+Operators must be able to connect multiple Codex and Claude accounts, grant project access,
+assign accounts to agent roles, check connection status and capacity, and control fallback.
+Deliver this through guided forms with safe account labels and clear reconnection actions.
+The account registry/Codex slice starts after the next supervised pilot, alongside CI;
+Claude support requires its own adapter and authentication acceptance checks.
+
 The UI redesign is part of building the software factory, starting in Phase 0. It should help an
 operator answer three questions without reading agent logs: **What is happening? What needs me?
 What happens next?** Backend safety work continues alongside these improvements.

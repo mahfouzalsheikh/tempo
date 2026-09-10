@@ -1,6 +1,6 @@
 **Tempo: plan for a reliable software factory**
 
-Updated: **2026-09-08**. Reviewed implementation baseline: **`fe26221`**.
+Updated: **2026-09-10**. Reviewed deployment baseline: **`fe26221`**.
 The original assessment was made on 2026-09-06 at `45b84bd`; the plan was first committed as
 `7f40f0f`. This document now records current delivery status and the remaining roadmap.
 Historical findings and incremental progress notes remain available in Git history.
@@ -21,6 +21,13 @@ using the factory's repair workflow if needed, and retain the full acceptance an
 Brief, plan, repair, and release approvals may remain human decisions and must be reported as
 interventions. Passing this milestone would establish supervised delivery without manual coding;
 it would not establish unattended autonomous operation.
+
+The next implementation slice adds opt-in version 2 task requirements and host-checked file and
+decision deliverables; see [task contracts](TASK_CONTRACTS.md). The live pilot remains pending.
+The user also requested first-class configuration of the agents underneath Tempo: multiple
+Codex accounts, multiple Claude accounts, and explicit project/team assignments. This is now a
+prioritized workstream in [agent accounts](AGENT_ACCOUNTS.md), beginning after the next pilot
+alongside CI. Existing runtime definitions do not yet fulfill that account-management requirement.
 
 **1. Current scope and evidence**
 
@@ -107,10 +114,11 @@ These are the current gaps; the original line-numbered baseline findings are his
 
 | Priority | Gap | Required proof or next change |
 | --- | --- | --- |
-| Next | Task/profile conflicts and weak completion semantics | Reject a task that needs file edits when its chosen profile prohibits them; require evidence for specified deliverables instead of accepting a completed turn as fulfillment. |
+| Next | Task/profile conflicts and weak completion semantics | Version 2 checks are implemented locally for declared write capabilities and required files/decisions. Enable and review them in the next pilot; prompt-prose inference and semantic deliverable verification remain outside this slice. |
 | Next | No fresh live delivery using the new repair path | Complete a new approved mini-app enhancement without operator source edits; exercise a controlled build failure and retain the repair plus fresh checks. |
 | Next | No repeated release-level evaluation | Record successes, failures, time, tokens, available costs, and each human intervention over repeated runs. Keep fixture pass rates separate from product delivery rates. |
 | Near term | No tracked GitHub Actions workflow | Add lint, Django/migration, unit, PostgreSQL race, and appropriate isolated runner regression lanes; retain test evidence in CI. |
+| Near term | No account-management flow or tested native Claude adapter | Add named provider accounts, scoped credentials/project grants, role bindings, isolated sessions, connection health and shared capacity. Prove multiple Codex accounts and a mixed Codex/Claude team; see [the account plan](AGENT_ACCOUNTS.md). |
 | Near term | Existing-repository scope only | Add reviewed template bootstrap, repository/base identity, baseline checks, and a minimal new application before agent fan-out. |
 | Near term | Managed capabilities incomplete | Implement the authorization broker, one scoped MCP integration, and one pinned skill package before expanding connector breadth. |
 | Expansion | Local static release only | Add an explicitly selected public target, then a service/database stack with configuration, secret references, migration validation, health and recovery contracts. |
@@ -363,9 +371,10 @@ The next delivery gate is the no-manual-code-editing pilot, not completion of th
 
 | Order | Ticket | Acceptance and evidence |
 | --- | --- | --- |
-| 1 | **Check plan/profile compatibility and required deliverables.** Make task needs and profile capabilities explicit; validate them before dispatch. Add an enforceable result for required files/decisions. | The pilot's read-only-planner/write-document conflict is rejected before model work. A corrected plan/profile combination proceeds, and missing required output blocks completion. Saved runs keep their original contracts. |
+| 1 | **Check plan/profile compatibility and required deliverables.** Opt-in version 2 contracts are implemented locally; enable and review them for the next pilot. | Explicit write requirements are checked against profile capabilities and runtime settings before model work. Required committed files and structured decisions gate task acceptance. Version 1 serialization stays unchanged. Live evidence remains pending; see [task contracts](TASK_CONTRACTS.md). |
 | 2 | **Run a new supervised pilot without manual code edits.** Reuse the supported React target, freeze observable criteria, and include a recoverable build failure. | Native agents implement and repair the candidate; fresh required checks, browser evidence, preview, staging readiness, and rollback pass. Record every approval, environment intervention, and any operator edit; an edit makes this an assisted attempt. |
 | 3 | **Measure repeated delivery and establish CI.** Start with a small repeated pilot set, then expand the 20–30-task benchmark. Add automatic regression lanes and a release-level result record. | Reports include denominators, failed attempts, interventions, duration, tokens, known costs/unknown costs, and evidence completeness. CI runs the defined fast and PostgreSQL checks; Docker/browser lanes run in suitable isolated infrastructure. |
+| 3a | **Configure providers, accounts, and agent teams.** Deliver named Codex connections and project/profile assignment first, then a tested Claude adapter and shared account scheduling. | Two accounts of the same provider run without credential/session crossover; a mixed Codex/Claude team records actual task attribution. Revocation, reconnect, capacity and explicit fallback are tested. Secrets stay out of workflow JSON and snapshots. See [delivery slices](AGENT_ACCOUNTS.md). |
 | 4 | **Strengthen planning, review, and handoffs.** Add repository-aware plan proposals, structured findings/results, independent runtime-neutral review, and explicit conflict-resolution assignments. | Missing deliverables and unresolved required findings block readiness. A three-task overlap/conflict fixture integrates only accepted work and obtains fresh verification. Runtime differences are tested rather than inferred from profile names. |
 | 5 | **Bootstrap a new application.** Begin with a versioned React template and controlled repository creation, base commit, toolchain checks, CI, and configuration contract. | An idea creates a new repository and working application through the product flow, then passes the same artifact/acceptance/readiness gates without manual source edits. A second operator can complete onboarding. |
 | 6 | **Deliver one governed skill and MCP capability.** Build the common authorization/effect contract, then pin and provision a selected skill and connector. | Calls are attributable to project/run/task and current authority; credentials stay scoped; schema/auth changes fail safely. Package/schema identities appear in new versioned snapshots without rewriting historical ones. |
@@ -378,6 +387,8 @@ Tickets 1–2 are the immediate sequence. Begin CI and measurement alongside the
 recording outcomes until the whole benchmark or distributed architecture exists. Later tickets
 should be split into deployable slices with their own acceptance checks. Capability breadth and
 additional stacks should follow evidence that the supported path works reliably.
+Account configuration starts alongside ticket 3, before broad connector expansion; provider
+authentication methods must be verified against pinned adapters before the UI promises support.
 
 For every completed implementation slice, retain relevant regression evidence and follow the
 requested **commit → push → deploy → live verification** workflow. Preserve issue-to-PR

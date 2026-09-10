@@ -119,6 +119,9 @@ def compile_product(product_snapshot):
         raise IntakeConflict("Select a configured agent profile for each product role.")
     if type(parallelism) is not int or not 1 <= parallelism <= source.workflow.max_parallel_nodes:
         raise IntakeConflict("Parallelism exceeds the project's configured workflow limit.")
+    from .task_contracts import check_task_profiles
+
+    check_task_profiles(plan, source, bindings)
     raw = source.model_dump(mode="json")
     raw["tool_providers"] = {"product-none": {"kind": "tempo", "allow_all": False, "tools": []}}
     raw["agents"] = {}

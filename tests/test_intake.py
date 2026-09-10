@@ -323,6 +323,44 @@ def test_browser_forms_create_and_review_without_json_and_enforce_csrf(operator)
     assert b"Plan approved" in client.get(f"/ideas/{product.pk}/").content
 
 
+def test_plan_editor_upgrades_contracts_and_preserves_requirements_on_edit(operator):
+    user, _ = operator
+    product = create(operator)
+    old = product.revisions.first().plans.first()
+    payload = {
+        "expected_plan_id": old.pk, "checked_tasks": "on",
+        "tasks-TOTAL_FORMS": str(len(old.specification["tasks"])),
+        "tasks-INITIAL_FORMS": str(len(old.specification["tasks"])),
+        "tasks-MIN_NUM_FORMS": "1", "tasks-MAX_NUM_FORMS": "50",
+    }
+    for index, task in enumerate(old.specification["tasks"]):
+        for key, value in task.items():
+            payload[f"tasks-{index}-{key}"] = ", ".join(value) if isinstance(value, list) else value
+        if task["role"] in {"implementer", "integrator"}:
+            payload[f"tasks-{index}-repository_write"] = "on"
+    payload["tasks-0-required_decisions"] = "approach, interfaces"
+    payload["tasks-1-required_files"] = "docs/design.md\nsrc/feature.py"
+    client = Client()
+    client.force_login(user)
+    url = f"/ideas/{product.pk}/plan/"
+    assert b"Enforce task requirements" in client.get(url).content
+    response = client.post(url, payload)
+    assert response.status_code == 302
+    plan = product.revisions.first().plans.first()
+    assert plan.specification["schema_version"] == 2
+    assert not plan.approved_at
+    assert plan.specification["tasks"][1]["required_files"] == ["docs/design.md", "src/feature.py"]
+    assert b"Required decisions:</strong> approach, interfaces" in client.get(response.url).content
+    old.refresh_from_db()
+    assert old.specification["schema_version"] == 1
+    assert "requires" not in old.specification["tasks"][0]
+    payload["expected_plan_id"] = plan.pk
+    del payload["checked_tasks"]  # The disabled checkbox is not submitted by a browser.
+    assert client.post(url, payload).status_code == 302
+    latest = product.revisions.first().plans.first()
+    assert latest.specification == plan.specification
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.skipif(connection.vendor != "postgresql", reason="Requires PostgreSQL row locks")
 def test_competing_brief_revisions_cannot_overwrite_each_other(operator):

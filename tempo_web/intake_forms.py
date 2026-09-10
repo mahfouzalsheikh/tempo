@@ -54,6 +54,17 @@ class TaskForm(forms.Form):
         ]
     )
     instructions = prose("Deliverables and instructions")
+    repository_write = forms.BooleanField(
+        label="This task needs to edit repository files", required=False,
+    )
+    required_files = forms.CharField(
+        label="Required committed files (one repository-relative path per line)",
+        required=False, max_length=12000, widget=forms.Textarea(attrs={"rows": 2}),
+    )
+    required_decisions = forms.CharField(
+        label="Required decision IDs (comma separated)", required=False, max_length=2000,
+        help_text="The agent must return a decision and rationale for each ID.",
+    )
     criteria = forms.CharField(label="Acceptance criterion IDs (comma separated)", required=False)
     depends_on = forms.CharField(label="Prerequisite task IDs (comma separated)", required=False)
 

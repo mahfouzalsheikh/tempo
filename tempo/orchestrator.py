@@ -1222,6 +1222,7 @@ class Orchestrator:
                     "token_budget_exceeded",
                     "validation_attempt_limit",
                     "integration_conflict",
+                    "task_deliverable_required",
                     "snapshot_missing", "snapshot_invalid", "snapshot_environment_changed",
                 }
                 if safety_limit:
@@ -1272,6 +1273,12 @@ class Orchestrator:
             node_base = await inspect_repository(
                 workspace_path, allow_dirty=bool(node.settings.get("product_repair")),
             )
+            if "requires" in product_task:
+                from .task_contracts import assignment_base
+
+                node_base = await assignment_base(
+                    entry, node.id, product_task, node_base, self.persistence,
+                )
         enabled_tools = providers.enabled_tools(config, profile)
         if node.workspace == "isolated" and (
             profile.completion != "turn" or enabled_tools is None
@@ -1293,8 +1300,16 @@ class Orchestrator:
             live.workspace_published = resume_context.workspace_published
         entry.node_sessions[node.id] = live
         entry.session = live
+        final_message = ""
 
         async def on_event(event: dict[str, Any]) -> None:
+            nonlocal final_message
+            if product_task and "requires" in product_task:
+                from .task_contracts import completed_message
+
+                message = completed_message(event)
+                if message is not None:
+                    final_message = message if len(message) <= 256_000 else ""
             event_name = str(event.get("event", ""))
             if product_task and (
                 event_name.startswith(("validation_", "review_", "build_"))
@@ -1431,6 +1446,10 @@ class Orchestrator:
                                + f"\nAssignment base commit: {node_base}. "
                                "Commit all intended changes. Do not publish or deploy. "
                                "The controller runs final mandatory checks after every task ends.")
+                    if "requires" in product_task:
+                        from .task_contracts import RESULT_PROMPT
+
+                        prompt += RESULT_PROMPT
                 if node.workspace == "isolated":
                     prompt += (
                         "\n\nTempo contribution contract: this is your private repository. "
@@ -1439,6 +1458,7 @@ class Orchestrator:
                         "checkout. Do not publish or complete the issue. Tempo integrates your "
                         "commit; a later step checks the combined result."
                     )
+                final_message = ""
                 await runtime.run_turn(runtime_session, prompt, current_issue)
                 if operator_feedback and self.persistence and entry.run_record_id:
                     await self.persistence.clear_run_feedback(entry.run_record_id,
@@ -1479,7 +1499,15 @@ class Orchestrator:
                 ),
                 "",
             )
+            deliverables = {}
+            if product_task and "requires" in product_task:
+                from .task_contracts import check_task_result
+
+                deliverables["deliverables"] = await check_task_result(
+                    product_task, workspace_path, node_base, final_message,
+                )
             return {
+                **deliverables,
                 "session_id": live.session_id,
                 "thread_id": live.thread_id,
                 "turns": live.turn_count,
@@ -2072,6 +2100,7 @@ class Orchestrator:
                             "validation_policy_missing",
                             "product_checks_failed",
                             "integration_conflict",
+                            "task_deliverable_required",
                             "snapshot_missing", "snapshot_invalid",
                             "snapshot_environment_changed",
                         }

@@ -113,11 +113,18 @@ JSON through Django Admin or the operator configuration API.
 **Definition of done:** A workflow can express "plan -> parallel implementation and research ->
 review -> validation -> publication," with typed state visible at every node.
 
-### 5. Provider-neutral agent runtime — Implemented
+### 5. Provider-neutral agent runtime — Foundation implemented; account management planned
 
 `AgentRuntime`, `ModelProvider`, and `ToolProvider` interfaces keep Codex app-server as the premier
 coding backend while supporting OpenAI Agents SDK and external JSONL runtime bridges. Declarative
 model routing and fallback can select by role, capability, and cost ceiling.
+
+The current factory sequence is maintained in [the software factory plan](docs/SOFTWARE_FACTORY_PLAN.md).
+Added 2026-09-10: connect multiple Codex accounts and multiple Claude accounts, grant project
+access, and assign accounts to agent roles. Named connections, supported authentication flows,
+isolated account state, connection health, shared capacity, audited fallback and a tested Claude
+adapter remain to be implemented. See [agent accounts and delivery gates](docs/AGENT_ACCOUNTS.md).
+Runtime extensibility alone does not complete this feature.
 
 **Definition of done:** A workflow selects runtimes and models declaratively. Adding a provider
 does not require changes to the scheduler or workflow engine.

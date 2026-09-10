@@ -226,6 +226,12 @@ def edit_plan(request, brief_id):
             **task.model_dump(),
             "criteria": ", ".join(task.criteria),
             "depends_on": ", ".join(task.depends_on),
+            "repository_write": "repository_write" in getattr(
+                task, "requires",
+                ["repository_write"] if task.role in {"implementer", "integrator"} else [],
+            ),
+            "required_files": "\n".join(getattr(task, "required_files", [])),
+            "required_decisions": ", ".join(getattr(task, "required_decisions", [])),
         }
         for task in context["contract"].tasks
     ]
@@ -233,6 +239,9 @@ def edit_plan(request, brief_id):
         request.POST if request.method == "POST" else None, prefix="tasks", initial=initial
     )
     error = ""
+    checked_tasks = (
+        context["contract"].schema_version == 2 or bool(request.POST.get("checked_tasks"))
+    )
     if request.method == "POST" and tasks.is_valid():
         rows = []
         for row in tasks.cleaned_data:
@@ -247,11 +256,28 @@ def edit_plan(request, brief_id):
                         for key in ["id", "title", "role", "instructions", "criteria", "depends_on"]
                     }
                 )
+                if checked_tasks:
+                    rows[-1].update(
+                        requires=["repository_write"] if row["repository_write"] else [],
+                        required_files=[
+                            value.strip() for value in row["required_files"].splitlines()
+                            if value.strip()
+                        ],
+                        required_decisions=[
+                            value.strip() for value in row["required_decisions"].split(",")
+                            if value.strip()
+                        ],
+                    )
+                elif row["required_files"] or row["required_decisions"]:
+                    error = "Enable task contract checks to require files or decisions."
         try:
+            if error:
+                raise ValueError(error)
             revise_plan(
                 product.pk,
                 expected_plan_id=int(request.POST.get("expected_plan_id", "0")),
-                specification={"brief_digest": context["revision"].digest, "tasks": rows},
+                specification={"schema_version": 2 if checked_tasks else 1,
+                               "brief_digest": context["revision"].digest, "tasks": rows},
                 user_id=request.user.pk,
             )
             return redirect("idea_detail", brief_id=product.pk)
@@ -261,6 +287,7 @@ def edit_plan(request, brief_id):
         request,
         "plan",
         tasks=tasks,
+        checked_tasks=checked_tasks,
         error=error,
         expected_plan_id=request.POST.get("expected_plan_id", context["plan"].pk),
         **context,

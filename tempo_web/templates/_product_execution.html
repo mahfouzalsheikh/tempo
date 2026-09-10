@@ -10,7 +10,12 @@
         {% else %}<form method="post" action="{% url 'preview_control' product.pk run.id run.candidate.artifact.id 'start' %}">{% csrf_token %}<button class="button primary" type="submit">Start local preview</button></form>{% endif %}
         </div>{% if run.preview.active %}<p>Expires {{ run.preview.expires_at }}. Open this link in a browser on the Tempo host.</p>{% elif run.preview.expires_at %}<p>The previous preview is stopped, expired, or unavailable. Start it again to restore the saved build with a fresh link.</p>{% endif %}
         {% endif %}{% endif %}{% endif %}
-        <ul class="revision-list">{% for node in run.nodes %}<li><strong>{{ node.name }}</strong> · {{ node.status }}{% if node.error %}<p>{{ node.error }}</p>{% endif %}</li>{% empty %}<li>{% if run.status == "queued" %}Waiting for an available worker.{% else %}No tasks started.{% endif %}</li>{% endfor %}</ul>
+        <ul class="revision-list">{% for node in run.nodes %}<li><strong>{{ node.name }}</strong> · {{ node.status }}{% if node.error %}<p>{{ node.error }}</p>{% endif %}
+          {% if node.deliverables %}<details><summary>Task deliverables</summary><p>Checked at commit <code>{{ node.deliverables.source_sha }}</code>. Later tasks and acceptance checks are evaluated separately.</p>
+            {% for file in node.deliverables.files %}<p><strong>{{ file.path }}</strong> · {{ file.size|filesizeformat }}<br>Git blob: <code>{{ file.blob }}</code></p>{% endfor %}
+            {% for decision in node.deliverables.decisions %}<p><strong>{{ decision.id }}</strong>: {{ decision.decision }}</p><p>{{ decision.rationale }}</p>{% endfor %}
+          </details>{% endif %}
+        </li>{% empty %}<li>{% if run.status == "queued" %}Waiting for an available worker.{% else %}No tasks started.{% endif %}</li>{% endfor %}</ul>
         <div class="intake-actions">{% if run.resumable %}<a class="button primary" href="{% url 'idea_repair' product.pk run.id %}">Repair with an agent</a>{% endif %}{% if run.active %}<form method="post" action="{% url 'idea_run_control' product.pk run.id 'pause' %}">{% csrf_token %}<button class="button" type="submit">Pause</button></form>{% endif %}{% if run.resumable %}<form method="post" action="{% url 'idea_run_control' product.pk run.id 'retry' %}">{% csrf_token %}<button class="button" type="submit">Retry saved execution</button></form>{% endif %}{% if run.status != 'succeeded' and run.status != 'cancelled' %}<form method="post" action="{% url 'idea_run_control' product.pk run.id 'cancel' %}">{% csrf_token %}<button class="button danger" type="submit">Cancel run</button></form>{% endif %}</div>
       </article>{% endfor %}
 </div>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -48,10 +49,41 @@ class Task(Contract):
     depends_on: list[Key] = Field(default_factory=list, max_length=50)
 
 
+class CheckedTask(Task):
+    """Version 2 task requirements; version 1 serialization stays unchanged."""
+
+    requires: list[Literal["repository_write"]] = Field(max_length=1)
+    required_files: list[Text] = Field(max_length=30)
+    required_decisions: list[Key] = Field(max_length=30)
+
+    @model_validator(mode="after")
+    def valid_deliverables(self):
+        for values in (self.required_files, self.required_decisions):
+            if len(set(values)) != len(values):
+                raise ValueError("Required deliverables must be unique.")
+        if self.required_files and "repository_write" not in self.requires:
+            raise ValueError("Required files need the repository_write capability.")
+        for name in self.required_files:
+            path = PurePosixPath(name)
+            if (path.is_absolute() or str(path) != name or name == "."
+                    or any(part in {"..", ".git"} for part in path.parts)
+                    or any(character in name for character in "\\\x00\n\r")):
+                raise ValueError("Required files must be literal repository-relative file paths.")
+        return self
+
+
 class Plan(Contract):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     brief_digest: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
-    tasks: list[Task] = Field(min_length=1, max_length=50)
+    tasks: list[CheckedTask | Task] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def versioned_tasks(self):
+        if any(isinstance(task, CheckedTask) != (self.schema_version == 2) for task in self.tasks):
+            raise ValueError(
+                "Version 2 plans require explicit requirements and deliverables on every task."
+            )
+        return self
 
     def validate_against(self, brief: Brief) -> list[list[str]]:
         if self.brief_digest != digest(brief):

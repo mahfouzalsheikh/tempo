@@ -1,5 +1,10 @@
 # Tempo
 
+Current next steps are tracked in the [software factory plan](docs/SOFTWARE_FACTORY_PLAN.md).
+The [agent account plan](docs/AGENT_ACCOUNTS.md) covers multiple Codex/Claude connections and
+team assignments. [Checked task contracts](docs/TASK_CONTRACTS.md) add opt-in capability and
+deliverable checks to reviewed product plans.
+
 Tempo is a Python and Django control plane for autonomous coding work. It polls one or more issue
 trackers, leases eligible issues, creates an isolated workspace for each issue, and drives Codex
 app-server through implementation, project-native validation, pull-request review, and merge or
