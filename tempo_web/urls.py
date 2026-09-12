@@ -3,6 +3,7 @@ from django.urls import path
 
 from . import (
     acceptance_views,
+    account_views,
     artifact_views,
     intake_views,
     preview_views,
@@ -15,6 +16,8 @@ from . import (
 )
 
 urlpatterns = [
+    path("agents/accounts/", account_views.index, name="agent_accounts"),
+    path("api/v1/accounts", account_views.api, name="agent_accounts_api"),
     path("", views.dashboard, name="dashboard"),
     path("login/", views.login_page, name="login"),
     path("logout/", views.logout_page, name="logout"),

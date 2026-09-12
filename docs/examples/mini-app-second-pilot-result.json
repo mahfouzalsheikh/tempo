@@ -812,9 +812,52 @@
     ]
   },
   "publication": {
-    "status": "awaiting-separate-artifact-and-target-review",
+    "status": "published",
     "target_key": "preparation-feedback-pilot",
-    "releases": []
+    "origin": "http://8d5656972aa341979b05fe40d64946f6.localhost:8032",
+    "releases": [
+      {
+        "release_id": 3,
+        "status": "published",
+        "created_at": "2026-09-12 09:55:25.667057+00:00",
+        "finished_at": "2026-09-12 09:55:50.308708+00:00",
+        "report_digest": "294dae571d8686486fda4711ae1835988f8b642efdcf52aef7d0e3bf51d7d676",
+        "identity_digest": "61aff94f2ce22d1432c8e56e621eb36a434769968487144cf4ab12122fe103d9",
+        "authorization_digest": "21396b1bec481f5b9deee1fb200ae7fcf19ffac1e28873c2422b599f5ff6dfc9",
+        "report": {
+          "checks": {
+            "schema": 1,
+            "checker": "preview-health-v2",
+            "file_count": 26,
+            "root_digest": "709aadedfc8609d864a475e36cc6287fb70df5524df30a6570f9b75ea4c49d2f",
+            "total_bytes": 69996771,
+            "headers_digest": "e89220d1446228b12d9019f4b353fcc5df25cff9634850ded1b3366bc263f3a8",
+            "inventory_digest": "23ceb1a993c2ca3b4f0155cba875f406d4e4484d5dfaf482db7c4b90df3bb435"
+          },
+          "cleanup": {
+            "status": 404,
+            "checker": "staging-withdrawal-v1",
+            "headers_digest": "e89220d1446228b12d9019f4b353fcc5df25cff9634850ded1b3366bc263f3a8"
+          },
+          "pointer": {
+            "slot": "8d5656972aa341979b05fe40d64946f6",
+            "schema": 1,
+            "release_id": "3507b05a53c343de874d48d936fbacc3",
+            "operation_id": "fdc29ae7573959d7ac993fe6058c16c7",
+            "configuration_digest": "b135bf42625534357108c9fdd65d88b4c8f3106bf8ee049b5a0acb98b5c7c81f"
+          },
+          "checked_at": "2026-09-12T09:55:50.308708+00:00",
+          "identity_digest": "61aff94f2ce22d1432c8e56e621eb36a434769968487144cf4ab12122fe103d9",
+          "worker_revision": "c6c6fbe675d4bb9e0d97e7180b7f012462fefae6",
+          "authorization_digest": "21396b1bec481f5b9deee1fb200ae7fcf19ffac1e28873c2422b599f5ff6dfc9"
+        },
+        "target_key": "preparation-feedback-pilot",
+        "origin": "http://8d5656972aa341979b05fe40d64946f6.localhost:8032",
+        "artifact_id": 2,
+        "rehearsal_id": 3,
+        "health_id": 4
+      }
+    ]
   },
   "interventions": [
     "User authorized exact prepared pilot, one scoped repair and 35 browser steps through continue instruction.",
@@ -823,7 +866,8 @@
     "Operator reviewed validation 39 and submitted exactly one prepared repair through the live API; an initial helper script tuple-handling error occurred before any HTTP dispatch and was corrected.",
     "Operator approved the prepared browser suite for artifact 2, started preview, reviewed the named static target configuration, and queued isolated rollback rehearsal and HTTP health checks.",
     "Operator independently checked browser layout, keyboard, focus and disclosure state at two widths.",
-    "Operator pushed the existing native-agent commits to the named source branch without editing application source."
+    "Operator pushed the existing native-agent commits to the named source branch without editing application source.",
+    "2026-09-12: user authorized publication by asking to continue. Operator renewed the expired preview, HTTP health (4) and isolated rehearsal (3), then queued release 3 through the normal publication service. All 26 live files verified; first pilot publication remains active."
   ],
   "operator_application_source_edits": 0,
   "environment_repairs": 0,
@@ -834,6 +878,6 @@
     "Independent verifier source review preceded repair; fresh host and browser evidence covers the repaired artifact.",
     "Reported tokens include input/context usage; monetary cost is unknown.",
     "Preview health is valid for five minutes and readiness is a point-in-time assessment.",
-    "Rollback rehearsal used a private slot and restored an empty target baseline; no public activation or rollback has occurred."
+    "Initial rollback rehearsal used a private slot and restored an empty baseline. Publication later activated release 3 on 2026-09-12; no public rollback of this second pilot has been exercised."
   ]
 }

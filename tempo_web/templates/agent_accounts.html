@@ -1,0 +1,24 @@
+{% load static %}
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agents & accounts · Tempo</title><link rel="stylesheet" href="{% static 'tempo.css' %}"><link rel="stylesheet" href="{% static 'intake.css' %}"><link rel="stylesheet" href="{% static 'accounts.css' %}"></head>
+<body><a class="skip-link" href="#main-content">Skip to agent accounts</a><div class="app-shell">
+{% include "_sidebar.html" %}
+<main id="main-content" class="workspace intake-workspace account-workspace">
+<header class="workspace-header"><div><p class="breadcrumb">TEMPO / AGENTS & ACCOUNTS</p><h1>Agents & accounts</h1><p class="subtitle">Name your Codex connections and choose which projects may use them.</p></div></header>
+<section class="panel"><h2>Connection setup</h2><p>This release saves connections and project grants. Agent assignment is not available yet; running agents continue to use the existing workflow configuration.</p><p>Codex ChatGPT logins use subscription access. API-key connections and Claude support are planned.</p><p>Checking a stored login validates its file format and compares its account reference. It does not verify access with the provider or start model work.</p></section>
+{% if error %}<p class="intake-error" role="alert">{{ error }}</p>{% endif %}
+<section class="panel"><h2>Add a connection</h2><form method="post">{% csrf_token %}<input type="hidden" name="action" value="create">{{ form.as_p }}<button class="button primary" type="submit">Add connection</button></form><p>For a new login, an installation administrator provisions the credential file on the server. Credentials are never entered on this page.</p></section>
+<section aria-label="Saved connections">
+{% for card in cards %}<article class="panel"><h2>{{ card.account.label }}</h2><p>{{ card.account.organization }} · Codex · {{ card.account.get_auth_mode_display }}</p>
+<p><strong>{% if card.account.disabled %}Disabled{% else %}Enabled in registry{% endif %}</strong></p>
+<p>{% if card.saved.check_status == 'stored' %}Login stored · runtime verification pending{% elif card.saved.check_status == 'unavailable' %}Login unavailable · administrator action needed{% else %}Awaiting login setup{% endif %}</p>
+{% if card.saved.identity_hint %}<p>Account reference: {{ card.saved.identity_hint }}</p>{% endif %}
+{% if card.saved.checked_at %}<p>Last local check: {{ card.saved.checked_at }}</p>{% endif %}
+<form method="post">{% csrf_token %}<input type="hidden" name="action" value="settings"><input type="hidden" name="account_id" value="{{ card.account.pk }}"><input type="hidden" name="revision" value="{{ card.account.revision }}">
+<fieldset><legend>Project access</legend>{% for project in card.projects %}<p><label><input type="checkbox" name="projects" value="{{ project.pk }}"{% if project.pk in card.saved.project_ids %} checked{% endif %}> {{ project.name }}</label></p>{% empty %}<p>No active projects in this organization.</p>{% endfor %}</fieldset>
+<p><label><input type="checkbox" name="disabled"{% if card.account.disabled %} checked{% endif %}> Disable this connection</label></p><button class="button" type="submit">Save project access</button></form>
+<form method="post">{% csrf_token %}<input type="hidden" name="action" value="check"><input type="hidden" name="account_id" value="{{ card.account.pk }}"><input type="hidden" name="revision" value="{{ card.account.revision }}"><p><button class="button" type="submit">Check stored login</button></p></form>
+<details><summary>Connection details and history</summary><p>Connection ID: <code>{{ card.account.pk }}</code> · Revision {{ card.account.revision }}</p><p>Credential generation: {{ card.account.credential_generation }}</p><p>Disabling controls this registry connection. It does not sign out the installation login or stop existing agents.</p><ul>{% for item in card.events %}<li>{{ item.created_at }} · {{ item.actor.username }} · {{ item.action }}</li>{% endfor %}</ul></details>
+</article>{% empty %}<section class="panel"><h2>No connections yet</h2><p>Add a named connection to begin configuring your agent team.</p></section>{% endfor %}
+</section></main></div></body></html>

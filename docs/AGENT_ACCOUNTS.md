@@ -1,7 +1,9 @@
 # Agent providers, accounts, and team configuration
 
-Status: planned, added 2026-09-10 at the user's request. This is a product requirement and
-implementation sequence, not a claim that account connection is already available.
+Status: registry foundation implemented 2026-09-12. Named connections, staff-only forms/API,
+protected Codex login-file provisioning, project grants, disable controls and audit history are
+available. Runtime selection, provider-verified connection checks and Claude integration remain
+planned. See [the registry guide](AGENT_ACCOUNT_REGISTRY.md) for this slice's exact limits.
 
 Operators should be able to connect one or more Codex accounts, one or more Claude accounts,
 and subsequently other supported providers, then choose which accounts and agent profiles work
@@ -93,8 +95,9 @@ grant, binding, rotation and fallback changes without recording secrets.
    per-task account/model attribution and provider-reported usage; display unknown costs as unknown.
 
 The [second supervised mini-app pilot](SECOND_AGENT_PILOT.md) now has an accepted candidate and
-passed readiness evidence without operator source edits; its separate publication decision remains
-pending. Begin the registry/Codex slice next, alongside CI work.
+passed readiness evidence without operator source edits and was published on 2026-09-12. The
+registry foundation is the first part of step 1; next wire selected accounts into isolated runtime
+provisioning, immutable bindings and per-attempt attribution, alongside CI work.
 Do not defer account configuration until broad MCP integrations or distributed worker scaling.
 The complete mixed-provider feature remains open until the Claude and account-isolation gates pass.
 

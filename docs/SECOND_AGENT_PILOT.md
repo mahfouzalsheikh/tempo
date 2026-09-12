@@ -1,7 +1,7 @@
 # Second supervised React pilot: result and review package
 
-Executed 2026-09-10. Status: accepted candidate with staging readiness demonstrated;
-publication awaits the separate artifact-and-target decision.
+Executed 2026-09-10; published 2026-09-12 as release **3** of build **2**.
+Status: published to the separately reviewed local staging target.
 The [machine-readable package](examples/mini-app-second-pilot.json) contains the exact brief,
 version 2 plan, profile bindings, browser checks, repair scope and proposed staging target.
 The [result receipt](examples/mini-app-second-pilot-result.json) records the actual evidence.
@@ -44,9 +44,8 @@ warning about combining `allow-scripts` and `allow-same-origin`.
 
 The isolated rollback rehearsal **2** and preview health **2** passed. All six readiness gates
 passed at the receipt's evaluation time. This new target had an empty baseline, so rehearsal
-verified temporary activation, withdrawal to HTTP 404, and cleanup. No live publication or public
-rollback has occurred. Preview health expires after five minutes and must be refreshed before
-publication. The first pilot's target remains active.
+verified temporary activation, withdrawal to HTTP 404, and cleanup. At that initial review, no live publication or public
+rollback had occurred. Preview health expires after five minutes. The first pilot's target remains active.
 
 The operator recorded approvals and dispatched work under the existing operator identity based on
 the user's instruction to continue the prepared plan. One control-helper script failed on JWT tuple
@@ -146,14 +145,19 @@ before starting the candidate. [Product execution](PRODUCT_EXECUTION.md) require
 approved plan and its exact digest; draft preparation does not authorize dispatch. The same
 package provides a reviewable repair scope and browser plan for their later explicit gates.
 
-## Next action
+## Publication and next action
+
+On 2026-09-12, the user instructed Tempo to continue. The expired preview was renewed; HTTP
+health **4** and isolated rollback rehearsal **3** passed. Release **3** then published build **2**
+and verified all 26 deployed files. No source rebuild or model turn was required. The first pilot
+remains published at its own target.
 
 Review [the accepted candidate and evidence](http://localhost:8001/ideas/2/) and
-[the temporary preview](http://b0369a99984f48ae9ba84c1317089fd5.localhost:8031/).
+[the temporary preview](http://8fc538d4ef0c425d9c22effd055e47c2.localhost:8031/).
 The prepared static target is `preparation-feedback-pilot`, configuration **2**, at
-`http://8d5656972aa341979b05fe40d64946f6.localhost:8032/`. Publishing this exact artifact remains a
-separate decision; the URL is reserved and does not yet serve the candidate.
+`http://8d5656972aa341979b05fe40d64946f6.localhost:8032/`. The [published application](http://8d5656972aa341979b05fe40d64946f6.localhost:8032/)
+now serves the reviewed artifact.
 
-The next implementation slice is the named Codex account registry and project/profile selection
-in [the account plan](AGENT_ACCOUNTS.md), alongside repeat-run reporting and CI. Native Claude
-support and account-isolation acceptance remain open.
+The [account registry foundation](AGENT_ACCOUNT_REGISTRY.md) followed this publication. Next
+integrate project/profile selection and isolated runtime provisioning from [the account plan](AGENT_ACCOUNTS.md),
+alongside repeat-run reporting and CI. Native Claude support and account-isolation acceptance remain open.

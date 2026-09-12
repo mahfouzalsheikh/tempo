@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from copy import deepcopy
 from pathlib import Path
 
@@ -17,6 +18,59 @@ class Organization(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+class AgentAccount(models.Model):
+    """Connection metadata only. Credential bytes never enter the database."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT)
+    label = models.CharField(max_length=100)
+    provider = models.CharField(max_length=32, default="codex", editable=False)
+    auth_mode = models.CharField(max_length=32, choices=[
+        ("codex-file", "Provisioned Codex ChatGPT login"),
+        ("installation", "Existing installation login"),
+    ])
+    disabled = models.BooleanField(default=False)
+    revision = models.PositiveIntegerField(default=1)
+    credential_generation = models.PositiveIntegerField(default=0)
+    identity_fingerprint = models.CharField(max_length=64, blank=True)
+    checked_at = models.DateTimeField(null=True, blank=True)
+    check_status = models.CharField(max_length=32, default="pending")
+    created_by = models.ForeignKey("auth.User", on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["organization_id", "label", "id"]
+        constraints = [models.UniqueConstraint(
+            fields=["organization", "label"], name="tempo_unique_account_label",
+        )]
+
+    def __str__(self):
+        return self.label
+
+
+class AgentAccountGrant(models.Model):
+    account = models.ForeignKey(AgentAccount, on_delete=models.PROTECT, related_name="grants")
+    project = models.ForeignKey("Project", on_delete=models.PROTECT)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=["account", "project"], name="tempo_unique_account_project_grant",
+        )]
+
+
+class AgentAccountEvent(models.Model):
+    account = models.ForeignKey(AgentAccount, on_delete=models.PROTECT, related_name="events")
+    actor = models.ForeignKey("auth.User", on_delete=models.PROTECT)
+    action = models.CharField(max_length=32)
+    revision = models.PositiveIntegerField()
+    detail = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
 
 
 class Project(models.Model):

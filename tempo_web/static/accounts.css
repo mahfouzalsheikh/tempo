@@ -1,0 +1,6 @@
+.account-workspace .panel { min-width: 0; overflow-wrap: anywhere; }
+.account-workspace fieldset { min-width: 0; border: 1px solid #364030; border-radius: 8px; padding: 16px; }
+.account-workspace legend { padding: 0 8px; font-weight: 600; }
+.account-workspace details { margin-top: 16px; }
+.account-workspace summary { cursor: pointer; }
+.account-workspace code { overflow-wrap: anywhere; }

@@ -19,6 +19,7 @@ services:
       TEMPO_WORKSPACE_ROOT: /data/workspaces
       TEMPO_RUNTIME_BACKEND: docker
       TEMPO_AGENT_STATE_ROOT: /data/agent-state
+      TEMPO_ACCOUNT_CREDENTIAL_ROOT: /data/account-credentials
       TEMPO_PREVIEW_ROOT: /data/previews
       TEMPO_PREVIEW_PORT: "${TEMPO_PREVIEW_PORT:-8031}"
       TEMPO_RELEASE_ROOT: /data/releases
@@ -38,6 +39,7 @@ services:
       - ./workflows:/app/workflows:ro
       - tempo-workspaces:/data/workspaces
       - tempo-agent-state:/data/agent-state
+      - tempo-account-credentials:/data/account-credentials
       - tempo-database:/data/database
       - tempo-previews:/data/previews
       - tempo-releases:/data/releases
@@ -233,6 +235,7 @@ services:
       - tempo-agent-state:/data/agent-state
 
 volumes:
+  tempo-account-credentials:
   tempo-workspaces:
   tempo-database:
   tempo-codex:

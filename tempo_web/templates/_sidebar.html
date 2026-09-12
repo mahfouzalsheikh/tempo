@@ -12,6 +12,10 @@
       <span class="nav-icon">✧</span>
       Ideas & plans
     </a>
+    {% if request.user.is_staff %}<a{% if request.resolver_match.url_name == "agent_accounts" %} class="active"{% endif %} href="{% url 'agent_accounts' %}">
+      <span class="nav-icon">⌘</span>
+      Agents & accounts
+    </a>{% endif %}
     <a href="/#runs">
       <span class="nav-icon">↯</span>
       Active work

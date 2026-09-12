@@ -17,6 +17,7 @@ for name in auth.json config.toml; do
 done
 
 mkdir -p /data/agent-state /data/previews /data/releases
+install -d -o tempo -g tempo -m 0700 /data/account-credentials
 chown tempo:tempo /data/previews /data/releases
 chmod 0700 /data/previews /data/releases
 chown tempo:tempo /data/workspaces /data/agent-state /data/database /data/log "$codex_home"
