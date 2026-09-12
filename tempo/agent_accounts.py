@@ -1,4 +1,4 @@
-"""Staff-managed account registry. This slice does not change runtime routing."""
+"""Staff-managed account metadata, project grants and credential checks."""
 
 import base64
 import hashlib
@@ -207,6 +207,47 @@ def public_record(account):
                 flat=True,
             )
         ),
-        "runtime_routing": "not_available",
+        "runtime_routing": "codex_docker",
         "authentication_verified": False,
     }
+
+
+def resolve_binding(binding):
+    """Recheck live authorization and identity, without changing the pinned reference."""
+    from .account_binding import validate_binding
+
+    validate_binding(binding)
+    account = AgentAccount.objects.get(pk=binding["id"])
+    if (
+        account.disabled
+        or account.provider != "codex"
+        or account.check_status != "stored"
+        or account.credential_generation != binding["generation"]
+        or account.identity_fingerprint != binding["identity"]
+        or not account.grants.filter(
+            project_id=binding["project_id"],
+            active=True,
+            project__active=True,
+            project__organization_id=account.organization_id,
+        ).exists()
+    ):
+        raise ValueError("The assigned account is unavailable or no longer authorized.")
+    data = stored_cache(account)
+    if cache_identity(data) != binding["identity"]:
+        raise ValueError("The assigned login identity changed.")
+    return account, data
+
+
+@transaction.atomic
+def assignment(user, account_id, revision, project_id):
+    administrator(user)
+    account = locked(account_id, revision)
+    binding = {
+        "schema": 1,
+        "id": str(account.pk),
+        "project_id": project_id,
+        "identity": account.identity_fingerprint,
+        "generation": account.credential_generation,
+    }
+    resolve_binding(binding)
+    return binding

@@ -11,6 +11,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from pathlib import Path
 
+from .account_binding import has_bindings
 from .errors import ConfigError
 
 PINNED_EXECUTION = ContextVar("pinned_execution", default=None)
@@ -63,7 +64,7 @@ def snapshot_digest(snapshot: dict) -> str:
 def capture_snapshot(definition, config) -> dict:
     # Resolve only nonsecret execution defaults. Credentials remain declarative references.
     return {
-        "schema": 1,
+        "schema": 2 if has_bindings(config) else 1,
         "config": config.model_dump(mode="json"),
         "prompt_template": definition.prompt_template,
         "workflow_path": str(definition.path),
@@ -90,7 +91,7 @@ def restore_snapshot(snapshot: dict, digest: str):
         if set(snapshot) != {"schema", "config", "prompt_template", "workflow_path", "execution"}:
             raise ValueError("unsupported snapshot shape")
         if (snapshot_digest(snapshot) != digest or type(snapshot["schema"]) is not int
-                or snapshot["schema"] != 1):
+                or snapshot["schema"] not in {1, 2}):
             raise ValueError("snapshot identity mismatch")
         if set(snapshot["execution"]) != {"environment", "model_settings"}:
             raise ValueError("unsupported execution settings")
@@ -107,6 +108,8 @@ def restore_snapshot(snapshot: dict, digest: str):
         if not isinstance(snapshot["prompt_template"], str):
             raise ValueError("invalid prompt")
         config = ServiceConfig.model_validate(deepcopy(snapshot["config"]))
+        if snapshot["schema"] == 1 and has_bindings(config):
+            raise ValueError("Account assignments require snapshot schema 2")
         if config.model_dump(mode="json") != snapshot["config"]:
             raise ValueError("configuration schema requires an explicit migration")
         definition = WorkflowDefinition(

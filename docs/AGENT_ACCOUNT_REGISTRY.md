@@ -6,10 +6,21 @@ projects in the same organization access, disable a connection, inspect recent a
 check the stored login file. Every mutation checks the current revision; stale forms fail without
 replacing newer changes. Staff is currently an installation-wide administrative role.
 
-This is a registry foundation. Grants and disabling are saved for the upcoming runtime integration;
-they do not reroute or stop existing agents. The API explicitly returns `runtime_routing:
-"not_available"` and `authentication_verified: false`. Profiles, historical execution snapshots and
-existing installation authentication remain unchanged. No model turns are triggered by this page.
+Native Codex account routing is available for isolated Docker workflow agents. Grant a project
+access, check the stored login, then choose a connection under **Agent assignments**. New runs pin
+its UUID, project, credential generation and identity fingerprint in execution snapshot schema 2.
+Unassigned configurations retain schema 1 and their existing installation behavior. Historical
+runs keep their saved bindings. Assignment forms reject stale workflow digests and account revisions.
+The API reports `runtime_routing: "codex_docker"` and `authentication_verified: false`; neither a
+local cache check nor an app-server session start proves provider entitlement.
+
+Each assigned session rechecks the live grant, enabled state, credential generation and local
+identity before starting. It checks again before each turn. Revocation does not interrupt a turn
+already in progress. A missing or changed login blocks execution without falling back to another
+connection. Account-specific task homes receive only the selected credential file; refreshed files
+are retained only if their identity matches. Authentication overrides and custom runtime commands
+are rejected for assigned profiles. A resume requires a previously recorded thread with the same
+run, node and account binding. Product run details show connection/model/session attempt attribution.
 
 ## Supported login setup
 
@@ -79,20 +90,39 @@ Cookie-authenticated requests require CSRF protection; valid bearer authenticati
 API policy. Responses are private/no-store. Unsupported fields, including credential contents,
 are rejected. Grant removal retains inactive grant rows and an audit event; records are not deleted.
 
-## Next integration gate
+## Assignments API
 
-Implement saved account/profile bindings, live grant/revocation checks before dispatch, isolated
-credential provisioning per task and account-attributed attempts. Prove two distinct accounts can
-run concurrently without credential/session crossover, and reject unauthorized or disabled
-connections before model work. Current tests prove registry and file-storage separation only;
-they do not establish multi-account runtime isolation or a mixed Codex/Claude team.
+POST `/api/v1/accounts` as a staff operator:
 
-## Validation for this slice
+```json
+{"action":"assign","project_id":1,"profile":"verifier","account_id":"CONNECTION_UUID","revision":3,"configuration_digest":"CURRENT_EXECUTION_SNAPSHOT_DIGEST"}
+```
 
-The full suite passed **711 tests with 25 environment-dependent skips**. All **17 registry tests**
-passed against an isolated PostgreSQL instance, including a simultaneous-edit race. After refining
-the UI to show disabled and login-check states independently, focused registry and snapshot tests
-passed **36 tests with one PostgreSQL skip**. Ruff, Django checks, migration consistency and Compose
-configuration checks passed. A separate browser fixture verified staff sign-in, saved disable
-settings, missing-login feedback and layouts at 390px and 1440px with no horizontal overflow.
-These are registry checks, not evidence of multiple real provider sessions.
+Use an empty `account_id` and revision `0` to explicitly restore the installation default for new
+runs. The UI supplies the current digest and connection revision. Agent profile edits through the
+generic platform API also require staff access. Assignment and unassignment events record the
+profile, project and resulting snapshot digest without storing credentials.
+
+## Remaining integration gates
+
+This slice does not synchronize refreshes back to the shared credential store, implement account
+capacity leases, refresh-token rotation/reconnect, draining, provider cooldowns or automatic
+fallback. Each task retains its own refreshed cache. Shared-login refresh contention and expiry
+still require the scheduling/recovery workstream. The legacy independent publication reviewer
+continues to use its installation configuration; product graph verifier profiles support routing.
+Claude and embedded login setup remain planned.
+
+Tests exercise simultaneous distinct account contexts and durable thread attribution, selected
+credential seeding, wrong-identity rejection, disabled/revoked/missing connections, foreign-thread
+resume rejection, immutable old runs and stale assignment requests. These use synthetic credentials;
+they do not claim two real provider subscriptions completed model turns. The deployment smoke checks
+separately cover the native Codex app-server handshake without model work.
+
+## Validation
+
+The regression suite passed 724 tests with 25 environment-dependent skips. Account tests passed
+against isolated PostgreSQL, and browser checks at 390px and 1440px verified saving and clearing an
+assignment without horizontal overflow. A final cleanup-status regression separately checks that
+failed container cleanup is recorded as a failure. The deployment script runs concurrent synthetic
+account-home isolation checks in Docker, alongside the native Codex handshake and existing
+snapshot, build, preview, acceptance and release checks.

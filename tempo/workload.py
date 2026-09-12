@@ -13,6 +13,7 @@ import uuid
 from contextvars import ContextVar
 from pathlib import Path
 
+from .account_binding import SELECTED_ACCOUNT
 from .credentials import BASE_ENVIRONMENT
 from .errors import ConfigError
 from .process import stop_process_group
@@ -44,9 +45,10 @@ def execution_backend() -> str:
 
 
 def state_identity(workspace: Path, kind: str) -> str:
-    return hashlib.sha256(
-        json.dumps([str(workspace.resolve()), EXECUTION_SCOPE.get(), kind]).encode(),
-    ).hexdigest()
+    identity = [str(workspace.resolve()), EXECUTION_SCOPE.get(), kind]
+    if selected := SELECTED_ACCOUNT.get():
+        identity.append(selected[0])
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
 def prepare_home(identity: str) -> Path:
@@ -62,8 +64,9 @@ def prepare_home(identity: str) -> Path:
 
 def seed_codex_auth(home: Path) -> None:
     """Copy only the model login, with no traversal through agent-controlled symlinks."""
+    selected = SELECTED_ACCOUNT.get()
     source = Path(os.getenv("CODEX_HOME", str(Path.home() / ".codex"))) / "auth.json"
-    if not source.exists():
+    if not selected and not source.exists():
         return
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     with contextlib.ExitStack() as stack:
@@ -79,13 +82,26 @@ def seed_codex_auth(home: Path) -> None:
             current = os.stat("auth.json", dir_fd=codex_fd, follow_symlinks=False)
             if not stat.S_ISREG(current.st_mode):
                 raise ConfigError("runtime auth cache must be a regular file")
+            if selected:
+                from .agent_accounts import cache_identity
+                fd = os.open("auth.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                             dir_fd=codex_fd)
+                with os.fdopen(fd, "rb") as stream:
+                    data = stream.read(1024 * 1024 + 1)
+                if (current.st_mode & 0o077 or current.st_size > 1024 * 1024
+                        or cache_identity(data) != selected[0]["identity"]):
+                    raise ConfigError("runtime auth cache does not match the assigned account")
+                return  # Retain refreshes only for this exact account and credential generation.
             if current.st_mtime_ns >= source.stat().st_mtime_ns:
                 return  # Keep credentials refreshed within this node's private home.
         except FileNotFoundError:
             pass
-        source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(source_fd, "rb") as stream:
-            credential = stream.read(1024 * 1024 + 1)
+        if selected:
+            credential = selected[1]
+        else:
+            source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(source_fd, "rb") as stream:
+                credential = stream.read(1024 * 1024 + 1)
         if len(credential) > 1024 * 1024:
             raise ConfigError("model auth cache exceeds the supported size")
         temporary = f".auth-{uuid.uuid4().hex}"
@@ -102,6 +118,9 @@ def seed_codex_auth(home: Path) -> None:
 
 def seed_codex_settings(home: Path) -> None:
     portable = portable_model_settings()
+    if SELECTED_ACCOUNT.get():
+        portable.pop("forced_chatgpt_workspace_id", None)
+        portable["forced_login_method"] = "chatgpt"
     portable["cli_auth_credentials_store"] = "file"
     content = "\n".join(f"{key} = {json.dumps(value)}" for key, value in portable.items()) + "\n"
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -166,6 +185,11 @@ async def start_workload(
     timeout_ms: int | None = None, limit: int = 65536,
     stdin=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
 ) -> asyncio.subprocess.Process:
+    if SELECTED_ACCOUNT.get() and (execution_backend() != "docker" or kind != "codex"
+            or any(key in environment for key in (
+                "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL",
+            ))):
+        raise ConfigError("Assigned account runtime has incompatible authentication settings")
     if execution_backend() == "process":
         return await asyncio.create_subprocess_exec(
             "bash", "--noprofile", "--norc", "-c", command, cwd=workspace, env=environment,

@@ -513,6 +513,9 @@ def update_platform_configuration(
     )
     if not project_row:
         return JsonResponse({"error": "project_not_found"}, status=404)
+    if "agents" in payload and not request.user.is_staff:
+        # Profile edits may add, remove or replace account routing; reserve these for operators.
+        return JsonResponse({"error": "staff_required_for_agent_configuration"}, status=403)
     workflow_version = (
         WorkflowVersion.objects.filter(project=project_row, active=True)
         .order_by("-version")

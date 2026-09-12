@@ -207,6 +207,7 @@ def run_details(plan):
                         deliverables=F("output__deliverables"),
                     )
                 ),
+                "account_attempts": list(run.account_attempts.select_related("account")),
                 "tokens": run.total_tokens,
                 "acceptance": acceptance_summary(artifact) if artifact else None,
                 "preview": preview_details(candidate.payload["artifact"]["id"])

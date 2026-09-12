@@ -73,6 +73,24 @@ class AgentAccountEvent(models.Model):
         ordering = ["-id"]
 
 
+class AgentAccountAttempt(models.Model):
+    account = models.ForeignKey(AgentAccount, on_delete=models.PROTECT, related_name="attempts")
+    run = models.ForeignKey(
+        "AgentRun", null=True, on_delete=models.PROTECT, related_name="account_attempts",
+    )
+    scope = models.CharField(max_length=255)
+    role = models.CharField(max_length=100)
+    model = models.CharField(max_length=255, blank=True)
+    binding = models.JSONField()
+    status = models.CharField(max_length=32, default="starting")
+    thread_id = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True)
+
+    class Meta:
+        ordering = ["-id"]
+
+
 class Project(models.Model):
     organization = models.ForeignKey(
         Organization,

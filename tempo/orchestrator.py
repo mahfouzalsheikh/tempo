@@ -157,6 +157,7 @@ class Orchestrator:
         self.last_tick_error: str | None = None
         self.started_at = utcnow()
         self._lock = asyncio.Lock()
+        self._platform_lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._refresh = asyncio.Event()
         self._loop_task: asyncio.Task[None] | None = None
@@ -2567,7 +2568,43 @@ class Orchestrator:
             "last_reload_error": self.store.last_error,
         }
 
+    async def assign_account(self, user, profile, account_id, revision, expected_digest):
+        from asgiref.sync import sync_to_async
+
+        from tempo_web.models import AgentAccount
+
+        from .agent_accounts import administrator, assignment, event
+        from .run_snapshot import snapshot_digest
+
+        administrator(user)
+        async with self._platform_lock:
+            if (not self.persistence
+                    or snapshot_digest(self.persistence.execution_snapshot) != expected_digest):
+                raise ValueError("Workflow settings changed. Reload before assigning an account.")
+            config = self.store.current()[1]
+            if profile not in config.agents:
+                raise ValueError("Unknown agent profile.")
+            agents = {name: item.model_dump(mode="json") for name, item in config.agents.items()}
+            previous = agents[profile]["settings"].pop("account", None)
+            binding = None
+            if account_id:
+                binding = await sync_to_async(assignment)(
+                    user, account_id, revision, self.persistence.project_id,
+                )
+                agents[profile]["settings"]["account"] = binding
+            await self._update_platform_config_locked({"agents": agents})
+            if binding or previous:
+                account = await AgentAccount.objects.aget(pk=(binding or previous)["id"])
+                await sync_to_async(event)(
+                    account, user, "agent_assigned" if binding else "agent_unassigned",
+                    project_id=self.persistence.project_id, profile=profile,
+                    snapshot_digest=snapshot_digest(self.persistence.execution_snapshot))
+
     async def update_platform_config(self, sections: dict[str, Any]) -> None:
+        async with self._platform_lock:
+            await self._update_platform_config_locked(sections)
+
+    async def _update_platform_config_locked(self, sections: dict[str, Any]) -> None:
         config = await self.store.update_platform_sections(sections)
         if not self.persistence:
             raise RuntimeError("persistence_unavailable")

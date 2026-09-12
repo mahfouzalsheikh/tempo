@@ -74,7 +74,7 @@ def test_two_accounts_have_distinct_private_stores_without_secret_metadata(setup
     metadata = json.dumps(list(AgentAccountEvent.objects.values("detail")))
     assert "secret" not in metadata
     assert accounts.public_record(one)["authentication_verified"] is False
-    assert accounts.public_record(one)["runtime_routing"] == "not_available"
+    assert accounts.public_record(one)["runtime_routing"] == "codex_docker"
 
 
 def test_grants_are_organization_scoped_revision_checked_and_audited(setup):
@@ -195,7 +195,7 @@ def test_ui_and_api_require_staff_and_csrf_and_reject_secret_input(setup):
         {"action": "create", "organization": org.pk, "label": "Second", "auth_mode": "codex-file"},
     )
     assert response.status_code == 302
-    assert b"Agent assignment is not available yet" in client.get("/agents/accounts/").content
+    assert b"Agent assignments" in client.get("/agents/accounts/").content
     row = AgentAccount.objects.get(label="Development")
     row = accounts.update(user, row.pk, row.revision, disabled=True, project_ids=[])
     accounts.check(user, row.pk, row.revision)

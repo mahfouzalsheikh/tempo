@@ -419,7 +419,7 @@ class ProviderRegistry:
             raise ConfigError(f"unsupported model provider kind: {model_config.kind}")
         model = model_factory().resolve(model_config, profile, candidate_index=model_index)
         enabled_tools = self.enabled_tools(config, profile)
-        return runtime_factory(
+        runtime = runtime_factory(
             config,
             runtime_config,
             model,
@@ -429,6 +429,11 @@ class ProviderRegistry:
             on_event,
             approval_callback,
         )
+
+        if "account" in profile.settings:
+            from .account_runtime import AccountBoundRuntime
+            return AccountBoundRuntime(runtime, profile.settings["account"], profile.role)
+        return runtime
 
     def enabled_tools(
         self,

@@ -96,8 +96,10 @@ grant, binding, rotation and fallback changes without recording secrets.
 
 The [second supervised mini-app pilot](SECOND_AGENT_PILOT.md) now has an accepted candidate and
 passed readiness evidence without operator source edits and was published on 2026-09-12. The
-registry foundation is the first part of step 1; next wire selected accounts into isolated runtime
-provisioning, immutable bindings and per-attempt attribution, alongside CI work.
+registry and native Codex routing now cover named connections, project grants, profile assignments,
+account-specific task homes, immutable bindings and durable session attribution. Next verify a
+bounded real multi-account run, add the Claude adapter, and complete shared scheduling/refresh
+recovery alongside CI work. See [current routing behavior and limits](AGENT_ACCOUNT_REGISTRY.md).
 Do not defer account configuration until broad MCP integrations or distributed worker scaling.
 The complete mixed-provider feature remains open until the Claude and account-isolation gates pass.
 

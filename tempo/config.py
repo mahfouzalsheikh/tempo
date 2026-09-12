@@ -462,6 +462,19 @@ class ServiceConfig(BaseModel):
                 )
             if profile.model not in self.model_providers:
                 raise ValueError(f"agent {name} references unknown model provider {profile.model}")
+            if "account" in profile.settings:
+                from .account_binding import validate_binding
+                validate_binding(profile.settings["account"])
+                runtime = self.runtime_providers[profile.runtime]
+                command = (runtime.command or self.codex.command).strip()
+                if runtime.kind != "codex" or command != "codex app-server":
+                    raise ValueError("Account assignments require native Codex app-server.")
+                environment = {**self.codex.environment, **runtime.environment}
+                if any(key in environment for key in (
+                    "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_HOME",
+                    "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_ORGANIZATION", "OPENAI_PROJECT_ID",
+                )):
+                    raise ValueError("Assigned accounts cannot use authentication overrides.")
             missing_tools = set(profile.tool_providers) - set(self.tool_providers)
             if missing_tools:
                 raise ValueError(
